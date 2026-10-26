@@ -7,11 +7,12 @@
 namespace flappy {
 
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
-enum class MenuPage : uint8_t { Closed, Home, Modes, Brightness, Skins, Clock, Coop };
+enum class MenuPage : uint8_t { Closed, Home, Modes, Brightness, Volume, Skins, Clock, Coop };
 
 struct Settings {
   Mode mode = Mode::Original;
   uint8_t brightnessIndex = 3;
+  uint8_t volumeIndex = 2;
   uint8_t skinIndex = 0;
   uint8_t clockHour = 12;
   uint8_t clockMinute = 0;
@@ -97,6 +98,17 @@ class AppModel {
     settings.brightnessIndex = index;
   }
 
+  uint8_t volume() const {
+    constexpr uint8_t levels[] = {0, 51, 102, 153, 204, 255};
+    return levels[settings.volumeIndex < 6 ? settings.volumeIndex : 2];
+  }
+
+  void setVolume(uint8_t index) {
+    if (index >= 6) index = 5;
+    if (settings.volumeIndex != index) settingsDirty = true;
+    settings.volumeIndex = index;
+  }
+
   void setSkinNames(const char* const* names, uint8_t count) {
     skinNames_ = names;
     setSkinCount(count);
@@ -171,6 +183,7 @@ class AppModel {
     switch (menu.page) {
       case MenuPage::Modes: return "Mode";
       case MenuPage::Brightness: return "Brightness";
+      case MenuPage::Volume: return "Volume";
       case MenuPage::Skins: return "Skins";
       case MenuPage::Clock: return "Set clock";
       case MenuPage::Coop: return "Co-op link";
@@ -180,9 +193,10 @@ class AppModel {
 
   uint8_t menuItemCount() const {
     switch (menu.page) {
-      case MenuPage::Home: return 6;
+      case MenuPage::Home: return 7;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 6;
+      case MenuPage::Volume: return 7;
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
       case MenuPage::Clock: return 4;
       case MenuPage::Coop: return 4;
@@ -196,12 +210,16 @@ class AppModel {
     if (index == count - 1) return "Back";
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr const char* labels[] = {"Mode", "Brightness", "Skins", "Set clock", "Co-op link"};
+        constexpr const char* labels[] = {"Mode", "Brightness", "Volume", "Skins", "Set clock", "Co-op link"};
         return labels[index];
       }
       case MenuPage::Modes: return modeName(Mode(index));
       case MenuPage::Brightness: {
         constexpr const char* labels[] = {"1: Night", "2: Dim", "3: Medium", "4: Bright", "5: Full"};
+        return labels[index];
+      }
+      case MenuPage::Volume: {
+        constexpr const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
         return labels[index];
       }
       case MenuPage::Skins:
@@ -229,11 +247,18 @@ class AppModel {
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%u/5", unsigned(settings.brightnessIndex + 1));
           return valueBuffer_;
         }
-        if (index == 2) return skinNames_ ? skinNames_[settings.skinIndex] : "";
-        if (index == 4) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
+        if (index == 2) {
+          if (!settings.volumeIndex) return "Off";
+          if (settings.volumeIndex == 5) return "Full";
+          snprintf(valueBuffer_, sizeof(valueBuffer_), "%u%%", unsigned(settings.volumeIndex * 20));
+          return valueBuffer_;
+        }
+        if (index == 3) return skinNames_ ? skinNames_[settings.skinIndex] : "";
+        if (index == 5) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
         break;
       case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
+      case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
       case MenuPage::Skins: return index == settings.skinIndex ? "*" : "";
       case MenuPage::Clock:
         if (index < 2) {
@@ -410,8 +435,8 @@ class AppModel {
     }
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Brightness, MenuPage::Skins,
-                                             MenuPage::Clock, MenuPage::Coop};
+        constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
+                                             MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
         openMenu(destinations[menu.selection]);
         break;
       }
@@ -420,6 +445,7 @@ class AppModel {
         closeMenu();
         break;
       case MenuPage::Brightness: setBrightness(menu.selection); break;
+      case MenuPage::Volume: setVolume(menu.selection); break;
       case MenuPage::Skins: setSkin(menu.selection); break;
       case MenuPage::Clock:
         if (menu.selection == 0) setClock(uint8_t(clockHour(nowMs) + 1), clockMinute(nowMs), nowMs);

@@ -285,6 +285,32 @@ static void menusScrollAndRenderEverySelection() {
   app.closeMenu();
 }
 
+static void volumeMenuShowsLevelsAndCurrentValue() {
+  flappy::AppModel app(23);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  app.openMenu(flappy::MenuPage::Home);
+  app.menu.selection = 2;
+  app.setVolume(0);
+  const auto mutedHome = frame(app);
+  app.setVolume(5);
+  assert(differentPixels(mutedHome, frame(app)) > 0);
+  app.openMenu(flappy::MenuPage::Volume);
+  assert(app.menuItemCount() == 7);
+  assert(std::strcmp(app.menuLabel(6), "Back") == 0);
+  for (uint8_t index = 0; index < 6; ++index) {
+    app.setVolume(index);
+    app.menu.selection = index;
+    for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options;
+      options.uiScale = uiScale;
+      const auto active = frame(app, options);
+      app.setVolume(uint8_t((index + 1) % 6));
+      assert(differentPixels(active, frame(app, options)) > 0);
+      app.setVolume(index);
+    }
+  }
+}
+
 static void ghostRotationsAndColorAssignment() {
   for (uint8_t skin = 0; skin < flappy::Skins::count(); ++skin) {
     flappy::AppModel app(9);
@@ -376,6 +402,7 @@ int main() {
   bigModeDoublesEachBirdPixel();
   allModesAndSkinsRespectBufferBounds();
   menusScrollAndRenderEverySelection();
+  volumeMenuShowsLevelsAndCurrentValue();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   viewportCopiesStayInsideBuffers();

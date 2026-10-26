@@ -140,6 +140,7 @@ class Renderer {
       case '-': return "000000111000000"; case '>': return "100010001010100";
       case '.': return "000000000000010"; case '+': return "000010111010000";
       case '*': return "000101010101000";
+      case '%': return "101001010100101";
       default: return "000000000000000";
     }
   }

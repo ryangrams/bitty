@@ -63,7 +63,7 @@ static void everyMenuHasBack() {
   Driver d;
   const char* names[] = {"Original", "Paperwork", "Rubber duck"};
   d.app.setSkinNames(names, 3);
-  const MenuPage pages[] = {MenuPage::Home, MenuPage::Modes, MenuPage::Brightness,
+  const MenuPage pages[] = {MenuPage::Home, MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
                             MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
   for (MenuPage page : pages) {
     d.app.openMenu(page);
@@ -96,6 +96,82 @@ static void everyMenuHasBack() {
   }
   d.app.setBrightness(255);
   assert(d.app.settings.brightnessIndex == 4);
+}
+
+static void volumeSettingsAndMenuNavigation() {
+  Driver d;
+  const uint8_t values[] = {0, 51, 102, 153, 204, 255};
+  const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
+  assert(d.app.settings.volumeIndex == 2);
+  assert(d.app.volume() == 102);
+  assert(!d.app.settingsDirty);
+  d.app.setVolume(2);
+  assert(!d.app.settingsDirty);
+  d.tapMenu();
+  assert(d.app.menuItemCount() == 7);
+  const char* homeLabels[] = {"Mode", "Brightness", "Volume", "Skins", "Set clock", "Co-op link", "Back"};
+  const MenuPage homePages[] = {MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
+                               MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
+  for (uint8_t index = 0; index < 7; ++index) {
+    assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
+  }
+  assert(std::string(d.app.menuValue(2)) == "40%");
+  for (uint8_t index = 0; index < 6; ++index) {
+    d.app.openMenu();
+    d.app.menu.selection = index;
+    d.tick(true);
+    assert(d.app.menu.page == homePages[index]);
+  }
+  d.app.openMenu();
+  d.tapMenu();
+  d.tapMenu();
+  assert(d.app.menu.selection == 2);
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Volume);
+  assert(std::string(d.app.menuTitle()) == "Volume");
+  assert(d.app.menuItemCount() == 7);
+  for (uint8_t index = 0; index < 6; ++index) {
+    assert(d.app.menu.selection == index);
+    assert(std::string(d.app.menuLabel(index)) == labels[index]);
+    d.app.settingsDirty = false;
+    const bool changed = d.app.settings.volumeIndex != index;
+    d.tick(true);
+    assert(d.app.settings.volumeIndex == index);
+    assert(d.app.volume() == values[index]);
+    assert(d.app.settingsDirty == changed);
+    for (uint8_t marker = 0; marker < 6; ++marker) {
+      assert(std::string(d.app.menuValue(marker)) == (marker == index ? "*" : ""));
+    }
+    d.app.menu.page = MenuPage::Home;
+    assert(std::string(d.app.menuValue(2)) == labels[index]);
+    d.app.menu.page = MenuPage::Volume;
+    d.app.settingsDirty = false;
+    d.tick(true);
+    assert(!d.app.settingsDirty);
+    d.tapMenu();
+  }
+  assert(d.app.menu.selection == 6);
+  assert(std::string(d.app.menuLabel(6)) == "Back");
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Home);
+  assert(std::string(d.app.menuValue(2)) == "Full");
+  d.app.setVolume(0);
+  assert(std::string(d.app.menuValue(2)) == "Off");
+  d.app.settingsDirty = false;
+  d.app.setVolume(UINT8_MAX);
+  assert(d.app.settings.volumeIndex == 5 && d.app.volume() == 255);
+  assert(d.app.settingsDirty);
+  d.app.settingsDirty = false;
+  d.app.setVolume(UINT8_MAX);
+  assert(!d.app.settingsDirty);
+  d.app.openMenu(MenuPage::Volume);
+  for (int index = 0; index < 7; ++index) d.tapMenu();
+  assert(d.app.menu.selection == 0);
+  d.tick(false, true);
+  d.tick(false, true, AppModel::MenuHoldMs);
+  assert(!d.app.menuOpen());
+  d.tick(false, false);
+  assert(!d.app.menuOpen());
 }
 
 static void clockAndCoopMenus() {
@@ -331,6 +407,7 @@ static void sharedWorldMap() {
 int main() {
   menuEdgesAndPause();
   everyMenuHasBack();
+  volumeSettingsAndMenuNavigation();
   clockAndCoopMenus();
   scoresStayWithTheirMode();
   takeoverAndResume();

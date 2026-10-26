@@ -57,6 +57,10 @@ Tap the right side button once to open the menu. Tap it again to move through op
 
 On the M5StickC Plus, the other side button controls power. Software can read its short presses through the power-management chip, while a long hold can switch the device off. It has no extra gameplay assignment in this build. [Official board documentation](https://docs.m5stack.com/en/core/m5stickc_plus) describes the two GPIO buttons and power key.
 
+Volume has six settings: Off, 20%, 40%, 60%, 80%, and Full. It starts at 40% and saves your selection across restarts. Changing the level in the menu previews a flap sound. Off stops current playback immediately. Clock and Demo autoplay stay quiet, while manual play uses the selected volume. These percentages describe the software volume setting.
+
+Game sounds are included when you import local audio. The [StickC Plus has a passive buzzer](https://docs.m5stack.com/en/core/StickC-Plus), and the [original StickC lists a microphone](https://docs.m5stack.com/en/core/StickC). Audio output depends on the detected board. Playback still needs a listening test on the physical device.
+
 Brightness has five settings: Night, Dim, Medium, Bright, and Full. All keep the backlight on. The lowest setting uses the board's lowest nonzero brightness range; its physical visibility still needs a display check.
 
 ## Modes
@@ -92,7 +96,7 @@ python tools/check_distribution.py --git
 python tools/package_source.py --git
 ```
 
-With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, the co-op protocol, and publication checks. Hardware checks of RTC retention, display brightness, and a complete two-device race remain separate.
+With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, the co-op protocol, and publication checks. Hardware checks of RTC retention, display brightness, sound and volume, and a complete two-device race remain separate.
 
 The source exporter writes `.local/releases/m5-flap-source.zip` from the explicit [publication list](PUBLIC_FILES.txt). [Distribution instructions](docs/DISTRIBUTION.md) explain the checks and exclusions. These tools support review and cannot establish ownership or legal clearance.
 

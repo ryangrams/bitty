@@ -26,6 +26,7 @@ bool pendingAction = false;
 bool coopRoundPrepared = false;
 bool coopRoundLaunched = false;
 uint8_t appliedBrightness = UINT8_MAX;
+uint8_t appliedVolume = UINT8_MAX;
 uint8_t appliedSkin = UINT8_MAX;
 
 uint32_t nonzeroRandom() {
@@ -88,6 +89,7 @@ void loadSettings() {
   const uint8_t mode = preferences.getUChar("mode", 0);
   app.settings.mode = mode < uint8_t(flappy::Mode::Count) ? flappy::Mode(mode) : flappy::Mode::Original;
   app.setBrightness(preferences.getUChar("brightness", 3));
+  app.setVolume(preferences.getUChar("volume", 2));
   app.setSkin(preferences.getUChar("skin", 0));
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   app.settings.coopRole = 0;
@@ -103,6 +105,7 @@ void saveSettings() {
   if (!app.settingsDirty) return;
   preferences.putUChar("mode", uint8_t(app.settings.mode));
   preferences.putUChar("brightness", app.settings.brightnessIndex);
+  preferences.putUChar("volume", app.settings.volumeIndex);
   preferences.putUChar("skin", app.settings.skinIndex);
   preferences.putBool("clock24", app.settings.clock24Hour);
   app.settingsDirty = false;
@@ -116,7 +119,20 @@ void saveScores() {
   app.highScoresDirty = false;
 }
 
-void applyDisplaySettings() {
+void playSound(const FlappySounds::Sound& sound) {
+  if (app.volume() && sound.length && sound.samples && M5.Speaker.isEnabled()) {
+    M5.Speaker.playRaw(sound.samples, sound.length, sound.sampleRate, false, 1, 0, true);
+  }
+}
+
+void applyOutputSettings() {
+  if (appliedVolume != app.settings.volumeIndex) {
+    const bool preview = appliedVolume != UINT8_MAX && app.menu.page == flappy::MenuPage::Volume;
+    M5.Speaker.setVolume(app.volume());
+    appliedVolume = app.settings.volumeIndex;
+    if (!app.volume()) M5.Speaker.stop();
+    else if (preview) playSound(FlappySounds::wing);
+  }
   if (appliedBrightness != app.settings.brightnessIndex) {
     M5.Display.setBrightness(app.brightness());
     appliedBrightness = app.settings.brightnessIndex;
@@ -125,12 +141,6 @@ void applyDisplaySettings() {
     renderer->setSkin(app.settings.skinIndex);
     app.game.setBirdMasks(renderer->birdMasks());
     appliedSkin = app.settings.skinIndex;
-  }
-}
-
-void playSound(const FlappySounds::Sound& sound) {
-  if (sound.length && sound.samples && M5.Speaker.isEnabled()) {
-    M5.Speaker.playRaw(sound.samples, sound.length, sound.sampleRate, false, 1, 0, true);
   }
 }
 
@@ -271,7 +281,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   if (!menuWasOpen && app.menuOpen() && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   if (app.settings.mode != flappy::Mode::Coop && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   handleCoopRequest(nowMs);
-  applyDisplaySettings();
+  applyOutputSettings();
   if ((events & flappy::GameOver) || app.menuOpen() || app.settingsDirty) saveScores();
   saveSettings();
 }
@@ -292,7 +302,6 @@ void setup() {
   M5.Display.setRotation(0);
   M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setSwapBytes(true);
-  M5.Speaker.setVolume(80);
   viewport.configure(M5.Display.width(), M5.Display.height());
   if (viewport.width <= 0 || viewport.height <= 0) return;
   renderer = new flappy::Renderer(canvasStorage);
@@ -302,7 +311,7 @@ void setup() {
   app.setSkinNames(skinNames, count);
   loadSettings();
   initializeClock(millis());
-  applyDisplaySettings();
+  applyOutputSettings();
   showFrame(millis());
   nextTick = micros() + TickMicros;
 }
