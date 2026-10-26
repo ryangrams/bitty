@@ -66,6 +66,33 @@ class DistributionTests(unittest.TestCase):
                 with self.assertRaises(DistributionError):
                     audit(self.root)
 
+    def test_reviewed_skin_catalog_metadata_is_included_in_source_zip(self):
+        name = "assets/skin_catalog.json"
+        metadata = b'{"schema_version":1,"packs":[{"name":"Synthetic skin","rights":"Synthetic fixture"}]}\n'
+        self.write(name, metadata)
+        self.manifest(["PUBLIC_FILES.txt", "README.md", name])
+        self.assertEqual(audit(self.root)[name], metadata)
+        with zipfile.ZipFile(package(self.root)) as archive:
+            self.assertEqual(archive.read(name), metadata)
+            self.assertEqual(set(archive.namelist()), {"PUBLIC_FILES.txt", "README.md", name})
+
+    def test_rejects_listed_json_atlas_manifests(self):
+        for name in ["atlas.json", "assets/atlas.json", "assets/ATLAS.JSON"]:
+            with self.subTest(name=name):
+                self.write(name, b'{"frames":{}}\n')
+                self.manifest(["PUBLIC_FILES.txt", name])
+                with self.assertRaisesRegex(DistributionError, "original asset manifest"):
+                    audit(self.root)
+
+    def test_rejects_listed_json_outside_reviewed_catalog_path(self):
+        for name in ["metadata.json", "assets/skin.json", "assets/other_catalog.json",
+                     "docs/config.json", "assets/SKIN_CATALOG.JSON"]:
+            with self.subTest(name=name):
+                self.write(name, b'{"name":"Synthetic metadata"}\n')
+                self.manifest(["PUBLIC_FILES.txt", name])
+                with self.assertRaisesRegex(DistributionError, "reviewed skin source catalog"):
+                    audit(self.root)
+
     def test_rejects_traversal_duplicates_and_missing_files(self):
         for names in [
             ["PUBLIC_FILES.txt", "../README.md"],

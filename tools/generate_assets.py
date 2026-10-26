@@ -18,6 +18,8 @@ from PIL import Image, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / '.local' / 'assets'
+RIGHTS_CONFIRMATION = ('I confirm I have the rights or permission needed to use and convert '
+                       'the assets I supply for this build.')
 TRANSPARENT = 0xF81F
 SOUND_NAMES = ('wing', 'point', 'hit', 'die', 'swoosh')
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -333,7 +335,8 @@ def sound_header(sounds: dict[str, tuple[str, bytes]]) -> str:
 
 
 def generate(atlas_data: bytes, manifest_data: bytes,
-             sounds: dict[str, tuple[str, bytes]], output_dir: Path) -> dict:
+             sounds: dict[str, tuple[str, bytes]], output_dir: Path,
+             *, rights_acknowledged: bool = False) -> dict:
     assets = make_assets(load_atlas(atlas_data, manifest_data))
     headers = {
         'generated_assets.h': sprite_header(assets),
@@ -353,6 +356,7 @@ def generate(atlas_data: bytes, manifest_data: bytes,
         (output_dir / name).write_text(header, encoding='utf-8')
     receipt = {
         'format': 1, 'sprites': len(assets),
+        'rightsAcknowledged': bool(rights_acknowledged),
         'atlas_sha256': hashlib.sha256(atlas_data).hexdigest(),
         'manifest_sha256': hashlib.sha256(manifest_data).hexdigest(),
         'audio_sha256': {name: hashlib.sha256(data).hexdigest() for name, (_, data) in sounds.items()},
@@ -370,6 +374,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--manifest', type=Path, help='Local text atlas manifest')
     parser.add_argument('--audio-dir', type=Path, help='Optional local wing/point/hit/die/swoosh .ogg or .wav files, with optional sfx_ prefixes')
     parser.add_argument('--output-dir', type=Path, default=DEFAULT_OUTPUT, help='Private output directory (default: .local/assets)')
+    parser.add_argument('--acknowledge-rights', action='store_true', required=True,
+                        help=RIGHTS_CONFIRMATION)
     args = parser.parse_args(argv)
     if args.atlas and not args.manifest:
         parser.error('--atlas requires --manifest')
@@ -384,7 +390,8 @@ def main(argv: list[str] | None = None) -> int:
             sounds = {}
         if args.audio_dir:
             sounds.update(load_audio_dir(args.audio_dir))
-        receipt = generate(atlas, manifest, sounds, args.output_dir)
+        receipt = generate(atlas, manifest, sounds, args.output_dir,
+                           rights_acknowledged=args.acknowledge_rights)
     except (AssetError, OSError) as exc:
         parser.exit(2, f'Asset import failed: {exc}\n')
     print(f"Generated {receipt['sprites']} sprites and private headers in {args.output_dir}")

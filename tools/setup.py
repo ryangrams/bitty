@@ -8,6 +8,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = "esp32:esp32@3.3.11"
+LIBRARIES = ("M5Unified@0.2.21", "M5GFX@0.2.28", "NimBLE-Arduino@2.3.6")
 FQBN = "esp32:esp32:esp32:FlashMode=dio,FlashFreq=40,FlashSize=4M,PSRAM=disabled,PartitionScheme=huge_app,UploadSpeed=115200,EraseFlash=none"
 INDEX = "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json"
 
@@ -51,7 +52,7 @@ def main():
     command = [arduino_cli(), "--config-file", str(config)]
     subprocess.run(command + ["core", "update-index"], check=True)
     subprocess.run(command + ["core", "install", CORE], check=True)
-    subprocess.run(command + ["lib", "install", "M5Unified@0.2.21", "M5GFX@0.2.28"], check=True)
+    subprocess.run(command + ["lib", "install", *LIBRARIES], check=True)
     print("Pinned build dependencies are ready. Import your local assets before building.")
 
 

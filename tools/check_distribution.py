@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "PUBLIC_FILES.txt"
 MAX_FILE_BYTES = 256 * 1024
 GIT_TIMEOUT_SECONDS = 30
-TEXT_SUFFIXES = {".py", ".h", ".ino", ".cpp", ".md", ".txt", ".yml", ".yaml", ".sh"}
+TEXT_SUFFIXES = {".py", ".h", ".ino", ".cpp", ".md", ".txt", ".yml", ".yaml", ".sh", ".json"}
+METADATA_JSON_PATHS = {"assets/skin_catalog.json"}
 SPECIAL_NAMES = {"LICENSE", ".gitignore", ".gitattributes"}
 PRIVATE_PARTS = {
     ".git", ".local", ".pio", "__pycache__", "artifacts", "build", "build-probe",
@@ -56,6 +57,8 @@ def path_problem(name: str) -> str | None:
         return "local asset source directory"
     if "generated" in path.name.casefold() or path.name.casefold() in {"atlas.txt", "atlas.json"}:
         return "generated asset data or original asset manifest"
+    if path.suffix.casefold() == ".json" and name not in METADATA_JSON_PATHS:
+        return "JSON is limited to the reviewed skin source catalog"
     if path.name not in SPECIAL_NAMES and path.suffix.casefold() not in TEXT_SUFFIXES:
         return "only source code, text documentation and source configuration are allowed"
     return None

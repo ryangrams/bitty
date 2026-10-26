@@ -37,6 +37,8 @@ def synthetic_atlas():
         color = (32 + index % 5 * 16, 96, 192, 128 if name == 'title' else 255)
         if name.startswith('bird0_'):
             frame = int(name[-1])
+            if frame == 2:
+                color = (*color[:3], 128)
             draw.rectangle((6 + frame * 4, y + 12, 9 + frame * 4, y + 15), fill=color)
             draw.rectangle((38, y + 34, 39, y + 35), fill=color)
         else:
@@ -120,6 +122,7 @@ class AssetImportTests(unittest.TestCase):
         self.assertEqual(len(list((output / 'crops').glob('*.png'))), 48)
         self.assertEqual(json.loads((output / 'import_receipt.json').read_text()), receipt)
         self.assertEqual(receipt['silent_sounds'], list(assets.SOUND_NAMES))
+        self.assertFalse(receipt['rightsAcknowledged'])
         header = (output / 'generated_assets.h').read_text()
         self.assertIn('backgroundPixels,144,256,288,512,nullptr', header)
         self.assertIn('titleAlpha[]', header)
@@ -258,9 +261,17 @@ class AssetImportTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         path = self.write_apk(self.apk_entries())
         output = self.directory / 'local-output'
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                assets.main(['--apk', str(path), '--output-dir', str(output)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertFalse(output.exists())
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(assets.main(['--apk', str(path), '--output-dir', str(output)]), 0)
+            self.assertEqual(assets.main(['--apk', str(path), '--output-dir', str(output),
+                                         '--acknowledge-rights']), 0)
         self.assertTrue((output / 'generated_collision.h').is_file())
+        receipt = json.loads((output / 'import_receipt.json').read_text())
+        self.assertTrue(receipt['rightsAcknowledged'])
         self.assertEqual(assets.DEFAULT_OUTPUT, ROOT / '.local' / 'assets')
 
     def test_generated_headers_compile_as_standard_cpp(self):
