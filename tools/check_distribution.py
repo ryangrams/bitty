@@ -13,6 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "PUBLIC_FILES.txt"
 MAX_FILE_BYTES = 256 * 1024
+GIT_TIMEOUT_SECONDS = 30
 TEXT_SUFFIXES = {".py", ".h", ".ino", ".cpp", ".md", ".txt", ".yml", ".yaml", ".sh"}
 SPECIAL_NAMES = {"LICENSE", ".gitignore", ".gitattributes"}
 PRIVATE_PARTS = {
@@ -142,12 +143,15 @@ def read_public_files(root: Path) -> dict[str, bytes]:
     return files
 
 
-def git(root: Path, *arguments: str, input_data: bytes | None = None) -> bytes:
+def git(root: Path, *arguments: str) -> bytes:
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), *arguments], input=input_data,
+            ["git", "-C", str(root), *arguments], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as error:
+        raise DistributionError(f"Git audit timed out while running {arguments[0]}") from error
     except OSError as error:
         raise DistributionError("Git is required for the history audit") from error
     if result.returncode:
@@ -204,13 +208,10 @@ def audit_git(root: Path, current_names: set[str]) -> None:
             blobs.add(line.split(b" ", 1)[0].decode())
     if not blobs:
         return
-    object_ids = sorted(blobs)
-    details = git(root, "cat-file", "--batch-check", input_data=("\n".join(object_ids) + "\n").encode())
-    for line in details.decode().splitlines():
-        object_id, kind, raw_size = line.split()
-        if kind != "blob":
+    for object_id in sorted(blobs):
+        if git(root, "cat-file", "-t", object_id).strip() != b"blob":
             continue
-        if int(raw_size) > MAX_FILE_BYTES:
+        if int(git(root, "cat-file", "-s", object_id)) > MAX_FILE_BYTES:
             raise DistributionError(f"Git object {object_id[:12]}: exceeds the source size limit")
         problem = content_problem(git(root, "cat-file", "blob", object_id))
         if problem:

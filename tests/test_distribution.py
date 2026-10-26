@@ -6,10 +6,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from check_distribution import DistributionError, MAX_FILE_BYTES, audit
+from check_distribution import DistributionError, MAX_FILE_BYTES, audit, git
 from package_source import package
 
 
@@ -156,6 +157,22 @@ class DistributionTests(unittest.TestCase):
         self.write(".git/shallow", head)
         with self.assertRaisesRegex(DistributionError, "complete clone"):
             audit(self.root, check_git=True)
+
+    def test_git_audits_many_objects_without_stdin_batching(self):
+        self.initialize_git()
+        names = [f"docs/fixture-{number}.md" for number in range(40)]
+        for number, name in enumerate(names):
+            self.write(name, f"Synthetic source object {number}\n".encode())
+        self.manifest(["PUBLIC_FILES.txt", "README.md", *names])
+        self.commit()
+        self.assertEqual(len(audit(self.root, check_git=True)), 42)
+
+    def test_git_command_has_closed_stdin_and_reports_timeout(self):
+        with mock.patch("check_distribution.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 30)) as run:
+            with self.assertRaisesRegex(DistributionError, "timed out"):
+                git(self.root, "rev-parse", "HEAD")
+        self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
 
     def test_git_rejects_tagged_media_blob(self):
         self.initialize_git()
