@@ -62,7 +62,8 @@ class NesRuntime {
     if (nes2) {
       if ((rom[12] & 0xfc) || (rom[14] & 0xfc) || (rom[15] & 0xc0)) return fail("NES 2.0 reserved header bits are set");
       if (rom[13] || (rom[14] & 3)) return fail("NES 2.0 cartridge extensions are unsupported");
-      if (rom[10]) return fail("Explicit NES 2.0 program RAM is unsupported");
+      if (rom[10] && !(mapper == 4 && (rom[10] == 7 || (rom[10] == 0x70 && (rom[6] & 2)))))
+        return fail("NES 2.0 program RAM requires mapper 4 with one 8 KiB bank");
       if (rom[11] && !((mapper == 0 || mapper == 1) && chrBanks == 0 && rom[11] == 7)) return fail("NES 2.0 character RAM size is unsupported");
     } else {
       if ((rom[9] & 0xfe) || rom[10] || rom[11] || rom[12] || rom[13] || rom[14] || rom[15]) return fail("iNES reserved header bytes are set");
@@ -200,10 +201,19 @@ class NesRuntime {
     if (!core_ || first < 0 || first > last || last >= NES_HEIGHT) return false;
     const bool second = secondFirst != -1 || secondLast != -1;
     if (second && (secondFirst < 0 || secondFirst > secondLast || secondLast >= NES_HEIGHT)) return false;
-    core_->host_video_first[0] = uint8_t(first);
-    core_->host_video_last[0] = uint8_t(last);
-    core_->host_video_first[1] = second ? uint8_t(secondFirst) : 1;
-    core_->host_video_last[1] = second ? uint8_t(secondLast) : 0;
+    for (unsigned i = 0; i < sizeof(core_->host_video_rows); ++i) core_->host_video_rows[i] = 0;
+    for (int row = first; row <= last; ++row)
+      core_->host_video_rows[row >> 3] |= uint8_t(1u << (row & 7));
+    if (second) for (int row = secondFirst; row <= secondLast; ++row)
+      core_->host_video_rows[row >> 3] |= uint8_t(1u << (row & 7));
+    core_->host_video_window_enabled = 1;
+    return true;
+  }
+
+  // Copy one bit per source row. Unselected rows retain machine timing and status.
+  bool setVideoRowMask(const uint8_t* mask, size_t bytes) {
+    if (!core_ || !mask || bytes != sizeof(core_->host_video_rows)) return false;
+    for (unsigned i = 0; i < sizeof(core_->host_video_rows); ++i) core_->host_video_rows[i] = mask[i];
     core_->host_video_window_enabled = 1;
     return true;
   }

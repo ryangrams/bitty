@@ -10,6 +10,10 @@ int main() {
   assert(!tetris(nullptr, 49168, false));
   assert(!tetris(check, sizeof(check), false));
   assert(!tetris(check, sizeof(check), true));
+  assert(!famidash(nullptr, 786448));
+  assert(!famidash(check, sizeof(check)));
+  std::vector<uint8_t> geometry(786448, 0);
+  assert(!famidash(geometry.data(), geometry.size()));
   std::vector<uint8_t> gym(49168, 0), zero(81936, 0);
   assert(!tetris(gym.data(), gym.size(), false));
   assert(!tetris(zero.data(), zero.size(), true));

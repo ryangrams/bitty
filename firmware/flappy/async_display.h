@@ -13,23 +13,51 @@
 namespace flappy {
 
 struct DisplayStrip {
-  enum { MaxWidth = 240, MaxRows = 8 };
+  enum { MaxWidth = 240, MaxRows = 8, MaxFrameRows = 240 };
   int16_t x = 0, y = 0;
   uint16_t width = 0, height = 0;
   uint16_t pixels[MaxWidth * MaxRows] = {};
 
   bool isFrameBoundary() const { return width == 0 && height == 0; }
-  void markFrameBoundary() { x = y = 0; width = height = 0; }
+  bool isBorrowed() const { return borrowed_ != nullptr; }
+  uint16_t* pixelData() { return borrowed_ ? borrowed_ : pixels; }
+  const uint16_t* pixelData() const { return borrowed_ ? borrowed_ : pixels; }
+  void markFrameBoundary() {
+    x = y = 0; width = height = 0;
+    borrowed_ = nullptr;
+    wireEncoded_ = false;
+  }
+
+  static bool validBorrowedFrame(const uint16_t* surface, int columns, int rows) {
+    if (!surface || columns < 1 || columns > MaxWidth || rows < 1 || rows > MaxFrameRows ||
+        reinterpret_cast<uintptr_t>(surface) % alignof(uint16_t)) return false;
+    const size_t count = size_t(columns) * size_t(rows);
+    if (count > SIZE_MAX / sizeof(uint16_t)) return false;
+    const size_t bytes = count * sizeof(uint16_t);
+    return reinterpret_cast<uintptr_t>(surface) <= UINTPTR_MAX - (bytes - 1);
+  }
+
+  bool borrowFrame(uint16_t* surface, int columns, int rows, bool wireOrder = false) {
+    if (!validBorrowedFrame(surface, columns, rows)) return false;
+    x = y = 0;
+    width = uint16_t(columns); height = uint16_t(rows);
+    borrowed_ = surface;
+    wireEncoded_ = wireOrder;
+    return true;
+  }
 
   // The consumer converts a native slot once before its DMA transfer.
   void encodeWireOrder() {
-    uint8_t* output = reinterpret_cast<uint8_t*>(pixels);
+    if (wireEncoded_ || isFrameBoundary()) return;
+    uint16_t* input = pixelData();
+    uint8_t* output = reinterpret_cast<uint8_t*>(input);
     const unsigned count = unsigned(width) * height;
     for (unsigned index = 0; index < count; ++index) {
-      const uint16_t color = pixels[index];
+      const uint16_t color = input[index];
       output[index * 2] = uint8_t(color >> 8);
       output[index * 2 + 1] = uint8_t(color);
     }
+    wireEncoded_ = true;
   }
 
   bool copy(int left, int top, int columns, int rows, const uint16_t* source, int stride, bool wireOrder = false) {
@@ -38,6 +66,8 @@ struct DisplayStrip {
         stride < columns || stride > INT16_MAX) return false;
     x = int16_t(left); y = int16_t(top);
     width = uint16_t(columns); height = uint16_t(rows);
+    borrowed_ = nullptr;
+    wireEncoded_ = wireOrder;
     for (int row = 0; row < rows; ++row) {
       const uint16_t* input = source + size_t(row) * unsigned(stride);
       if (wireOrder) {
@@ -51,6 +81,10 @@ struct DisplayStrip {
     }
     return true;
   }
+
+ private:
+  uint16_t* borrowed_ = nullptr;
+  bool wireEncoded_ = false;
 };
 
 // One producer and one consumer own opposite ends. A front strip remains
@@ -74,6 +108,15 @@ class DisplayStripFifo {
     const uint32_t written = written_.load(std::memory_order_relaxed);
     if (uint32_t(written - completed_.load(std::memory_order_acquire)) >= Capacity) return false;
     strips_[writeSlot_].markFrameBoundary();
+    writeSlot_ = uint8_t((writeSlot_ + 1u) % Capacity);
+    written_.store(written + 1u, std::memory_order_release);
+    return true;
+  }
+
+  bool tryPushBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false) {
+    const uint32_t written = written_.load(std::memory_order_relaxed);
+    if (uint32_t(written - completed_.load(std::memory_order_acquire)) >= Capacity) return false;
+    if (!strips_[writeSlot_].borrowFrame(surface, width, height, wireOrder)) return false;
     writeSlot_ = uint8_t((writeSlot_ + 1u) % Capacity);
     written_.store(written + 1u, std::memory_order_release);
     return true;
@@ -113,6 +156,7 @@ class DisplayStripFifo {
 #if defined(ARDUINO_ARCH_ESP32)
 #include <M5Unified.h>
 #include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -177,6 +221,26 @@ class AsyncDisplay {
     }
     const uint32_t copyUs = uint32_t(micros() - copyStarted);
     recordEnqueue(waited, waitUs, copyUs, false);
+    xSemaphoreGive(ready_);
+    return true;
+  }
+
+  // Keep the complete surface alive and untouched until drain() returns. The
+  // worker converts native colors in place. Set wireOrder for preencoded pixels.
+  bool submitBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false) {
+    if (!task_ || !DisplayStrip::validBorrowedFrame(surface, width, height) ||
+        reinterpret_cast<uintptr_t>(surface) % 4) return false;
+    const size_t bytes = size_t(width) * size_t(height) * sizeof(uint16_t);
+    const uintptr_t last = reinterpret_cast<uintptr_t>(surface) + bytes - 1;
+    if (!esp_ptr_dma_capable(surface) || !esp_ptr_dma_capable(reinterpret_cast<const void*>(last))) return false;
+    uint32_t waitUs = 0;
+    bool waited = false;
+    if (!takeFree(waited, waitUs)) return false;
+    if (!fifo_->tryPushBorrowedFrame(surface, width, height, wireOrder)) {
+      xSemaphoreGive(free_);
+      return false;
+    }
+    recordEnqueue(waited, waitUs, 0, false);
     xSemaphoreGive(ready_);
     return true;
   }
@@ -315,7 +379,7 @@ class AsyncDisplay {
         const uint32_t encodeUs = uint32_t(micros() - started);
         M5.Display.startWrite();
         M5.Display.pushImageDMA(strip->x, strip->y, strip->width, strip->height,
-            reinterpret_cast<const lgfx::swap565_t*>(strip->pixels));
+            reinterpret_cast<const lgfx::swap565_t*>(strip->pixelData()));
         M5.Display.endWrite();
         const uint32_t workUs = uint32_t(micros() - started);
         portENTER_CRITICAL(&statsMux_);

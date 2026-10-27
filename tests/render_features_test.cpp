@@ -462,7 +462,7 @@ static void menusScrollAndRenderEverySelection() {
   preparePlaying(app, flappy::Mode::Original, 10);
   app.setSkinNames(names, flappy::Skins::BuiltinCount);
   const auto noMenu = frame(app);
-  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::Sleep); ++page) {
+  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::GeometryLevel); ++page) {
     app.openMenu(flappy::MenuPage(page));
     const uint8_t count = app.menuItemCount();
     assert(count > 1);
@@ -504,10 +504,11 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
   app.setNesAvailable(true);
   app.setTetrisAvailable(true);
   app.setTetrisZeroAvailable(true);
+  app.setGeometryDashAvailable(true);
   for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
     assert(app.setCurrentGame(flappy::GameTitle(game)));
     for (uint8_t page = uint8_t(flappy::MenuPage::Home);
-         page <= uint8_t(flappy::MenuPage::Sleep); ++page) {
+         page <= uint8_t(flappy::MenuPage::GeometryLevel); ++page) {
       app.openMenu(flappy::MenuPage(page));
       assert(flappy::MenuFont::textWidth(app.menuTitle()) <= 128);
       for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
@@ -680,14 +681,15 @@ static void gameSettingsReflectEachSelectedGame() {
   app.setNesAvailable(true);
   app.setTetrisAvailable(true);
   app.setTetrisZeroAvailable(true);
+  app.setGeometryDashAvailable(true);
   std::vector<uint16_t> previous;
   for (flappy::GameTitle game : {flappy::GameTitle::FlappyBird, flappy::GameTitle::Nes,
-                                flappy::GameTitle::Tetris, flappy::GameTitle::TetrisZero}) {
+                                flappy::GameTitle::Tetris, flappy::GameTitle::TetrisZero, flappy::GameTitle::GeometryDash}) {
     assert(app.setCurrentGame(game));
     app.openMenu(flappy::MenuPage::GameSettings);
     const uint8_t count = app.menuItemCount();
-    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Nes ? 2 :
-                     game == flappy::GameTitle::Tetris ? 9 : 8));
+    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Tetris ? 9 :
+                     game == flappy::GameTitle::TetrisZero ? 8 : game == flappy::GameTitle::GeometryDash ? 3 : 2));
     const auto current = frame(app);
     if (!previous.empty()) assert(differentPixels(previous, current) > 0);
     previous = current;
@@ -700,6 +702,42 @@ static void gameSettingsReflectEachSelectedGame() {
       }
     }
     assert(std::strcmp(app.menuLabel(count - 1), "Back") == 0);
+  }
+}
+
+static void geometryLevelsFitNativeFontAndScrollVertically() {
+  flappy::AppModel app(39);
+  app.setGeometryDashAvailable(true);
+  assert(app.setCurrentGame(flappy::GameTitle::GeometryDash));
+  for (uint8_t level = 0; level < flappy::GeometryLevelCount; ++level) {
+    app.setGeometryLevel(level);
+    app.openMenu(flappy::MenuPage::GameSettings);
+    assert(std::strcmp(app.menuLabel(0), "Level") == 0);
+    assert(std::strcmp(app.menuValue(0), flappy::geometryLevelLabel(level)) == 0);
+    assert(flappy::MenuFont::textWidth(app.menuValue(0)) <= 128);
+    app.openMenu(flappy::MenuPage::GeometryLevel);
+    assert(app.menu.selection == level);
+    assert(flappy::MenuFont::textWidth(app.menuLabel(level)) <= 128);
+    for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options;
+      options.uiScale = uiScale;
+      const auto initial = frame(app, options);
+      options.nowMs = 4000;
+      assert(differentPixels(initial, frame(app, options)) == 0);
+      if (level + 1 < flappy::GeometryLevelCount) {
+        app.menu.selection = level + 1;
+        assert(differentPixels(initial, frame(app, options)) > 0);
+        app.menu.selection = level;
+      }
+    }
+  }
+  app.openMenu(flappy::MenuPage::GeometryLevel);
+  app.menu.selection = flappy::GeometryLevelCount;
+  assert(std::strcmp(app.menuLabel(app.menu.selection), "Back") == 0);
+  for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+    flappy::RenderOptions options;
+    options.uiScale = uiScale;
+    assert(frame(app, options).size() == FramePixels);
   }
 }
 
@@ -926,6 +964,7 @@ int main() {
   launcherMenusShowAvailabilityAndTitles();
   controllerMenuShowsStatusAndActions();
   gameSettingsReflectEachSelectedGame();
+  geometryLevelsFitNativeFontAndScrollVertically();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   scrollingGroundMatchesSourceAndAlphaAtBothScales();

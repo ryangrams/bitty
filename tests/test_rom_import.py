@@ -267,7 +267,9 @@ class RomImportTests(unittest.TestCase):
         with mock.patch.object(build, 'ROOT', project):
             target = build.prepare_sketch(assets)
             for filename, namespace, title in (('generated_rom.h', 'FlappyRom', 'NES'),
-                                                ('generated_tetris_rom.h', 'TetrisRom', 'Tetris')):
+                                                ('generated_tetris_rom.h', 'TetrisRom', 'Tetris'),
+                                                ('generated_zero_rom.h', 'TetrisZeroRom', 'Tetris Zero'),
+                                                ('generated_geometry_rom.h', 'GeometryRom', 'Geometry Dash')):
                 header = (target / filename).read_text()
                 self.assertIn('namespace ' + namespace + ' {', header)
                 self.assertIn('data = nullptr', header)
@@ -279,11 +281,16 @@ class RomImportTests(unittest.TestCase):
                 self.skipTest('C++ compiler unavailable')
             program = self.directory / 'check-stubs.cpp'
             program.write_text('#include "generated_rom.h"\n#include "generated_tetris_rom.h"\n'
+                               '#include "generated_zero_rom.h"\n#include "generated_geometry_rom.h"\n'
                                '#include <cassert>\n#include <cstring>\nint main() {\n'
                                'assert(FlappyRom::data == nullptr && FlappyRom::length == 0);\n'
                                'assert(TetrisRom::data == nullptr && TetrisRom::length == 0);\n'
+                               'assert(TetrisZeroRom::data == nullptr && TetrisZeroRom::length == 0);\n'
+                               'assert(GeometryRom::data == nullptr && GeometryRom::length == 0);\n'
                                'assert(std::strcmp(FlappyRom::title, "NES") == 0);\n'
-                               'assert(std::strcmp(TetrisRom::title, "Tetris") == 0);\n}\n')
+                               'assert(std::strcmp(TetrisRom::title, "Tetris") == 0);\n'
+                               'assert(std::strcmp(TetrisZeroRom::title, "Tetris Zero") == 0);\n'
+                               'assert(std::strcmp(GeometryRom::title, "Geometry Dash") == 0);\n}\n')
             executable = self.directory / 'check-stubs'
             subprocess.run([compiler, '-std=c++11', '-Wall', '-Wextra', '-Werror', '-I', str(target),
                             str(program), '-o', str(executable)], check=True)
@@ -416,7 +423,7 @@ class RomImportTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             build.main()
         prepare.assert_called_once_with()
-        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None)
+        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None)
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index('--library') + 1], str(library))
         self.assertEqual(command[-1], str(sketch))
@@ -429,6 +436,79 @@ class RomImportTests(unittest.TestCase):
         self.assertEqual(stage.call_args.args[2], self.directory.resolve())
         self.assertEqual(stage.call_args.args[4], (self.directory / 'tetris').resolve())
         prepare.assert_not_called()
+
+    def test_geometry_default_explicit_and_legacy_positional_staging_preserve_other_games(self):
+        project, assets = self.make_build_project()
+        mario = self.directory / 'mario'
+        tetris = self.directory / 'tetris'
+        zero = self.directory / 'zero'
+        default_geometry = project / '.local' / 'geometry-rom'
+        explicit_geometry = self.directory / 'geometry'
+        imports = ((mario, fixture(prg=2), 'Local Mario'),
+                   (tetris, fixture(1, 2, 0), 'Local Tetris'),
+                   (zero, fixture(118, 4, 2), 'Local Zero'),
+                   (default_geometry, fixture(4, 2, 1), 'Default Dash'),
+                   (explicit_geometry, fixture(4, 4, 1), 'Explicit Dash'))
+        for folder, rom, title in imports:
+            importer.generate(rom, folder, title, rights_acknowledged=True)
+        originals = {folder: (folder / 'generated_rom.h').read_bytes() for folder, _, _ in imports}
+        other_games = (('generated_rom.h', mario, 'FlappyRom'),
+                       ('generated_tetris_rom.h', tetris, 'TetrisRom'),
+                       ('generated_zero_rom.h', zero, 'TetrisZeroRom'))
+        with mock.patch.object(build, 'ROOT', project):
+            for mode in ('legacy', 'positional', 'keyword'):
+                with self.subTest(mode=mode):
+                    if mode == 'legacy':
+                        target = build.prepare_sketch(assets, None, mario, 'stickc-plus', tetris, zero)
+                    elif mode == 'positional':
+                        target = build.prepare_sketch(assets, None, mario, 'stickc-plus', tetris, zero, explicit_geometry)
+                    else:
+                        target = build.prepare_sketch(assets, None, mario, 'stickc-plus', tetris, zero,
+                                                      geometry=explicit_geometry)
+                    for filename, folder, namespace in other_games:
+                        expected = originals[folder].decode().replace('namespace FlappyRom', 'namespace ' + namespace)
+                        self.assertEqual((target / filename).read_text(), expected)
+                    chosen = default_geometry if mode == 'legacy' else explicit_geometry
+                    expected = originals[chosen].decode().replace('namespace FlappyRom', 'namespace GeometryRom')
+                    geometry_header = (target / 'generated_geometry_rom.h').read_text()
+                    self.assertEqual(geometry_header, expected)
+                    self.assertNotIn('namespace FlappyRom', geometry_header)
+                    self.assertIn('#define M5FLAP_DISPLAY_PROFILE 2', (target / 'build_display.h').read_text())
+        for folder, rom, _ in imports:
+            self.assertEqual((folder / 'generated_rom.h').read_bytes(), originals[folder])
+            self.assertEqual((folder / 'source' / 'rom.nes').read_bytes(), rom)
+
+    def test_geometry_absent_default_and_missing_explicit_header_preserve_staged_sketch(self):
+        project, assets = self.make_build_project()
+        incomplete = project / '.local' / 'geometry-rom'
+        incomplete.mkdir(parents=True)
+        (incomplete / 'source.nes').write_bytes(fixture())
+        with mock.patch.object(build, 'ROOT', project):
+            target = build.prepare_sketch(assets)
+            geometry_header = (target / 'generated_geometry_rom.h').read_text()
+            self.assertIn('namespace GeometryRom', geometry_header)
+            self.assertIn('data = nullptr', geometry_header)
+            self.assertIn('length = 0', geometry_header)
+            self.assertIn('title[] = "Geometry Dash"', geometry_header)
+            before = {path.name: path.read_bytes() for path in target.iterdir() if path.is_file()}
+            for missing in (incomplete, self.directory / 'missing-geometry'):
+                with self.subTest(missing=missing), self.assertRaisesRegex(SystemExit, 'Geometry Dash.*generated_rom.h'):
+                    build.prepare_sketch(assets, geometry=missing)
+                self.assertEqual(before, {path.name: path.read_bytes() for path in target.iterdir() if path.is_file()})
+
+    def test_build_cli_forwards_geometry_without_reordering_existing_rom_arguments(self):
+        sketch = self.directory / 'sketch'
+        mario, tetris, zero, geometry = (self.directory / name for name in ('mario', 'tetris', 'zero', 'geometry'))
+        with mock.patch.object(build, 'prepare_sketch', return_value=sketch) as stage, \
+                mock.patch.object(sys, 'argv', ['build.py', '--check-only', '--rom-dir', str(mario),
+                                              '--tetris-dir', str(tetris), '--zero-dir', str(zero),
+                                              '--geometry-dir', str(geometry)]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            build.main()
+        self.assertEqual(stage.call_args.args[2], mario.resolve())
+        self.assertEqual(stage.call_args.args[4], tetris.resolve())
+        self.assertEqual(stage.call_args.args[5], zero.resolve())
+        self.assertEqual(stage.call_args.args[6], geometry.resolve())
 
     def test_zero_stages_separately_and_missing_override_preserves_sketch(self):
         project, assets = self.make_build_project()
@@ -458,6 +538,53 @@ class RomImportTests(unittest.TestCase):
                 importer.inspect_rom(fixture(118, prg, chr_banks))
         with self.assertRaisesRegex(importer.RomError, 'two nametable'):
             importer.inspect_rom(altered(fixture(118, 4, 2), 6, 0x68))
+
+    def test_mapper_four_banks_four_screen_and_multiregion(self):
+        for nes2 in (False, True):
+            for prg in (2, 4, 8, 16, 32):
+                for chr_banks in (0, 1, 2, 4, 8, 16, 32):
+                    with self.subTest(nes2=nes2, prg=prg, chr=chr_banks):
+                        metadata = importer.inspect_rom(fixture(4, prg, chr_banks, nes2=nes2))
+                        self.assertEqual(metadata['mapper'], 4)
+                        self.assertEqual(metadata['prg_bytes'], prg * 16384)
+                        self.assertEqual(metadata['chr_bytes'], chr_banks * 8192)
+            for prg, chr_banks in ((0, 2), (1, 2), (3, 2), (33, 2), (4, 3), (4, 33)):
+                with self.subTest(nes2=nes2, prg=prg, chr=chr_banks):
+                    with self.assertRaisesRegex(importer.RomError, 'Mapper 4'):
+                        importer.inspect_rom(fixture(4, prg, chr_banks, nes2=nes2))
+        rom = fixture(4, 32, 32, nes2=True)
+        rom = altered(altered(altered(rom, 6, 0x4a), 10, 0x70), 12, 2)
+        receipt = importer.generate(rom, self.output, 'Synthetic MMC3', rights_acknowledged=True)
+        self.assertEqual(receipt['bytes'], 786448)
+        self.assertTrue(receipt['four_screen'])
+        self.assertTrue(receipt['battery'])
+        self.assertEqual(receipt['prg_ram_header'], 0x70)
+        self.assertEqual(receipt['timing'], 'Multi-region')
+        self.assertEqual(receipt['frame_rate'], 60)
+        self.assertEqual((self.output / 'source' / 'rom.nes').read_bytes(), rom)
+        for data in (rom[:-1], rom + b'x'):
+            with self.assertRaisesRegex(importer.RomError, 'match its header exactly'):
+                importer.inspect_rom(data)
+
+    def test_mapper_four_explicit_ram_is_exactly_one_8k_bank(self):
+        for battery in (False, True):
+            rom = fixture(4, 2, 1, nes2=True)
+            rom = altered(rom, 6, rom[6] | (2 if battery else 0))
+            for value in range(256):
+                data = altered(rom, 10, value)
+                if value in (0, 7) or (battery and value == 0x70):
+                    self.assertEqual(importer.inspect_rom(data)['prg_ram_header'], value)
+                else:
+                    with self.subTest(battery=battery, ram=value):
+                        with self.assertRaisesRegex(importer.RomError, 'PRG RAM and NVRAM'):
+                            importer.inspect_rom(data)
+        for mapper, prg, chr_banks in ((0, 2, 1), (1, 2, 1), (37, 16, 32), (118, 2, 1)):
+            rom = fixture(mapper, prg, chr_banks, nes2=True)
+            rom = altered(rom, 6, rom[6] | 2)
+            for value in (7, 0x70):
+                with self.subTest(mapper=mapper, ram=value):
+                    with self.assertRaisesRegex(importer.RomError, 'PRG RAM and NVRAM'):
+                        importer.inspect_rom(altered(rom, 10, value))
 
 
 if __name__ == '__main__':

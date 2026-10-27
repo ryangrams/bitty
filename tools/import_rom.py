@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / '.local' / 'nes-rom'
 MAX_ROM_BYTES = 1024 * 1024
 MAX_TITLE_BYTES = 40
-SUPPORTED_MAPPERS = (0, 1, 37, 118)
+SUPPORTED_MAPPERS = (0, 1, 4, 37, 118)
 RIGHTS_CONFIRMATION = ('I confirm I have the rights or permission needed to use and convert '
                        'the ROM I supply for this build.')
 
@@ -95,9 +95,10 @@ def inspect_rom(rom: bytes) -> dict:
             raise RomError('iNES PRG RAM larger than 8 KiB is unsupported')
         timing = header[9] & 1
     if mapper not in SUPPORTED_MAPPERS:
-        raise RomError(f'Unsupported mapper {mapper}; supported mappers are 0, 1, 37 and 118')
-    if nes2 and header[10]:
-        raise RomError('Explicit NES 2.0 PRG RAM and NVRAM declarations are unsupported')
+        raise RomError(f'Unsupported mapper {mapper}; supported mappers are 0, 1, 4, 37 and 118')
+    if nes2 and header[10] and not (
+            mapper == 4 and (header[10] == 7 or (header[10] == 0x70 and header[6] & 2))):
+        raise RomError('Explicit NES 2.0 PRG RAM and NVRAM require mapper 4 with one 8 KiB bank')
     if nes2 and header[11] and not (mapper in (0, 1) and chr_units == 0 and header[11] == 7):
         raise RomError('Only mappers 0 and 1 with 8 KiB volatile CHR RAM are supported')
     prg_bytes, chr_bytes = prg_units * 16384, chr_units * 8192
@@ -112,6 +113,8 @@ def inspect_rom(rom: bytes) -> dict:
         raise RomError('Mapper 37 requires 256 KiB PRG and 256 KiB CHR')
     if mapper == 1 and (prg_units not in (1, 2, 4, 8, 16) or chr_units not in (0, 1, 2, 4, 8, 16)):
         raise RomError('Mapper 1 requires power-of-two PRG banks up to 256 KiB and CHR banks up to 128 KiB')
+    if mapper == 4 and (prg_units not in (2, 4, 8, 16, 32) or chr_units not in (0, 1, 2, 4, 8, 16, 32)):
+        raise RomError('Mapper 4 requires power-of-two PRG banks from 32 to 512 KiB and CHR banks up to 256 KiB')
     if mapper == 118 and (prg_units not in (2, 4, 8, 16, 32) or chr_units not in (1, 2, 4, 8, 16, 32)):
         raise RomError('Mapper 118 requires power-of-two PRG banks from 32 to 512 KiB and CHR ROM from 8 to 256 KiB')
     if mapper == 118 and header[6] & 8:

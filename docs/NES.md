@@ -28,9 +28,9 @@ The importer validates standard iNES and NES 2.0 cartridges up to 1 MiB. The fil
 | 1, MMC1 | Power-of-two PRG bank counts from 16 to 256 KiB, with power-of-two CHR ROM sizes from 8 to 128 KiB or 8 KiB volatile CHR RAM. |
 | 37, MMC3 multicart variant | 256 KiB PRG and 256 KiB CHR. The cartridge's own menu remains part of the imported image. |
 | 118, TxSROM | Power-of-two PRG sizes from 32 to 512 KiB and CHR ROM sizes from 8 to 256 KiB. Two nametable pages are required. |
-| 4, MMC3 | Included in the compiled emulator core as the basis for mappers 37 and 118; direct importer support is currently disabled. |
+| 4, MMC3 | Power-of-two PRG banks from 32 to 512 KiB, CHR ROM banks up to 256 KiB, and four-screen nametables. |
 
-Trainers, NES 2.0 submappers, exponent ROM sizes, Dendy timing, console extensions, miscellaneous ROM sections and unsupported RAM declarations are rejected. The core provides 8 KiB of cartridge SRAM where supported. Its contents are held in memory and do not persist across power cycles, including for cartridges with a battery flag. There is no save-state UI.
+Trainers, NES 2.0 submappers, exponent ROM sizes, Dendy timing, console extensions, miscellaneous ROM sections and unsupported RAM declarations are rejected. Mapper 4 accepts one 8 KiB volatile PRG RAM bank or one 8 KiB NVRAM bank with its battery flag. Other explicit PRG RAM declarations remain unsupported. The core provides 8 KiB of cartridge SRAM where supported. Its contents are held in memory and do not persist across power cycles, including for cartridges with a battery flag. There is no save-state UI.
 
 The launcher defaults to NTSC 60 Hz. Supply an NTSC Mario image with the corresponding physics and timers. Changing a PAL image's header or clock alone can speed up its game code. TetrisGYM's Speed setting can explicitly select PAL 50 Hz.
 
@@ -48,7 +48,7 @@ NES play rotates the display to landscape. The recognized NTSC Mario revision st
 
 On a 240×135 display, the native Mario view copies NES columns 8 through 247 at one display pixel per source pixel. The first 16 output rows show source rows 16 through 31 for the HUD. The remaining 119 rows show a world window whose top moves between source rows 32 and 105. The default view ends one block below the ground Mario stands on. The camera leaves six source rows above Mario during high jumps and follows him back down, including the flagpole slide and castle walk. This crop preserves source pixels and trims the outer columns and part of the vertical view. The M5 menus return to portrait.
 
-[Tetris](TETRIS.md) has one launcher entry with **Solo** and **2 players** settings. Solo uses its private TetrisGYM image; two-player play uses its private Tetris Zero image. Both use portrait layouts and M5 settings. You can include those two images and the general NES image in one build, alongside Flappy Bird.
+[Tetris](TETRIS.md) has one launcher entry with **Solo** and **2 players** settings. Solo uses its private TetrisGYM image; two-player play uses its private Tetris Zero image. Both use portrait layouts and M5 settings. You can include those two images, the general NES image and a separate [Geometry Dash](GEOMETRY_DASH.md) image in one build, alongside Flappy Bird.
 
 Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. All D-pad and A/B combinations pass through to the general NES game after automatic startup. Dedicated controller Start, Select and Menu buttons keep their assignments. Use **Game Settings > Restart game** to repeat Mario's automatic launch.
 

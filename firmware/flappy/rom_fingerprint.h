@@ -22,5 +22,9 @@ inline bool tetris(const uint8_t* data, size_t length, bool zero) {
   return data && length == expectedLength && crc32(data, length) == expectedCrc;
 }
 
+inline bool famidash(const uint8_t* data, size_t length) {
+  return data && length == 786448u && crc32(data, length) == 0x5bf705b3u;
+}
+
 }  // namespace RomFingerprint
 }  // namespace flappy

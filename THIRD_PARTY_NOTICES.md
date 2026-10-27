@@ -44,7 +44,7 @@ Firmware distribution also carries the obligations of its linked libraries, incl
 
 `tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/1/4/37/118 registry, 8-row RGB565 strip buffers, 24 kHz audio, and a filesystem guard around the trainer helper.
 
-Runtime video intervals can skip composition and display callbacks while retaining CPU, APU, sprite status and mapper timing. Two visible source-row windows limit RGB work while preserving offscreen PPU fetches and frame callbacks. The opacity shortcut retains full mapper fetches when they have side effects. A scanline sprite cache preserves OAM ordering, overflow and pattern fetches, with invalidation on frame start, OAM writes, DMA and sprite-height changes.
+Runtime video intervals can skip composition and display callbacks while retaining CPU, APU, sprite status and mapper timing. A copied 240-bit source-row mask limits RGB work while preserving offscreen PPU fetches and frame callbacks; the two-window API fills this mask. An empty mask suppresses RGB composition for the native Geometry renderer while retaining the core's logical state. The opacity shortcut retains full mapper fetches when they have side effects. A scanline sprite cache preserves OAM ordering, overflow and pattern fetches, with invalidation on frame start, OAM writes, DMA and sprite-height changes.
 
 Optional PCM suppression retains channel phase, envelopes, length counters, noise state, DMC bus reads and interrupt behavior. An optional fixed-window PRG read cache preserves the mapper's original ROM pointers. Guarded NROM self-jump batching combines repeated idle instructions within one CPU budget, preserving consumed cycles and interrupt boundaries. It requires a stable self-jump in ROM, excludes mapper CPU-clock and PRG-read hooks, and retains the unbatched path when its interrupt guards apply.
 
@@ -61,6 +61,12 @@ The public source package excludes the original game, TetrisGYM cartridge code a
 ## Tetris Zero compatibility references
 
 `firmware/flappy/tetris_zero.h` and `firmware/flappy/tetris_zero_viewport.h` describe menu stages, player state addresses and screen regions used by the mapper 118 v2 version of Tetris Zero. The [author's project entry](https://www.romhacking.net/hacks/1013/) identifies the hack. The wrappers use those compatibility facts with a privately supplied cartridge. The public package contains no patch, cartridge code, disassembly, save file, graphics or audio from that project. Obtain and review the patch author's terms separately.
+
+## Famidash compatibility references
+
+The Geometry Dash launcher accepts the author's privately imported [Famidash v1.2.8 main release](https://kandowontu.itch.io/famidash). Its compatibility metadata refers to the [v1.2.8 release source, commit `0df680d0e02f0ccb438f1224d162a0ab073b7204`](https://github.com/tfdsoft/famidash/tree/0df680d0e02f0ccb438f1224d162a0ab073b7204), including the original/main level order, MMC3 cartridge declaration, RAM addresses and collision classes. The upstream MIT notice, Copyright 2023-2024 TFDSoft, is retained verbatim in [LICENSES/Famidash-MIT.txt](LICENSES/Famidash-MIT.txt).
+
+The launcher, `firmware/flappy/geometry_input.h`, `firmware/flappy/geometry_scene.h`, `firmware/flappy/geometry_launcher.h` and `firmware/flappy/geometry_renderer.h` are project code. The procedural renderer uses its own RGB565 shapes and colors, reads live state from the verified cartridge and leaves game logic to Famidash. The public source package excludes Famidash's cartridge image, game implementation, graphics, music and generated ROM headers. The software license grants no rights in RobTop assets or third-party musical compositions. The [private import workflow](docs/GEOMETRY_DASH.md) keeps these inputs separate from the source distribution.
 
 ## Names and affiliation
 

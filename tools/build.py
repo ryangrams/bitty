@@ -37,7 +37,7 @@ def resolve_display_profile(display=None):
     return saved
 
 
-def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None):
+def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None):
     missing = [name for name in HEADERS if not (assets / name).is_file()]
     if missing:
         raise SystemExit("Import your local assets first. Missing: " + ", ".join(missing) +
@@ -62,6 +62,12 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
             zero = default_zero
     if zero is not None and not (zero / "generated_rom.h").is_file():
         raise SystemExit("Import your Tetris Zero ROM first. Missing: generated_rom.h")
+    if geometry is None:
+        default_geometry = ROOT / ".local" / "geometry-rom"
+        if (default_geometry / "generated_rom.h").is_file():
+            geometry = default_geometry
+    if geometry is not None and not (geometry / "generated_rom.h").is_file():
+        raise SystemExit("Import your Geometry Dash ROM first. Missing: generated_rom.h in " + str(geometry))
     selected_display = resolve_display_profile(display)
     target = ROOT / ".local" / "sketch" / "flappy"
     target.mkdir(parents=True, exist_ok=True)
@@ -88,6 +94,8 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
     (target / "generated_tetris_rom.h").write_text(tetris_header.replace("namespace FlappyRom", "namespace TetrisRom"), encoding="utf-8")
     zero_header = (zero / "generated_rom.h").read_text(encoding="utf-8") if zero else rom_header(None, "Tetris Zero")
     (target / "generated_zero_rom.h").write_text(zero_header.replace("namespace FlappyRom", "namespace TetrisZeroRom"), encoding="utf-8")
+    geometry_header = (geometry / "generated_rom.h").read_text(encoding="utf-8") if geometry else rom_header(None, "Geometry Dash")
+    (target / "generated_geometry_rom.h").write_text(geometry_header.replace("namespace FlappyRom", "namespace GeometryRom"), encoding="utf-8")
     (target / "build_display.h").write_text(
         "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n",
         encoding="utf-8")
@@ -107,6 +115,7 @@ def main():
     parser.add_argument("--rom-dir", type=Path, help="Private folder containing generated_rom.h (default: .local/nes-rom when present)")
     parser.add_argument("--tetris-dir", type=Path, help="Private patched Tetris import folder (default: .local/tetris-rom when present)")
     parser.add_argument("--zero-dir", type=Path, help="Private Tetris Zero import folder (default: .local/tetris-zero-rom when present)")
+    parser.add_argument("--geometry-dir", type=Path, help="Private Geometry Dash import folder (default: .local/geometry-rom when present)")
     parser.add_argument("--display", choices=tuple(DISPLAY_PROFILES),
                         help="LCD profile, saved privately for later builds (default: saved profile or auto)")
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
@@ -114,7 +123,8 @@ def main():
     sketch = prepare_sketch(args.assets_dir.resolve(), args.skins_dir.resolve() if args.skins_dir else None,
                             args.rom_dir.resolve() if args.rom_dir else None, args.display,
                             args.tetris_dir.resolve() if args.tetris_dir else None,
-                            args.zero_dir.resolve() if args.zero_dir else None)
+                            args.zero_dir.resolve() if args.zero_dir else None,
+                            args.geometry_dir.resolve() if args.geometry_dir else None)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return

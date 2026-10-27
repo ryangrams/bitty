@@ -17,6 +17,11 @@
 #include "generated_rom.h"
 #include "generated_tetris_rom.h"
 #include "generated_zero_rom.h"
+#include "generated_geometry_rom.h"
+#include "geometry_input.h"
+#include "geometry_scene.h"
+#include "geometry_renderer.h"
+#include "geometry_launcher.h"
 #include "tetris_gym.h"
 #include "tetris_viewport.h"
 #include "tetris_zero.h"
@@ -47,6 +52,12 @@ uint32_t soundOverrideUntil = 0;
 bool soundOverride = false;
 uint8_t previousSoundPad[2] = {};
 flappy::NesSystemButton nesSystemButton;
+flappy::GeometryButtons geometryButtons;
+uint8_t geometryHeld = 0;
+flappy::GeometryRenderer geometryRenderer;
+flappy::GeometryController geometryController;
+flappy::GeometryLauncher geometryLauncher;
+uint32_t handledGeometryRequest = 0;
 flappy::NesViewport nesViewport;
 flappy::MarioViewport marioViewport;
 flappy::MarioCartridge marioCartridge;
@@ -104,6 +115,7 @@ bool pendingControllerTetrisDrop = false;
 bool controllerDownTracking = false;
 uint32_t controllerDownSince = 0;
 bool nativeMario = false, marioLaunching = false;
+bool nativeGeometry = false;
 uint8_t gameMessageShown = 0;
 uint32_t tetrisFrontendAt = 0;
 bool tetrisLaunching = false;
@@ -129,7 +141,8 @@ uint8_t appliedSkin = UINT8_MAX;
 uint64_t nesWorkUs = 0, nesVideoUs = 0;
 uint32_t nesRenderedFrames = 0, lcdFrames = 0, lcdRows = 0, appTicks = 0, appDrawFrames = 0;
 uint64_t lcdUs = 0, appRenderUs = 0;
-uint16_t marioBenchmarkFrames = 0;
+uint16_t marioBenchmarkFrames = 0, diagnosticPadFrames = 0;
+uint8_t diagnosticPad = 0;
 uint8_t benchmarkPrgCache = 0, benchmarkVideoDivisor = 0;
 uint8_t benchmarkIdleJump = 2;
 bool benchmarkPcm = false;
@@ -266,6 +279,7 @@ void menuSound(flappy::MenuPage before, uint8_t selection, bool action, uint32_t
 
 void updateNesSound(uint8_t input1, uint8_t input2, uint32_t nowMs) {
   if (!nes.ready() || app.menuOpen() || tetrisLaunching || zeroLaunching ||
+      (nativeGeometry && geometryLauncher.active()) ||
       (tetrisLinkActive() && coopLink.session().phase() != flappy::coop::Phase::Playing)) {
     piezo.setNesTone(0, 0, nowMs);
     resetSoundTracking();
@@ -382,6 +396,7 @@ void loadSettings() {
   app.setVolume(preferences.getUChar("volume", 2));
   app.setSleep(preferences.getUChar("sleepidx", 0));
   app.setSkin(preferences.getUChar("skin", 0));
+  app.setGeometryLevel(preferences.getUChar("geolevel", 0));
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   const uint8_t boot = preferences.getUChar("bootgame", 0);
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
@@ -416,6 +431,7 @@ void saveSettings() {
   preferences.putUChar("volume", app.settings.volumeIndex);
   preferences.putUChar("sleepidx", app.settings.sleepIndex);
   preferences.putUChar("skin", app.settings.skinIndex);
+  preferences.putUChar("geolevel", app.settings.geometryLevel);
   preferences.putBool("clock24", app.settings.clock24Hour);
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
@@ -677,7 +693,8 @@ void openTetrisFrontend(bool focusRestart) {
   stopGameAudio();
   invalidateDisplay();
   gameMessageShown = 0;
-  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = 0;
+  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = geometryHeld = 0;
+  geometryButtons.reset();
   pendingTetrisDrop = pendingControllerTetrisDrop = false;
   tetrisButtons.reset();
   tetrisSoftDrop.reset();
@@ -724,6 +741,7 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
   } videoTimer;
   if (y2 == 239) ++nesRenderedFrames;
 #endif
+  if (nativeGeometry) return;
   if (tetrisLike() && !app.menuOpen()) {
     if (tetrisLaunching || zeroLaunching || !tetrisNativePlaying()) return;
     if (tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || zeroLaunching)) return;
@@ -835,7 +853,10 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
       }
     }
   }
-  if (y2 == 239) displayDamage.endFrame();
+  if (y2 == 239) {
+    displayDamage.endFrame();
+    if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
+  }
 }
 
 void nesAudio(void*, const int16_t* samples, size_t count, uint32_t rate) {
@@ -972,7 +993,8 @@ bool beginZero(const flappy::TetrisZero::Options& options) {
   tetrisActions[0].reset();
   tetrisActions[1].reset();
   zeroPadArmed = false;
-  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = 0;
+  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = geometryHeld = 0;
+  geometryButtons.reset();
   pendingTetrisDrop = pendingControllerTetrisDrop = false;
   controllerDownTracking = false;
   tetrisButtons.reset();
@@ -995,8 +1017,9 @@ flappy::TetrisZero::Options zeroSettings(uint32_t linkedSeed = 0) {
 void handleGameRequest() {
   if (handledGameRequest == app.gameRequest) return;
   handledGameRequest = app.gameRequest;
+  asyncDisplay.drain();
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
-  marioBenchmarkFrames = 0;
+  marioBenchmarkFrames = diagnosticPadFrames = 0;
   timingProbe = false;
 #endif
   stopGameAudio();
@@ -1013,6 +1036,7 @@ void handleGameRequest() {
   tetrisLaunching = zeroLaunching = false;
   marioLaunching = false;
   nativeMario = false;
+  nativeGeometry = false;
   gameMessageShown = 0;
   tetrisFrontendAt = 0;
   runtimeNotice = "";
@@ -1023,17 +1047,24 @@ void handleGameRequest() {
     nes.setCallbacks(nesVideo, piezoDriver ? nullptr : nesAudio, nullptr);
     const bool tetris = app.currentGame == flappy::GameTitle::Tetris;
     const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
+    const bool geometry = app.currentGame == flappy::GameTitle::GeometryDash;
+    geometryHeld = 0;
+    geometryButtons.reset();
     setNesDisplay(!tetris && !zero);
-    const bool displayReady = zero ? zeroViewport.configure(M5.Display.width(), M5.Display.height()) :
+    const bool displayReady = geometry ? M5.Display.width() == 240 && M5.Display.height() == 135 :
+        zero ? zeroViewport.configure(M5.Display.width(), M5.Display.height()) :
         !tetris || tetrisViewport.configure(M5.Display.width(), M5.Display.height());
-    const bool validCartridge = tetris ? flappy::RomFingerprint::tetris(TetrisRom::data, TetrisRom::length, false) :
+    const bool validCartridge = geometry ? flappy::RomFingerprint::famidash(GeometryRom::data, GeometryRom::length) :
+        tetris ? flappy::RomFingerprint::tetris(TetrisRom::data, TetrisRom::length, false) :
         !zero || flappy::RomFingerprint::tetris(TetrisZeroRom::data, TetrisZeroRom::length, true);
     const bool loaded = displayReady && validCartridge && (zero ? beginZero(zeroSettings()) :
-        nes.load(tetris ? TetrisRom::data : FlappyRom::data, tetris ? TetrisRom::length : FlappyRom::length));
+        nes.load(tetris ? TetrisRom::data : geometry ? GeometryRom::data : FlappyRom::data,
+                 tetris ? TetrisRom::length : geometry ? GeometryRom::length : FlappyRom::length));
     const bool ntscCartridge = tetris || zero || !loaded || nes.frameRate() == 60;
     if (!loaded || !ntscCartridge) {
-      runtimeNotice = !ntscCartridge ? "Import an NTSC ROM" : !validCartridge ? "Unsupported Tetris cartridge" :
-          displayReady ? nes.error() : "Tetris needs a 135x240 display";
+      runtimeNotice = !ntscCartridge ? "Import an NTSC ROM" : !validCartridge ?
+          (geometry ? "Import Famidash v1.2.8" : "Unsupported Tetris cartridge") :
+          displayReady ? nes.error() : geometry ? "Geometry needs 240x135" : "Tetris needs a 135x240 display";
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
       handledGameRequest = app.gameRequest;
       app.openMenu(flappy::MenuPage::ChangeGame);
@@ -1043,13 +1074,23 @@ void handleGameRequest() {
     }
     nes.setPal(false);
     configureNesPerformance();
+    if (geometry) {
+      nativeGeometry = true;
+      geometryRenderer.reset();
+      geometryController.reset();
+      geometryLauncher.request(app.settings.geometryLevel);
+      runtimeNotice = "";
+      handledGeometryRequest = app.geometryRequest;
+      const uint8_t noRgb[30] = {};
+      nes.setVideoRowMask(noRgb, sizeof(noRgb));
+    }
     if (tetris) {
       tetrisLaunching = true;
       tetrisLaunchStage = tetrisStableFrames = 0;
       tetrisOptions.level = app.settings.tetrisLevel;
       tetrisOptions.trainer = app.settings.tetrisGameType;
       tetrisOptions.pal = app.settings.tetrisPal;
-    } else if (!zero) {
+    } else if (!zero && !geometry) {
       nativeMario = marioCartridge.supported() && marioViewport.configure(M5.Display.width(), M5.Display.height());
       marioLauncher.reset(nativeMario);
       marioController.reset();
@@ -1107,9 +1148,24 @@ uint8_t tetrisLaunchInput() {
 }
 
 void handleTetrisRequests(uint32_t nowMs) {
+  if (handledGeometryRequest != app.geometryRequest) {
+    handledGeometryRequest = app.geometryRequest;
+    if (nativeGeometry) {
+      asyncDisplay.drain();
+      stopGameAudio();
+      nes.softReset();
+      geometryRenderer.reset();
+      geometryController.reset();
+      geometryLauncher.request(app.settings.geometryLevel);
+      runtimeNotice = "";
+      pendingNesButtons = pendingControllerNesButtons = geometryHeld = 0;
+      geometryButtons.reset();
+      nextNesTick = micros();
+    }
+  }
   if (handledRestart != app.gameRestartRequest) {
     handledRestart = app.gameRestartRequest;
-    if (app.currentGame == flappy::GameTitle::Nes) {
+    if (app.currentGame == flappy::GameTitle::Nes || app.currentGame == flappy::GameTitle::GeometryDash) {
       stopGameAudio();
       if (nativeMario) {
         if (!nes.load(FlappyRom::data, FlappyRom::length)) {
@@ -1242,7 +1298,8 @@ void showFrame(uint32_t nowMs) {
   if (previousMenu != app.menuOpen()) invalidateDisplay();
   previousMenu = app.menuOpen();
   if (emulatedGame() && app.menuOpen()) gameMessageShown = 0;
-  const bool landscape = app.currentGame == flappy::GameTitle::Nes && !app.menuOpen();
+  const bool landscape = (app.currentGame == flappy::GameTitle::Nes ||
+      app.currentGame == flappy::GameTitle::GeometryDash) && !app.menuOpen();
   setNesDisplay(landscape);
   if (tetrisLike() && !app.menuOpen()) {
     if (tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || zeroLaunching || zeroFinishedRound)) {
@@ -1395,7 +1452,8 @@ flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false) {
 
 void clearPendingInput() {
   pendingAction = pendingPadAction = false;
-  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = 0;
+  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = geometryHeld = 0;
+  geometryButtons.reset();
   pendingTetrisDrop = pendingControllerTetrisDrop = false;
   controllerDownTracking = false;
   tetrisButtons.reset();
@@ -1515,6 +1573,7 @@ void setup() {
   app.setSkinNames(skinNames, count);
   marioCartridge.configure(FlappyRom::data, FlappyRom::length);
   app.setNesAvailable(FlappyRom::length > 0);
+  app.setGeometryDashAvailable(GeometryRom::length > 0);
   app.setNesTitle(marioCartridge.supported() ? "Mario" : FlappyRom::title);
   app.setTetrisAvailable(flappy::RomFingerprint::tetris(TetrisRom::data, TetrisRom::length, false) &&
       M5.Display.width() >= 131 && M5.Display.height() >= 240);
@@ -1562,6 +1621,9 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5FLAPPY")) {
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
       app.closeMenu(); handleGameRequest();
+    } else if (!strcmp(command, "M5GEOMETRY")) {
+      app.setCurrentGame(flappy::GameTitle::GeometryDash);
+      app.closeMenu(); handleGameRequest();
     } else if (!strcmp(command, "M5MARIO")) {
       app.setCurrentGame(flappy::GameTitle::Nes);
       app.closeMenu(); handleGameRequest();
@@ -1572,6 +1634,18 @@ void serviceDiagnostics() {
     } else if (!strncmp(command, "M5SKIN ", 7)) {
       unsigned skin = 0;
       if (sscanf(command + 7, "%u", &skin) == 1 && skin < renderer->skinCount()) app.setSkin(uint8_t(skin));
+    } else if (!strncmp(command, "M5PAD ", 6)) {
+      unsigned mask = 0, frames = 0;
+      if (sscanf(command + 6, "%x %u", &mask, &frames) == 2 && mask <= 255 && frames <= 600) {
+        diagnosticPad = uint8_t(mask);
+        diagnosticPadFrames = uint16_t(frames);
+      }
+    } else if (!strncmp(command, "M5LEVEL ", 8)) {
+      unsigned level = 0;
+      if (sscanf(command + 8, "%u", &level) == 1 && level < flappy::GeometryLevelCount) {
+        app.setGeometryLevel(uint8_t(level));
+        app.requestGameRestart();
+      }
     } else if (!strcmp(command, "M5RUN")) {
       marioBenchmarkFrames = 600;
     } else if (!strcmp(command, "M5TIMING")) {
@@ -1639,6 +1713,15 @@ void serviceDiagnostics() {
             unsigned(marioCartridge.screen(nes)), unsigned(nes.readRam(0x770)), unsigned(nes.readRam(0x772)),
             player.y, player.height, marioViewport.worldTop(), unsigned(nes.frameRate()),
             unsigned(nes.videoDivisor()), unsigned(marioLaunching));
+      }
+      if (nativeGeometry) {
+        flappy::GeometryScene scene;
+        scene.sample([](uint16_t address) { return nes.readRam(address); });
+        Serial.printf("GEOMETRY state=%u level=%u mode=%u x=%u y=%u scroll_x=%lu scroll_y=%u hz=%u divisor=%u\n",
+            unsigned(scene.state), unsigned(scene.level), unsigned(scene.mode),
+            unsigned(scene.players[0].pixelX()), unsigned(scene.players[0].pixelY()),
+            (unsigned long)scene.scrollX, unsigned(scene.scrollY), unsigned(nes.frameRate()),
+            unsigned(nes.videoDivisor()));
       }
       if (app.currentGame == flappy::GameTitle::TetrisZero)
         Serial.printf("ZERO stage=%u players=%u level1=%u level2=%u active1=%u active2=%u launch=%u linkframe=%lu\n",
@@ -1713,8 +1796,13 @@ void loop() {
   const bool tetris = tetrisLike();
   const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
   const bool padConnected = controllerConnected;
+  const bool geometry = app.currentGame == flappy::GameTitle::GeometryDash;
+  const auto geometryInput = geometryButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
+      M5.BtnPWR.wasClicked(), geometry && !padConnected && !app.menuOpen(), nowMs);
+  geometryHeld = geometryInput.held;
+  pendingNesButtons |= geometryInput.pressed;
   pendingNesButtons |= nesSystemButton.update(M5.BtnA.isPressed(),
-      app.currentGame == flappy::GameTitle::Nes && !app.menuOpen(), nowMs);
+      (app.currentGame == flappy::GameTitle::Nes || (geometry && padConnected)) && !app.menuOpen(), nowMs);
   const bool lobby = tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || (zeroLinked() && (zeroLaunching || zeroFinishedRound)));
   const auto internal = tetrisButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
       M5.BtnPWR.wasClicked(), app.settings.tetrisControls,
@@ -1853,7 +1941,7 @@ void loop() {
         } else {
           input1 = frameTetris && tetrisLaunching ? tetrisLaunchInput() :
               uint8_t((frameTetris ? tetrisControllerButtons(millis()) :
-                  nesButtons(padButtons) | pendingControllerNesButtons) | pendingNesButtons | tetrisHeld);
+                  nesButtons(padButtons) | pendingControllerNesButtons) | pendingNesButtons | tetrisHeld | geometryHeld);
           if (frameTetris && !tetrisLaunching) {
             const bool drop = tetrisSoftDrop.update(pendingTetrisDrop || pendingControllerTetrisDrop,
                 (input1 & flappy::NesRuntime::Down) != 0, nes.readRam(0x41),
@@ -1862,6 +1950,22 @@ void loop() {
             if (drop) input1 = uint8_t((input1 & ~(flappy::NesRuntime::Left | flappy::NesRuntime::Right)) | flappy::NesRuntime::Down);
           }
           consumedInput = true;
+        }
+        if (nativeGeometry) {
+          const auto controls = geometryController.update(input1);
+          if (!geometryLauncher.active() && (controls.openSettings || nes.readRam(0x0498) == 1 || nes.readRam(0x0498) == 6)) {
+            app.openMenu(flappy::MenuPage::GameSettings);
+            runFrame = false;
+          } else if (geometryLauncher.active()) {
+            const auto launch = geometryLauncher.update(nes.readRam(0x0498), nes.readRam(0x047b));
+            if (launch.writeLevel) nes.writeRam(0x047b, launch.level);
+            input1 = launch.buttons;
+          } else input1 = controls.buttons;
+          if (geometryLauncher.failed()) {
+            runtimeNotice = "Restart level to retry";
+            app.openMenu(flappy::MenuPage::GameSettings);
+            runFrame = false;
+          }
         }
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
         const uint32_t workStart = micros();
@@ -1900,13 +2004,50 @@ void loop() {
             nes.setVideoRows(frameZero && zeroOptions.players == 2 ? 8 : 24,
                 frameZero && zeroOptions.players == 2 ? 223 : 215);
           }
-          const uint8_t videoInterval = nativeMario ? 1 : frameZero && zeroOptions.players == 2 ? 3 : 2;
+          const uint8_t videoInterval = nativeMario || nativeGeometry ? 1 : frameZero && zeroOptions.players == 2 ? 3 : 2;
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
           nes.setVideoDivisor(benchmarkVideoDivisor ? benchmarkVideoDivisor : videoInterval);
 #else
           nes.setVideoDivisor(videoInterval);
 #endif
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+          if (diagnosticPadFrames) { input1 |= diagnosticPad; --diagnosticPadFrames; }
+#endif
           stepped = nes.step(input1, input2);
+          if (stepped && nativeGeometry) {
+            asyncDisplay.drain();
+            const uint32_t drawnAt = micros();
+            const auto readRam = [](uint16_t address) { return nes.readRam(address); };
+            const auto readRom = [](uint32_t offset) {
+              return offset < GeometryRom::length ? GeometryRom::data[offset] : uint8_t(0);
+            };
+            flappy::GeometryScene scene;
+            scene.sample(readRam);
+            flappy::GeometryRenderOptions options;
+            options.attempt = scene.attempt;
+            options.progress = scene.percentage(readRom);
+            options.useSourceColor = true;
+            options.backgroundColor = nes.core()->nes_ppu.palette[0];
+            options.wireOrder = asyncDisplay.enabled();
+            if (geometryLauncher.active()) {
+              scene.state = 1;
+              options.status = "PREPARING LEVEL";
+              options.levelTitle = flappy::geometryLevelName(app.settings.geometryLevel);
+              options.footer = "Hold right: menu";
+            }
+            geometryRenderer.draw(scene, readRam, readRom, canvasStorage, options);
+            if (asyncDisplay.submitBorrowedFrame(canvasStorage, 240, 135, options.wireOrder)) {
+              asyncDisplay.submitEndFrame();
+            } else {
+              if (options.wireOrder) for (unsigned i = 0; i < 240u * 135u; ++i) {
+                const uint16_t color = canvasStorage[i];
+                canvasStorage[i] = uint16_t((color << 8) | (color >> 8));
+              }
+              submitDisplay(0, 0, 240, 135, canvasStorage);
+              if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
+            }
+            recordLcdFrame(135, drawnAt);
+          }
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
           if (stepped && timingProbe) {
             const uint32_t stamp = micros();

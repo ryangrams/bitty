@@ -3,6 +3,9 @@
 #include "../firmware/flappy/nes_runtime.h"
 #include "../firmware/flappy/rom_fingerprint.h"
 #include "../firmware/flappy/tetris_gym.h"
+#include "../firmware/flappy/geometry_renderer.h"
+#include "../firmware/flappy/geometry_input.h"
+#include "../firmware/flappy/geometry_launcher.h"
 
 #include <cassert>
 #include <cstring>
@@ -13,6 +16,9 @@
 namespace flappy { namespace coop { enum class Role { Off, Host }; } }
 
 // The real launcher runs below with a real emulator and small hardware adapters.
+struct GeometryButtons { void reset() {} };
+struct AsyncDisplay { void drain() {} } asyncDisplay;
+namespace GeometryRom { const uint8_t* data = nullptr; size_t length = 0; }
 namespace FlappyRom { const uint8_t* data = nullptr; size_t length = 0; }
 namespace TetrisRom { const uint8_t* data = nullptr; size_t length = 0; }
 namespace TetrisZeroRom { const uint8_t* data = nullptr; size_t length = 0; }
@@ -32,6 +38,12 @@ struct Link {
   const Session& session() const { return value; }
 } coopLink;
 
+GeometryButtons geometryButtons;
+flappy::GeometryRenderer geometryRenderer;
+flappy::GeometryController geometryController;
+flappy::GeometryLauncher geometryLauncher;
+uint32_t handledGeometryRequest = 0;
+uint8_t geometryHeld = 0;
 flappy::AppModel app;
 flappy::NesRuntime nes;
 flappy::MarioCartridge marioCartridge;
@@ -50,6 +62,7 @@ uint8_t tetrisLaunchStage = 0, tetrisStableFrames = 0;
 bool piezoDriver = true, pendingTetrisDrop = false, pendingControllerTetrisDrop = false;
 bool controllerDownTracking = false, pendingPadAction = false, pendingAction = false;
 bool tetrisLaunching = false, zeroLaunching = false, marioLaunching = false, nativeMario = false;
+bool nativeGeometry = false;
 bool landscape = false;
 int16_t (*nesAudioBuffers)[512] = nullptr;
 const char* runtimeNotice = "";
@@ -119,6 +132,34 @@ static void checkLoad(bool nes2, bool pal, unsigned mapper) {
   assert(!nes.ready() && renderer->cacheEnabled);
 }
 
+static void checkGeometrySlot() {
+  auto mario = cartridge(false, false, 0);
+  auto geometry = cartridge(true, false, 4);
+  geometry[6] |= 0x0a;
+  geometry[10] = 0x70;
+  geometry[12] = 2;
+  app = flappy::AppModel();
+  app.setNesAvailable(true);
+  app.setGeometryDashAvailable(true);
+  FlappyRom::data = mario.data(); FlappyRom::length = mario.size();
+  GeometryRom::data = geometry.data(); GeometryRom::length = geometry.size();
+  assert(app.setCurrentGame(flappy::GameTitle::GeometryDash));
+  handledGameRequest = UINT32_MAX;
+  nativeMario = marioLaunching = true;
+  handleGameRequest();
+  assert(!nes.ready() && !nativeMario && !nativeGeometry && !marioLaunching);
+  assert(std::strcmp(runtimeNotice, "Import Famidash v1.2.8") == 0);
+  assert(app.currentGame == flappy::GameTitle::FlappyBird);
+  assert(app.menu.page == flappy::MenuPage::ChangeGame);
+  assert(app.setCurrentGame(flappy::GameTitle::Nes));
+  handleGameRequest();
+  assert(nes.ready() && nes.core()->nes_rom.mapper_number == 0);
+  assert(FlappyRom::data == mario.data() && GeometryRom::data == geometry.data());
+  assert(app.setCurrentGame(flappy::GameTitle::FlappyBird));
+  handleGameRequest();
+  assert(!nes.ready());
+}
+
 int main() {
   checkLoad(false, false, 0);
   checkLoad(false, true, 0);
@@ -126,6 +167,7 @@ int main() {
   checkLoad(true, true, 0);
   checkLoad(true, true, 37);
   checkLoad(true, false, 37);
+  checkGeometrySlot();
   assert(nesAudioBuffers == nullptr);
   std::cout << "Firmware launcher accepts NTSC, rejects PAL and resets game state\n";
 }

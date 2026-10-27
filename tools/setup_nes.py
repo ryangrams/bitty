@@ -201,8 +201,7 @@ def patch(relative, text):
     uint8_t host_pcm_enabled;
     uint8_t host_pcm_valid;
     uint8_t host_video_window_enabled;
-    uint8_t host_video_first[2];
-    uint8_t host_video_last[2];
+    uint8_t host_video_rows[(NES_HEIGHT + 7) / 8];
     uint8_t* host_prg_reads[4];
     uint8_t* host_prg_cache;
     uint8_t* host_prg_cache_extra;
@@ -295,12 +294,11 @@ static inline void nes_render_background_opacity_line(nes_t* nes, uint16_t scanl
 #endif /* NES_HOST_VIDEO_CONTROL */
 
 typedef struct {""")
-        text = replace_once(text, "static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){", """/* Rows outside the host's windows retain PPU fetches and sprite status.
+        text = replace_once(text, "static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){", """/* Rows outside the host's selection retain PPU fetches and sprite status.
  * Their RGB data is unused by the host and does not need composition. */
 static inline int nes_video_row_enabled(const nes_t* nes, uint16_t row) {
     return !nes->host_video_window_enabled ||
-           (row >= nes->host_video_first[0] && row <= nes->host_video_last[0]) ||
-           (row >= nes->host_video_first[1] && row <= nes->host_video_last[1]);
+           (nes->host_video_rows[row >> 3u] & (uint8_t)(1u << (row & 7u)));
 }
 
 static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){""")
@@ -557,7 +555,7 @@ def prepare(dependency_root=DEFAULT_ROOT, offline=False):
                            "mapper 0/1/4/37/118 registry", "24 kHz sample rate", "RGB565 palette derived from upstream RGB888 constants",
                            "file trainer helper guarded for filesystem-free builds",
                            "NES_VIDEO_DIVISOR skips video work while preserving emulated clocks",
-                           "runtime video divisor and two RGB row windows retain frame callbacks and offscreen PPU timing",
+                           "runtime video divisor, two RGB row windows and a 240-bit row selection retain frame callbacks and offscreen PPU timing",
                            "optional 16 KiB fixed-window PRG read cache preserves mapper ROM pointers",
                            "optional host PCM suppression retains exact APU phase, noise, DMC and IRQ state",
                            "skipped-frame opacity limited to sprite 0 when mapper fetches have no side effects",
@@ -576,6 +574,7 @@ def prepare(dependency_root=DEFAULT_ROOT, offline=False):
         "Source: " + REPOSITORY + "/tree/" + REVISION + "\n"
         "Locally modified for cooperative mapper 0/1/4/37/118 frames, RGB565 strips and 24 kHz audio.\n"
         "NES_VIDEO_DIVISOR controls video refresh; CPU, APU, sprite status and mapper timing run every frame.\n"
+        "RGB row windows and bitmaps preserve callbacks, mapper fetches, CPU/APU timing and sprite status.\n"
         "The scanline loop and tile pixels can use instruction RAM; the mapper opacity fallback remains in flash.\n"
         "Blank background tile rows preserve exact palette colors, clipping and opacity.\n"
         "Guarded NROM self-JMP batching preserves CPU cycles and interrupt boundaries without skipping frames.\n",

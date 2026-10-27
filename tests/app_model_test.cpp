@@ -75,7 +75,7 @@ static void everyMenuHasBack() {
   const MenuPage pages[] = {MenuPage::Home, MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
     MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume, MenuPage::Skins, MenuPage::Clock,
     MenuPage::Controller, MenuPage::TetrisLevel, MenuPage::TetrisType, MenuPage::TetrisControls,
-    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers, MenuPage::Sleep};
+    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers, MenuPage::Sleep, MenuPage::GeometryLevel};
   for (MenuPage page : pages) {
     d.app.openMenu(page);
     const uint8_t count = d.app.menuItemCount();
@@ -86,7 +86,8 @@ static void everyMenuHasBack() {
     d.tick(true);
     const bool nested = page == MenuPage::Modes || page == MenuPage::Skins || page == MenuPage::Clock ||
       page == MenuPage::Coop || page == MenuPage::TetrisLevel || page == MenuPage::TetrisType ||
-      page == MenuPage::TetrisControls || page == MenuPage::TetrisLink || page == MenuPage::TetrisZeroPlayers;
+      page == MenuPage::TetrisControls || page == MenuPage::TetrisLink || page == MenuPage::TetrisZeroPlayers ||
+      page == MenuPage::GeometryLevel;
     assert(page == MenuPage::Home ? !d.app.menuOpen() : d.app.menu.page == (nested ? MenuPage::GameSettings : MenuPage::Home));
   }
   for (unsigned i = 0; i < unsigned(Mode::Count); ++i) {
@@ -234,9 +235,9 @@ static void sleepSettingsDefaultsChoicesAndNavigation() {
 static void launcherBootAndImmediateChanges() {
   Driver d;
   assert(d.app.settings.bootGame == GameTitle::FlappyBird && d.app.currentGame == GameTitle::FlappyBird);
-  assert(d.app.gameRequest == 0 && !d.app.nesAvailable() && !d.app.tetrisAvailable() && !d.app.tetrisZeroAvailable());
+  assert(d.app.gameRequest == 0 && !d.app.nesAvailable() && !d.app.tetrisAvailable() && !d.app.tetrisZeroAvailable() && !d.app.geometryDashAvailable());
   d.app.setBestScore(Mode::Original, 9); d.tick(true);
-  for (GameTitle title : {GameTitle::Nes, GameTitle::Tetris, GameTitle::TetrisZero}) {
+  for (GameTitle title : {GameTitle::Nes, GameTitle::Tetris, GameTitle::TetrisZero, GameTitle::GeometryDash}) {
     assert(!d.app.setBootGame(title) && !d.app.setCurrentGame(title));
     assert(d.app.gameRequest == 0 && !d.app.settingsDirty);
   }
@@ -246,9 +247,10 @@ static void launcherBootAndImmediateChanges() {
     assert(std::string(d.app.menuLabel(0)) == "Flappy Bird");
     assert(std::string(d.app.menuLabel(1)) == "NES: no ROM");
     assert(std::string(d.app.menuLabel(2)) == "Tetris: no ROM");
-    assert(std::string(d.app.menuLabel(3)) == "Back");
-    assert(std::string(d.app.menuLabel(4)).empty());
-    for (uint8_t index : {uint8_t(1), uint8_t(2)}) {
+    assert(std::string(d.app.menuLabel(3)) == "Geometry Dash: no ROM");
+    assert(std::string(d.app.menuLabel(4)) == "Back");
+    assert(std::string(d.app.menuLabel(5)).empty());
+    for (uint8_t index : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
       d.app.menu.selection = index; d.tick(true);
       assert(d.app.menu.page == page && d.app.gameRequest == 0 && !d.app.settingsDirty);
     }
@@ -256,13 +258,13 @@ static void launcherBootAndImmediateChanges() {
   char title[] = "Super Mario Bros.";
   d.app.setNesTitle(title); title[0] = 'X';
   assert(std::string(d.app.nesTitle()) == "Super Mario Bros.");
-  d.app.setNesAvailable(true); d.app.setTetrisAvailable(true); d.app.setTetrisZeroAvailable(true);
+  d.app.setNesAvailable(true); d.app.setTetrisAvailable(true); d.app.setTetrisZeroAvailable(true); d.app.setGeometryDashAvailable(true);
   d.app.setTetrisTitle("TetrisGYM");
   assert(std::string(d.app.gameLabel(GameTitle::Tetris)) == "Tetris");
   char zeroTitle[] = "Tetris Zero";
   d.app.setTetrisZeroTitle(zeroTitle); zeroTitle[0] = 'X';
   assert(std::string(d.app.gameLabel(GameTitle::TetrisZero)) == "Tetris");
-  for (GameTitle titleChoice : {GameTitle::Nes, GameTitle::Tetris}) {
+  for (GameTitle titleChoice : {GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash}) {
     d.app.settingsDirty = false;
     assert(d.app.setBootGame(titleChoice));
     assert(d.app.currentGame == GameTitle::FlappyBird && d.app.settingsDirty);
@@ -299,6 +301,144 @@ static void launcherBootAndImmediateChanges() {
   d.app.setNesTitle(nullptr); d.app.setTetrisTitle(nullptr); d.app.setTetrisZeroTitle(nullptr);
   assert(std::string(d.app.nesTitle()) == "NES" && std::string(d.app.tetrisTitle()) == "Tetris");
   assert(std::string(d.app.tetrisZeroTitle()) == "Tetris Zero");
+}
+
+static void geometryDashLauncherSettingsAndAvailability() {
+  static_assert(uint8_t(GameTitle::FlappyBird) == 0, "Existing game ordinals remain stable");
+  static_assert(uint8_t(GameTitle::Nes) == 1, "Existing game ordinals remain stable");
+  static_assert(uint8_t(GameTitle::Tetris) == 2, "Existing game ordinals remain stable");
+  static_assert(uint8_t(GameTitle::TetrisZero) == 3, "Existing game ordinals remain stable");
+  static_assert(uint8_t(GameTitle::GeometryDash) == 4, "Geometry Dash is appended to the game enum");
+  assert(GameTitleCount == 5 && VisibleGameCount == 4);
+  const GameTitle visible[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash};
+  for (uint8_t index = 0; index < VisibleGameCount; ++index) {
+    assert(visibleGameTitle(index) == visible[index]);
+    assert(visibleGameIndex(visible[index]) == index);
+  }
+  assert(visibleGameIndex(GameTitle::TetrisZero) == 2);
+  assert(visibleGameTitle(VisibleGameCount) == GameTitle(UINT8_MAX));
+  assert(visibleGameIndex(GameTitle(UINT8_MAX)) == UINT8_MAX);
+
+  Driver d;
+  d.app.settings.bootGame = GameTitle::GeometryDash;
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::FlappyBird && !d.app.settingsDirty);
+  d.app.setGeometryDashAvailable(true);
+  assert(d.app.geometryDashAvailable() && std::string(d.app.gameLabel(GameTitle::GeometryDash)) == "Geometry Dash");
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::GeometryDash && d.app.gameRequest == 1);
+  for (MenuPage page : {MenuPage::BootGame, MenuPage::ChangeGame}) {
+    d.app.openMenu(page);
+    assert(d.app.menuItemCount() == 5 && std::string(d.app.menuLabel(3)) == "Geometry Dash");
+    for (uint8_t index = 0; index < d.app.menuItemCount(); ++index)
+      assert(std::string(d.app.menuValue(index)) == (index == 3 ? "*" : ""));
+    assert(std::string(d.app.menuLabel(4)) == "Back");
+    d.app.menu.selection = 4; d.tick(true);
+    assert(d.app.menu.page == MenuPage::Home && d.app.currentGame == GameTitle::GeometryDash);
+  }
+  d.app.openMenu(MenuPage::GameSettings);
+  assert(d.app.menuItemCount() == 3 && std::string(d.app.menuLabel(0)) == "Level");
+  assert(std::string(d.app.menuLabel(1)) == "Restart level" && std::string(d.app.menuLabel(2)) == "Back");
+  assert(std::string(d.app.menuValue(0)) == "Stereo Madness");
+  d.app.menu.selection = 2; d.tick(true);
+  assert(d.app.menu.page == MenuPage::Home && d.app.gameRestartRequest == 0);
+  d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = 1; d.tick(true);
+  assert(!d.app.menuOpen() && d.app.geometryRequest == 1 && d.app.gameRestartRequest == 0);
+  assert(d.app.currentGame == GameTitle::GeometryDash);
+
+  d.app.setGeometryDashAvailable(false);
+  assert(!d.app.geometryDashAvailable() && d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 2);
+  assert(d.app.settings.bootGame == GameTitle::GeometryDash && !d.app.settingsDirty);
+  assert(std::string(d.app.gameLabel(GameTitle::GeometryDash)) == "Geometry Dash: no ROM");
+  d.app.setGeometryDashAvailable(false);
+  assert(d.app.gameRequest == 2);
+  for (MenuPage page : {MenuPage::BootGame, MenuPage::ChangeGame}) {
+    d.app.openMenu(page); d.app.menu.selection = 3; d.tick(true);
+    assert(d.app.menu.page == page && d.app.currentGame == GameTitle::FlappyBird);
+    assert(d.app.gameRequest == 2 && !d.app.settingsDirty);
+  }
+  d.app.setGeometryDashAvailable(true);
+  d.app.openMenu(MenuPage::ChangeGame); d.app.menu.selection = 3; d.tick(true);
+  assert(!d.app.menuOpen() && d.app.currentGame == GameTitle::GeometryDash && d.app.gameRequest == 3);
+  assert(!d.app.tetrisFrontendActive() && !d.app.scoreEligible() && !d.app.autoPlaying());
+  d.app.openMenu(MenuPage::ChangeGame); d.app.menu.selection = 3; d.tick(true);
+  assert(!d.app.menuOpen() && d.app.gameRequest == 3);
+  d.app.settings.bootGame = GameTitle::FlappyBird;
+  d.app.openMenu(MenuPage::BootGame); d.app.menu.selection = 3; d.tick(true);
+  assert(d.app.menu.page == MenuPage::BootGame && d.app.settings.bootGame == GameTitle::GeometryDash && d.app.settingsDirty);
+  assert(d.app.currentGame == GameTitle::GeometryDash && d.app.gameRequest == 3);
+}
+
+static void geometryLevelSelectionAndRestartRequests() {
+  static_assert(uint8_t(MenuPage::GeometryLevel) == 18, "Geometry levels are appended to the menu enum");
+  const char* names[] = {
+    "Stereo Madness", "Back on Track", "Polargeist", "Dry Out", "Base After Base", "Can't Let Go",
+    "Jumper", "Time Machine", "Cycles", "xStep", "Clutterfunk", "Theory of Everything",
+    "Electroman Adventures", "Clubstep", "Electrodynamix", "Hexagon Force", "Blast Processing",
+    "Theory of Everything 2", "Geometrical Dominator", "Deadlocked", "Fingerdash", "Dash"
+  };
+  Driver d;
+  assert(d.app.settings.geometryLevel == 0 && d.app.geometryRequest == 0);
+  d.app.setGeometryDashAvailable(true);
+  assert(d.app.setCurrentGame(GameTitle::GeometryDash));
+  const uint32_t gameRequest = d.app.gameRequest;
+  const uint32_t roundsStarted = d.app.roundsStarted;
+  for (uint8_t index = 0; index < GeometryLevelCount; ++index) {
+    assert(std::string(geometryLevelName(index)) == names[index]);
+    d.app.settingsDirty = false;
+    d.app.openMenu(MenuPage::GameSettings);
+    assert(d.app.menuItemCount() == 3);
+    assert(std::string(d.app.menuLabel(0)) == "Level");
+    d.tick(true);
+    assert(d.app.menu.page == MenuPage::GeometryLevel);
+    assert(d.app.menu.selection == d.app.settings.geometryLevel);
+    assert(d.app.menuItemCount() == 23 && std::string(d.app.menuTitle()) == "Level");
+    assert(std::string(d.app.menuLabel(22)) == "Back" && std::string(d.app.menuLabel(23)).empty());
+    for (uint8_t option = 0; option < GeometryLevelCount; ++option) {
+      assert(std::string(d.app.menuLabel(option)) == geometryLevelLabel(option));
+      assert(std::string(d.app.menuValue(option)) == (option == d.app.settings.geometryLevel ? "*" : ""));
+    }
+    d.app.menu.selection = index;
+    d.tick(true);
+    assert(!d.app.menuOpen() && d.app.settings.geometryLevel == index);
+    assert(d.app.geometryRequest == unsigned(index + 1));
+    assert(d.app.settingsDirty == (index != 0));
+    assert(d.app.currentGame == GameTitle::GeometryDash && d.app.gameRequest == gameRequest);
+    assert(d.app.gameRestartRequest == 0 && d.app.roundsStarted == roundsStarted);
+    assert(d.app.tetrisRequest == 0 && d.app.tetrisZeroRequest == 0);
+  }
+  assert(std::string(geometryLevelName(22)).empty() && std::string(geometryLevelName(UINT8_MAX)).empty());
+  d.app.settingsDirty = false;
+  d.app.openMenu(MenuPage::GeometryLevel);
+  assert(d.app.menu.selection == 21);
+  d.tapMenu();
+  assert(d.app.menu.selection == 22);
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::GameSettings && d.app.geometryRequest == 22 && !d.app.settingsDirty);
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::GeometryLevel && d.app.menu.selection == 21);
+  d.app.menu.selection = 21;
+  d.tick(true);
+  assert(!d.app.menuOpen() && d.app.geometryRequest == 23 && !d.app.settingsDirty);
+  d.app.openMenu(MenuPage::GameSettings);
+  d.app.menu.selection = 1;
+  d.tick(true);
+  assert(!d.app.menuOpen() && d.app.geometryRequest == 24 && d.app.gameRestartRequest == 0);
+  assert(d.app.settings.geometryLevel == 21 && !d.app.settingsDirty);
+  d.app.setGeometryLevel(21);
+  assert(!d.app.settingsDirty && d.app.geometryRequest == 24);
+  d.app.setGeometryLevel(UINT8_MAX);
+  assert(d.app.settings.geometryLevel == 0 && d.app.settingsDirty && d.app.geometryRequest == 24);
+  d.app.settingsDirty = false;
+  d.app.setGeometryLevel(22);
+  assert(d.app.settings.geometryLevel == 0 && !d.app.settingsDirty);
+  d.app.geometryRequest = UINT32_MAX;
+  d.app.requestGameRestart();
+  assert(d.app.geometryRequest == 0 && d.app.gameRestartRequest == 0);
+  d.app.openMenu(MenuPage::GeometryLevel);
+  d.app.menu.selection = 22;
+  d.tapMenu();
+  assert(d.app.menu.selection == 0);
 }
 
 static void controllerMenuRequestsAndStatus() {
@@ -463,7 +603,7 @@ static void perGameSettingsAndZeroRequests() {
 
 static void unifiedTetrisLauncherAndPlayers() {
   Driver d;
-  assert(GameTitleCount == 4 && VisibleGameCount == 3);
+  assert(GameTitleCount == 5 && VisibleGameCount == 4);
   assert(d.app.settings.tetrisPlayers == 1 && d.app.selectedTetrisEngine() == GameTitle::Tetris);
   d.app.openTetrisSettings();
   assert(!d.app.menuOpen() && !d.app.tetrisFrontendActive());
@@ -479,8 +619,9 @@ static void unifiedTetrisLauncherAndPlayers() {
   assert(d.app.currentGame == GameTitle::TetrisZero && d.app.settings.tetrisZeroPlayers == 2);
   assert(d.app.settings.bootGame == GameTitle::Tetris && d.app.tetrisFrontendActive());
   d.app.openMenu(MenuPage::BootGame);
-  assert(d.app.menuItemCount() == 4 && std::string(d.app.menuLabel(2)) == "Tetris");
-  assert(std::string(d.app.menuLabel(3)) == "Back" && std::string(d.app.menuValue(2)) == "*");
+  assert(d.app.menuItemCount() == 5 && std::string(d.app.menuLabel(2)) == "Tetris");
+  assert(std::string(d.app.menuLabel(3)) == "Geometry Dash: no ROM" && std::string(d.app.menuLabel(4)) == "Back");
+  assert(std::string(d.app.menuValue(2)) == "*" && std::string(d.app.menuValue(3)).empty());
   d.app.openMenu(MenuPage::ChangeGame);
   assert(std::string(d.app.menuValue(2)) == "*");
   d.app.menu.selection = 2; d.tick(true);
@@ -784,6 +925,8 @@ int main() {
   volumeSettingsAndMenuNavigation();
   sleepSettingsDefaultsChoicesAndNavigation();
   launcherBootAndImmediateChanges();
+  geometryDashLauncherSettingsAndAvailability();
+  geometryLevelSelectionAndRestartRequests();
   controllerMenuRequestsAndStatus();
   perGameSettingsAndTetrisRequests();
   perGameSettingsAndZeroRequests();

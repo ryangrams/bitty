@@ -185,7 +185,7 @@ static void sameMachineState(const NesRuntime& reference, const NesRuntime& cand
 static void runtimeVideoWindowsPreserveMachineAndVisiblePixels() {
   auto rom = syntheticNrom();
   for (unsigned i = 0; i < 8192; ++i) rom[16 + 32768 + i] = uint8_t((i * 37u) ^ (i >> 4u));
-  for (bool hooks : {false, true}) {
+  for (bool masks : {false, true}) for (bool hooks : {false, true}) {
     NesRuntime reference, windowed, skipped;
     VideoTrace traces[3];
     NesRuntime* runtimes[] = {&reference, &windowed, &skipped};
@@ -206,8 +206,20 @@ static void runtimeVideoWindowsPreserveMachineAndVisiblePixels() {
     }
     for (unsigned frame = 0; frame < 120; ++frame) {
       const int worldTop = 32 + int(frame % 90u);
-      assert(windowed.setVideoRows(16, 31, worldTop, worldTop + 118));
-      assert(skipped.setVideoRows(16, 31, worldTop, worldTop + 118));
+      uint8_t rowMask[30] = {};
+      if (masks) {
+        const unsigned heights[] = {1, 80, 135, 180, 240};
+        const unsigned height = frame % 13u ? heights[frame % 5u] : 0;
+        for (unsigned row = 0; row < height; ++row) {
+          const unsigned sourceRow = row * 240u / height;
+          rowMask[sourceRow >> 3u] |= uint8_t(1u << (sourceRow & 7u));
+        }
+        assert(windowed.setVideoRowMask(rowMask, sizeof(rowMask)));
+        assert(skipped.setVideoRowMask(rowMask, sizeof(rowMask)));
+      } else {
+        assert(windowed.setVideoRows(16, 31, worldTop, worldTop + 118));
+        assert(skipped.setVideoRows(16, 31, worldTop, worldTop + 118));
+      }
       for (unsigned i = 0; i < 3; ++i) {
         auto* core = const_cast<nes_t*>(runtimes[i]->core());
         std::memset(core->nes_ppu.oam_data, 0xff, sizeof(core->nes_ppu.oam_data));
@@ -229,7 +241,8 @@ static void runtimeVideoWindowsPreserveMachineAndVisiblePixels() {
         assert(traces[0].audioHash == traces[i].audioHash);
         if (i == 2 && frame % 3u) continue;
         for (int y = 0; y < 240; ++y) {
-          if ((y < 16 || y > 31) && (y < worldTop || y > worldTop + 118)) continue;
+          if (masks ? !(rowMask[y >> 3] & (1u << (y & 7))) :
+              ((y < 16 || y > 31) && (y < worldTop || y > worldTop + 118))) continue;
           assert(std::equal(traces[0].pixels.begin() + y * 256, traces[0].pixels.begin() + (y + 1) * 256,
                             traces[i].pixels.begin() + y * 256));
         }
@@ -244,12 +257,21 @@ static void runtimeVideoWindowsPreserveMachineAndVisiblePixels() {
 
 static void runtimeVideoCadenceAndBounds() {
   NesRuntime runtime;
+  uint8_t rowMask[30] = {};
   assert(!runtime.setVideoDivisor(1));
   assert(!runtime.setVideoRows(16, 31));
+  assert(!runtime.setVideoRowMask(rowMask, sizeof(rowMask)));
   auto rom = syntheticNrom();
   assert(runtime.load(rom.data(), rom.size()));
   VideoTrace trace;
   runtime.setCallbacks(captureVideo, nullptr, &trace);
+  assert(!runtime.setVideoRowMask(nullptr, sizeof(rowMask)));
+  assert(!runtime.setVideoRowMask(rowMask, sizeof(rowMask) - 1));
+  assert(!runtime.setVideoRowMask(rowMask, sizeof(rowMask) + 1));
+  rowMask[0] = 0x81;
+  assert(runtime.setVideoRowMask(rowMask, sizeof(rowMask)));
+  rowMask[0] = 0;
+  assert(runtime.core()->host_video_rows[0] == 0x81);
   assert(!runtime.setVideoDivisor(0));
   assert(runtime.videoDivisor() == NES_VIDEO_DIVISOR);
   for (auto bounds : {std::vector<int>{-1, 5, -1, -1}, {5, 4, -1, -1}, {0, 240, -1, -1},
@@ -446,6 +468,61 @@ static void mmc3HeaderAndBankBounds() {
   rom = syntheticMmc3(4, 4, 0);
   assert(runtime.load(rom.data(), rom.size()));
   assert(runtime.core()->nes_rom.chr_rom && runtime.core()->nes_rom.sram);
+}
+
+static void mapper4FourScreenAndExplicitRam() {
+  auto rom = syntheticMmc3(4, 32, 32);
+  rom[6] = 0x4a;
+  rom[7] |= 8;
+  rom[8] = 0;
+  rom[10] = 0x70;
+  rom[12] = 2;
+  NesRuntime runtime;
+  assert(runtime.load(rom.data(), rom.size()));
+  assert(runtime.frameRate() == 60);
+  auto* core = const_cast<nes_t*>(runtime.core());
+  assert(core->nes_rom.four_screen && core->nes_rom.save_ram && core->nes_rom.sram);
+  assert(core->nes_rom.prg_rom == rom.data() + 16);
+  assert(core->nes_rom.chr_rom == rom.data() + 16 + 524288);
+  for (unsigned page = 0; page < 4; ++page) {
+    assert(core->nes_ppu.name_table[page] == core->nes_ppu.ppu_vram[page]);
+    assert(core->nes_ppu.name_table_mirrors[page] == core->nes_ppu.ppu_vram[page]);
+    core->nes_ppu.v_reg = uint16_t(0x2000 + page * 0x400 + 31);
+    nes_write_ppu_register(core, 0x2007, uint8_t(0x31 + page));
+  }
+  for (uint8_t mirroring : {uint8_t(0), uint8_t(1)}) {
+    core->nes_mapper.mapper_write(core, 0xa000, mirroring);
+    for (unsigned page = 0; page < 4; ++page) {
+      assert(core->nes_ppu.name_table[page] == core->nes_ppu.ppu_vram[page]);
+      assert(core->nes_ppu.name_table_mirrors[page] == core->nes_ppu.ppu_vram[page]);
+      assert(core->nes_ppu.ppu_vram[page][31] == 0x31 + page);
+    }
+  }
+  assert(runtime.writeRam(0x6000, 0x35) && runtime.writeRam(0x7fff, 0x53));
+  assert(runtime.readRam(0x6000) == 0x35 && runtime.readRam(0x7fff) == 0x53);
+  assert(runtime.step(0));
+
+  rom = syntheticMmc3(4, 2, 1);
+  rom[7] |= 8;
+  rom[8] = 0;
+  for (bool battery : {false, true}) {
+    rom[6] = uint8_t((rom[6] & ~2u) | (battery ? 2u : 0u));
+    for (unsigned value = 0; value < 256; ++value) {
+      rom[10] = uint8_t(value);
+      const bool allowed = value == 0 || value == 7 || (battery && value == 0x70);
+      assert(runtime.load(rom.data(), rom.size()) == allowed);
+      if (allowed) assert(runtime.core()->nes_rom.sram);
+    }
+  }
+  for (unsigned mapper : {0u, 1u, 37u, 118u}) {
+    auto other = mapper == 37 ? syntheticMmc3(mapper, 16, 32) : syntheticMmc3(mapper, 2, 1);
+    other[7] |= 8;
+    other[8] = 0;
+    for (uint8_t value : {uint8_t(7), uint8_t(0x70)}) {
+      other[10] = value;
+      assert(!runtime.load(other.data(), other.size()));
+    }
+  }
 }
 
 static std::vector<uint8_t> syntheticMmc1() {
@@ -662,6 +739,7 @@ int main() {
   mapper37BankSwitching();
   mapper118BankingMirroringAndIrq();
   mmc3HeaderAndBankBounds();
+  mapper4FourScreenAndExplicitRam();
   mapper1ResetAndRam();
   mapper1HeaderPolicy();
   guardedTetrisConfiguration();

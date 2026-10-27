@@ -2,6 +2,7 @@
 .github/workflows/ci.yml
 .gitignore
 LICENSE
+LICENSES/Famidash-MIT.txt
 LICENSES/FlapPyBird-MIT.txt
 LICENSES/M5StickC-MIT.txt
 LICENSES/PeakNES-Apache-2.0.txt
@@ -15,6 +16,7 @@ docs/ARCADE_RESEARCH.md
 docs/COOP.md
 docs/CONTROLLERS.md
 docs/DISTRIBUTION.md
+docs/GEOMETRY_DASH.md
 docs/NES.md
 docs/RIGHTS.md
 docs/SKINS_RESEARCH.md
@@ -27,6 +29,10 @@ firmware/flappy/controller_input.h
 firmware/flappy/coop_protocol.h
 firmware/flappy/flappy.ino
 firmware/flappy/game_core.h
+firmware/flappy/geometry_input.h
+firmware/flappy/geometry_scene.h
+firmware/flappy/geometry_renderer.h
+firmware/flappy/geometry_launcher.h
 firmware/flappy/menu_font.h
 firmware/flappy/mario_viewport.h
 firmware/flappy/nes_runtime.h
@@ -54,6 +60,10 @@ tests/coop_protocol_test.cpp
 tests/controller_input_test.cpp
 tests/ble_radio_test.cpp
 tests/game_core_test.cpp
+tests/geometry_input_test.cpp
+tests/geometry_scene_test.cpp
+tests/geometry_renderer_test.cpp
+tests/geometry_launcher_test.cpp
 tests/menu_font_test.cpp
 tests/mario_viewport_test.cpp
 tests/nes_runtime_test.cpp

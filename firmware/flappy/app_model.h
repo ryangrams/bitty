@@ -6,11 +6,44 @@
 
 namespace flappy {
 
-enum class GameTitle : uint8_t { FlappyBird, Nes, Tetris, TetrisZero };
-constexpr uint8_t GameTitleCount = 4;
-constexpr uint8_t VisibleGameCount = 3;
+enum class GameTitle : uint8_t { FlappyBird, Nes, Tetris, TetrisZero, GeometryDash };
+constexpr uint8_t GameTitleCount = 5;
+constexpr uint8_t VisibleGameCount = 4;
+
+inline GameTitle visibleGameTitle(uint8_t index) {
+  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash};
+  return index < VisibleGameCount ? titles[index] : GameTitle(UINT8_MAX);
+}
+
+inline uint8_t visibleGameIndex(GameTitle title) {
+  switch (title) {
+    case GameTitle::FlappyBird: return 0;
+    case GameTitle::Nes: return 1;
+    case GameTitle::Tetris:
+    case GameTitle::TetrisZero: return 2;
+    case GameTitle::GeometryDash: return 3;
+    default: return UINT8_MAX;
+  }
+}
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
-enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel };
+
+constexpr uint8_t GeometryLevelCount = 22;
+
+inline const char* geometryLevelName(uint8_t index) {
+  constexpr const char* names[] = {
+    "Stereo Madness", "Back on Track", "Polargeist", "Dry Out", "Base After Base", "Can't Let Go",
+    "Jumper", "Time Machine", "Cycles", "xStep", "Clutterfunk", "Theory of Everything",
+    "Electroman Adventures", "Clubstep", "Electrodynamix", "Hexagon Force", "Blast Processing",
+    "Theory of Everything 2", "Geometrical Dominator", "Deadlocked", "Fingerdash", "Dash"
+  };
+  static_assert(sizeof(names) / sizeof(names[0]) == GeometryLevelCount, "Every original level has a name");
+  return index < GeometryLevelCount ? names[index] : "";
+}
+
+inline const char* geometryLevelLabel(uint8_t index) {
+  return index == 17 ? "Theory of Everyth. 2" : geometryLevelName(index);
+}
 
 struct Settings {
   GameTitle bootGame = GameTitle::FlappyBird;
@@ -33,6 +66,7 @@ struct Settings {
   uint8_t clockMinute = 0;
   bool clock24Hour = true;
   uint8_t coopRole = 0;
+  uint8_t geometryLevel = 0;
 };
 
 struct MenuState {
@@ -90,6 +124,7 @@ class AppModel {
   GameTitle currentGame = GameTitle::FlappyBird;
   uint32_t gameRequest = 0;
   uint32_t gameRestartRequest = 0;
+  uint32_t geometryRequest = 0;
   uint32_t tetrisRequest = 0;
   uint32_t tetrisZeroRequest = 0;
   uint32_t tetrisCalibrateRequest = 0;
@@ -131,8 +166,22 @@ class AppModel {
 
   const char* nesTitle() const { return nesTitle_; }
 
+  bool geometryDashAvailable() const { return geometryDashAvailable_; }
+
+  void setGeometryDashAvailable(bool available) {
+    geometryDashAvailable_ = available;
+    if (!available && currentGame == GameTitle::GeometryDash) setCurrentGame(GameTitle::FlappyBird);
+  }
+
+  void setGeometryLevel(uint8_t level) {
+    if (level >= GeometryLevelCount) level = 0;
+    if (settings.geometryLevel != level) settingsDirty = true;
+    settings.geometryLevel = level;
+  }
+
   const char* gameLabel(GameTitle title) const {
     if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
+    if (title == GameTitle::GeometryDash) return geometryDashAvailable_ ? "Geometry Dash" : "Geometry Dash: no ROM";
     if (title == GameTitle::Tetris || title == GameTitle::TetrisZero)
       return tetrisAvailable_ || tetrisZeroAvailable_ ? "Tetris" : "Tetris: no ROM";
     return "Flappy Bird";
@@ -242,7 +291,8 @@ class AppModel {
   }
 
   void requestGameRestart() {
-    ++gameRestartRequest;
+    if (currentGame == GameTitle::GeometryDash) ++geometryRequest;
+    else ++gameRestartRequest;
     if (currentGame == GameTitle::FlappyBird) restart();
     closeMenu();
   }
@@ -377,7 +427,7 @@ class AppModel {
 
   void openMenu(MenuPage page = MenuPage::Home) {
     menu.page = page;
-    menu.selection = 0;
+    menu.selection = page == MenuPage::GeometryLevel && settings.geometryLevel < GeometryLevelCount ? settings.geometryLevel : 0;
   }
 
   void openMenuFromController() {
@@ -398,6 +448,7 @@ class AppModel {
       case MenuPage::ChangeGame: return "Change Game";
       case MenuPage::GameSettings: return "Game Settings";
       case MenuPage::TetrisLevel: return "Starting level";
+      case MenuPage::GeometryLevel: return "Level";
       case MenuPage::TetrisType: return "Game type";
       case MenuPage::TetrisControls: return "Controls";
       case MenuPage::TetrisLink: return "Tetris link";
@@ -420,7 +471,8 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return VisibleGameCount + 1;
       case MenuPage::GameSettings:
-        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : 2;
+        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : currentGame == GameTitle::GeometryDash ? 3 : 2;
+      case MenuPage::GeometryLevel: return GeometryLevelCount + 1;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 4;
       case MenuPage::TetrisLevel: return currentGame == GameTitle::TetrisZero ? 11 : 31;
@@ -448,7 +500,7 @@ class AppModel {
         return labels[index];
       }
       case MenuPage::BootGame:
-      case MenuPage::ChangeGame: return gameLabel(GameTitle(index));
+      case MenuPage::ChangeGame: return gameLabel(visibleGameTitle(index));
       case MenuPage::GameSettings:
         if (currentGame == GameTitle::FlappyBird) {
           constexpr const char* labels[] = {"Mode", "Skins", "Set clock", "Co-op link"};
@@ -462,7 +514,9 @@ class AppModel {
           constexpr const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Link", "Board size", "Start / restart"};
           return labels[index];
         }
+        if (currentGame == GameTitle::GeometryDash) return index == 0 ? "Level" : "Restart level";
         return "Restart game";
+      case MenuPage::GeometryLevel: return geometryLevelLabel(index);
       case MenuPage::TetrisLevel:
         snprintf(labelBuffer_, sizeof(labelBuffer_), "Level %u", unsigned(index));
         return labelBuffer_;
@@ -554,8 +608,9 @@ class AppModel {
           if (index == 3) return settings.tetrisControls == 1 ? "Tilt rotate" : "Tilt move";
           if (index == 4) return tetrisLinkRole == 1 ? "Host" : tetrisLinkRole == 2 ? "Join" : "Off";
           if (index == 5) return settings.tetrisPlayers == 2 ? "6px (2P)" : settings.tetrisLarge ? "Large 11px" : "Native 8px";
-        }
+        } else if (currentGame == GameTitle::GeometryDash && index == 0) return geometryLevelLabel(settings.geometryLevel);
         break;
+      case MenuPage::GeometryLevel: return index == settings.geometryLevel ? "*" : "";
       case MenuPage::TetrisLevel: return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroLevel : settings.tetrisLevel) ? "*" : "";
       case MenuPage::TetrisType:
         return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroGameType : settings.tetrisGameType == 6 ? 1 : 0) ? "*" : "";
@@ -565,8 +620,8 @@ class AppModel {
         if (index == 2) return "Hold unit steady";
         break;
       case MenuPage::Controller: return index == 0 ? controllerStatus : "";
-      case MenuPage::BootGame: return index == uint8_t(settings.bootGame == GameTitle::TetrisZero ? GameTitle::Tetris : settings.bootGame) ? "*" : "";
-      case MenuPage::ChangeGame: return index == uint8_t(currentGame == GameTitle::TetrisZero ? GameTitle::Tetris : currentGame) ? "*" : "";
+      case MenuPage::BootGame: return index == visibleGameIndex(settings.bootGame) ? "*" : "";
+      case MenuPage::ChangeGame: return index == visibleGameIndex(currentGame) ? "*" : "";
       case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
       case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
@@ -663,6 +718,7 @@ class AppModel {
   const char* const* skinNames_ = nullptr;
   uint8_t skinCount_ = 1;
   bool nesAvailable_ = false;
+  bool geometryDashAvailable_ = false;
   bool tetrisAvailable_ = false;
   bool tetrisZeroAvailable_ = false;
   char tetrisZeroTitle_[64] = "Tetris Zero";
@@ -688,7 +744,8 @@ class AppModel {
   bool gameAvailable(GameTitle title) const {
     return title == GameTitle::FlappyBird || (title == GameTitle::Nes && nesAvailable_) ||
            (title == GameTitle::Tetris && tetrisAvailable_) ||
-           (title == GameTitle::TetrisZero && tetrisZeroAvailable_);
+           (title == GameTitle::TetrisZero && tetrisZeroAvailable_) ||
+           (title == GameTitle::GeometryDash && geometryDashAvailable_);
   }
 
   bool automatedMode() const { return settings.mode == Mode::Clock || settings.mode == Mode::Demo; }
@@ -766,7 +823,8 @@ class AppModel {
       else if (menu.page == MenuPage::Modes || menu.page == MenuPage::Skins || menu.page == MenuPage::Clock ||
                menu.page == MenuPage::Coop || menu.page == MenuPage::TetrisLevel ||
                menu.page == MenuPage::TetrisType || menu.page == MenuPage::TetrisControls ||
-               menu.page == MenuPage::TetrisLink || menu.page == MenuPage::TetrisZeroPlayers) openMenu(MenuPage::GameSettings);
+               menu.page == MenuPage::TetrisLink || menu.page == MenuPage::TetrisZeroPlayers ||
+               menu.page == MenuPage::GeometryLevel) openMenu(MenuPage::GameSettings);
       else openMenu();
       return;
     }
@@ -777,10 +835,12 @@ class AppModel {
         openMenu(destinations[menu.selection]);
         break;
       }
-      case MenuPage::BootGame: setBootGame(GameTitle(menu.selection)); break;
-      case MenuPage::ChangeGame:
-        if (menu.selection == uint8_t(GameTitle::Tetris) ? activateTetris() : setCurrentGame(GameTitle(menu.selection))) closeMenu();
+      case MenuPage::BootGame: setBootGame(visibleGameTitle(menu.selection)); break;
+      case MenuPage::ChangeGame: {
+        const GameTitle title = visibleGameTitle(menu.selection);
+        if (title == GameTitle::Tetris ? activateTetris() : setCurrentGame(title)) closeMenu();
         break;
+      }
       case MenuPage::GameSettings:
         if (currentGame == GameTitle::FlappyBird) {
           constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
@@ -802,7 +862,17 @@ class AppModel {
           else if (menu.selection == 4) openMenu(MenuPage::TetrisLink);
           else if (menu.selection == 5) { if (settings.tetrisPlayers == 1) setTetrisLarge(!settings.tetrisLarge); }
           else { ++tetrisZeroRequest; closeMenu(); }
+        } else if (currentGame == GameTitle::GeometryDash) {
+          if (menu.selection == 0) openMenu(MenuPage::GeometryLevel);
+          else requestGameRestart();
         } else requestGameRestart();
+        break;
+      case MenuPage::GeometryLevel:
+        if (currentGame == GameTitle::GeometryDash && geometryDashAvailable_) {
+          setGeometryLevel(menu.selection);
+          ++geometryRequest;
+          closeMenu();
+        }
         break;
       case MenuPage::TetrisLevel:
         if (currentGame == GameTitle::TetrisZero) setTetrisZeroLevel(menu.selection);
