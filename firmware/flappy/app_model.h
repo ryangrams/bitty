@@ -10,12 +10,13 @@ enum class GameTitle : uint8_t { FlappyBird, Nes, Tetris, TetrisZero };
 constexpr uint8_t GameTitleCount = 4;
 constexpr uint8_t VisibleGameCount = 3;
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
-enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep };
 
 struct Settings {
   GameTitle bootGame = GameTitle::FlappyBird;
   Mode mode = Mode::Original;
   uint8_t brightnessIndex = 1;
+  uint8_t sleepIndex = 0;
   uint8_t tetrisLevel = 0;
   uint8_t tetrisGameType = 0;
   uint8_t tetrisControls = 0;
@@ -82,6 +83,7 @@ class AppModel {
  public:
   static constexpr uint32_t MenuHoldMs = 700;
   static constexpr uint32_t AutoResumeFrames = 120;
+  static constexpr uint8_t SleepChoiceCount = 6;
   Game game;
   Settings settings;
   MenuState menu;
@@ -300,6 +302,19 @@ class AppModel {
     settings.volumeIndex = index;
   }
 
+  uint32_t sleepTimeoutSeconds() const {
+    constexpr uint16_t seconds[] = {30, 60, 120, 300, 600, 0};
+    return seconds[settings.sleepIndex < SleepChoiceCount ? settings.sleepIndex : 0];
+  }
+
+  uint32_t sleepTimeoutMs() const { return sleepTimeoutSeconds() * 1000u; }
+
+  void setSleep(uint8_t index) {
+    if (index >= SleepChoiceCount) index = 0;
+    if (settings.sleepIndex != index) settingsDirty = true;
+    settings.sleepIndex = index;
+  }
+
   void setSkinNames(const char* const* names, uint8_t count) {
     skinNames_ = names;
     setSkinCount(count);
@@ -390,6 +405,7 @@ class AppModel {
       case MenuPage::Modes: return "Mode";
       case MenuPage::Brightness: return "Brightness";
       case MenuPage::Volume: return "Volume";
+      case MenuPage::Sleep: return "Sleep";
       case MenuPage::Skins: return "Skins";
       case MenuPage::Clock: return "Set clock";
       case MenuPage::Controller: return "Controller";
@@ -400,7 +416,7 @@ class AppModel {
 
   uint8_t menuItemCount() const {
     switch (menu.page) {
-      case MenuPage::Home: return 7;
+      case MenuPage::Home: return 8;
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return VisibleGameCount + 1;
       case MenuPage::GameSettings:
@@ -413,6 +429,7 @@ class AppModel {
       case MenuPage::TetrisLink: return 4;
       case MenuPage::TetrisZeroPlayers: return 3;
       case MenuPage::Volume: return 7;
+      case MenuPage::Sleep: return SleepChoiceCount + 1;
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
       case MenuPage::Clock: return 4;
       case MenuPage::Controller: return 4;
@@ -427,7 +444,7 @@ class AppModel {
     if (index == count - 1) return "Back";
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller"};
+        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep"};
         return labels[index];
       }
       case MenuPage::BootGame:
@@ -470,6 +487,7 @@ class AppModel {
         constexpr const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
         return labels[index];
       }
+      case MenuPage::Sleep: return sleepLabel(index);
       case MenuPage::Skins:
         if (skinNames_) return skinNames_[index];
         if (!index) return "Original";
@@ -508,6 +526,7 @@ class AppModel {
           return valueBuffer_;
         }
         if (index == 5) return controllerStatus;
+        if (index == 6) return sleepLabel(settings.sleepIndex);
         break;
       case MenuPage::GameSettings:
         if (currentGame == GameTitle::FlappyBird) {
@@ -551,6 +570,7 @@ class AppModel {
       case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
       case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
+      case MenuPage::Sleep: return index == (settings.sleepIndex < SleepChoiceCount ? settings.sleepIndex : 0) ? "*" : "";
       case MenuPage::Skins: return index == settings.skinIndex ? "*" : "";
       case MenuPage::Clock:
         if (index < 2) {
@@ -634,6 +654,11 @@ class AppModel {
   }
 
  private:
+  static const char* sleepLabel(uint8_t index) {
+    constexpr const char* labels[] = {"30 sec", "1 min", "2 min", "5 min", "10 min", "Off"};
+    return labels[index < SleepChoiceCount ? index : 0];
+  }
+
   uint16_t bestScores_[unsigned(Mode::Count)];
   const char* const* skinNames_ = nullptr;
   uint8_t skinCount_ = 1;
@@ -748,7 +773,7 @@ class AppModel {
     switch (menu.page) {
       case MenuPage::Home: {
         constexpr MenuPage destinations[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
-                                             MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller};
+                                             MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep};
         openMenu(destinations[menu.selection]);
         break;
       }
@@ -808,6 +833,7 @@ class AppModel {
         break;
       case MenuPage::Brightness: setBrightness(menu.selection); break;
       case MenuPage::Volume: setVolume(menu.selection); break;
+      case MenuPage::Sleep: setSleep(menu.selection); break;
       case MenuPage::Skins: setSkin(menu.selection); closeMenu(); break;
       case MenuPage::Clock:
         if (menu.selection == 0) setClock(uint8_t(clockHour(nowMs) + 1), clockMinute(nowMs), nowMs);

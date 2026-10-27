@@ -25,43 +25,19 @@ class BleController {
   BleController& operator=(const BleController&) = delete;
 
   bool beginPairing(uint32_t now) {
-    stop();
-    if (initialized_) return false;
-    queue_ = xQueueCreateStatic(QueueDepth, sizeof(Event), queueBytes_, &queueStorage_);
-    if (!queue_) return fail("Controller queue unavailable");
-    lost_.store(false);
-    linked_.store(false);
-    overflow_.store(false);
-    authentication_.store(0);
-    callbackError_.store(0);
-    seen_.store(0);
-    matches_.store(0);
-    notifications_.store(0);
-    lastError_ = 0;
-#ifdef M5FLAP_STARTUP_DIAGNOSTICS
-    traceIine_ = false;
-    reportTrace_.reset();
-#endif
-    if (!initializeRadio()) return fail(radio::status(radioFailure_));
-    NimBLEDevice::setSecurityAuth(true, false, true);
-    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
-    found_ = false;
-    bestPreferred_ = false;
-    preferredAt_ = 0;
-    bestScore_ = -1000;
-    name_[0] = '\0';
-    state_ = State::Scanning;
-    started_ = now;
-    status_ = "Searching BLE controllers";
-    snprintf(detail_, sizeof(detail_), "IINE: H keyboard, hold Pair 3s");
-    NimBLEScan* scan = NimBLEDevice::getScan();
-    scan->setScanCallbacks(&scanCallbacks_, false);
-    scan->setActiveScan(true);
-    scan->setInterval(50);
-    scan->setWindow(35);
-    scan->setMaxResults(0);
-    if (!scan->start(ScanDurationMs, false)) return fail("Controller scan failed");
-    return true;
+    return beginScan(now, false);
+  }
+
+  // Light sleep retains peerAddress_ in RAM. Resume accepts that exact peer.
+  bool resumePeer(uint32_t now) {
+    if (!havePeer_) {
+      stop();
+      if (initialized_) return false;
+      status_ = "No controller to resume";
+      snprintf(detail_, sizeof(detail_), "Select Pair controller to connect");
+      return false;
+    }
+    return beginScan(now, true);
   }
 
   void stop() {
@@ -71,6 +47,7 @@ class BleController {
       return;
     }
     state_ = State::Off;
+    retainedOnly_ = false;
     status_ = "Controller off";
     detail_[0] = '\0';
     radioFailure_ = radio::Diagnostic();
@@ -87,12 +64,15 @@ class BleController {
     }
     if (!initializeRadio()) { fail(radio::status(radioFailure_)); return; }
     const bool deleted = NimBLEDevice::deleteBond(peerAddress_);
+    if (deleted) {
+      havePeer_ = false;
+      peerName_[0] = '\0';
+    }
     if (!releaseRadio()) {
       state_ = State::Failed;
       status_ = radio::status(radioFailure_);
       return;
     }
-    if (deleted) havePeer_ = false;
     status_ = deleted ? "Controller forgotten" : "Controller pairing not found";
     snprintf(detail_, sizeof(detail_), "%s", deleted ? "Select Pair controller to reconnect" : "Pair a controller before forgetting it");
   }
@@ -118,6 +98,7 @@ class BleController {
     Event event;
     for (uint8_t i = 0; i < QueueDepth && xQueueReceive(queue_, &event, 0) == pdTRUE; ++i) {
       if (event.kind == EventKind::Candidate && state_ == State::Scanning) {
+        if (!acceptsAddress(event.address)) continue;
         if (!found_ || event.score > bestScore_) {
           bestAddress_ = NimBLEAddress(event.address);
           memcpy(name_, event.name, sizeof(name_));
@@ -158,6 +139,10 @@ class BleController {
       if (!scan->isScanning()) {
         if (!found_) {
           lastError_ = callbackError_.load();
+          if (retainedOnly_) {
+            snprintf(detail_, sizeof(detail_), "Wake the previous controller, or select Pair controller");
+            fail("Previous controller not found"); return;
+          }
           snprintf(detail_, sizeof(detail_), "%lu BLE seen; use H keyboard and hold Pair 3s",
                    static_cast<unsigned long>(seen_.load()));
           fail("No BLE HID controller found"); return;
@@ -165,14 +150,21 @@ class BleController {
         connect();
         return;
       }
-      snprintf(scanStatus_, sizeof(scanStatus_), "Searching BLE: %lu seen", static_cast<unsigned long>(seen_.load()));
+      snprintf(scanStatus_, sizeof(scanStatus_), "%s: %lu seen", retainedOnly_ ? "Resuming controller" : "Searching BLE",
+               static_cast<unsigned long>(seen_.load()));
       status_ = scanStatus_;
-      snprintf(detail_, sizeof(detail_), "%lu matches; H keyboard, hold Pair 3s", static_cast<unsigned long>(matches_.load()));
+      if (retainedOnly_) snprintf(detail_, sizeof(detail_), "Wake the previous controller to reconnect");
+      else snprintf(detail_, sizeof(detail_), "%lu matches; H keyboard, hold Pair 3s", static_cast<unsigned long>(matches_.load()));
     }
     if (state_ == State::Connecting) {
       if (linked_.load()) {
-        peerAddress_ = client_->getConnInfo().getIdAddress();
+        const NimBLEAddress identity = client_->getConnInfo().getIdAddress();
+        if (!acceptsAddress(*identity.getBase())) {
+          fail("Previous controller identity changed"); return;
+        }
+        peerAddress_ = identity;
         havePeer_ = true;
+        memcpy(peerName_, name_, sizeof(peerName_));
         state_ = State::Securing;
         status_ = "Pairing controller securely";
         snprintf(detail_, sizeof(detail_), "%s", name_);
@@ -218,6 +210,7 @@ class BleController {
     return result;
   }
   bool connected() const { return snapshot().connected; }
+  bool canResumePeer() const { return havePeer_ && state_ != State::Off; }
   bool pairing() const { return state_ == State::Scanning || state_ == State::Connecting ||
                                 state_ == State::Securing || state_ == State::Discovering; }
   bool scanning() const { return state_ == State::Scanning; }
@@ -258,19 +251,22 @@ class BleController {
     explicit ScanCallbacks(BleController* owner) : owner_(owner) {}
     void onDiscovered(const NimBLEAdvertisedDevice*) override { owner_->seen_.fetch_add(1); }
     void onResult(const NimBLEAdvertisedDevice* device) override {
+      const NimBLEAddress address = device->getAddress();
+      if (!owner_->acceptsAddress(*address.getBase())) return;
       const std::string name = device->getName();
       const AdvertisementMatch match = matchControllerAdvertisement(name.c_str(),
           device->isAdvertisingService(NimBLEUUID(uint16_t(0x1812))), device->isConnectable(), device->getRSSI());
-      if (!match.eligible) return;
+      if (owner_->retainedOnly_ ? !device->isConnectable() : !match.eligible) return;
       owner_->matches_.fetch_add(1);
       Event event;
       event.kind = EventKind::Candidate;
-      const NimBLEAddress address = device->getAddress();
       event.address = *address.getBase();
       // Prefer the manufacturer's keyboard profile when several modes are seen.
-      event.score = match.score;
-      event.preferred = match.preferred;
-      snprintf(event.name, sizeof(event.name), "%s", name.empty() ? "BLE HID controller" : name.c_str());
+      event.score = owner_->retainedOnly_ ? 0 : match.score;
+      event.preferred = owner_->retainedOnly_ || match.preferred;
+      const char* advertisedName = name.empty() ?
+          (owner_->retainedOnly_ && owner_->peerName_[0] ? owner_->peerName_ : "BLE HID controller") : name.c_str();
+      snprintf(event.name, sizeof(event.name), "%s", advertisedName);
       if (owner_->queue_) xQueueSend(owner_->queue_, &event, 0);
     }
     void onScanEnd(const NimBLEScanResults&, int reason) override { owner_->callbackError_.store(reason); }
@@ -317,6 +313,7 @@ class BleController {
   NimBLEAddress bestAddress_;
   NimBLEAddress peerAddress_;
   bool havePeer_ = false, initialized_ = false, found_ = false;
+  bool retainedOnly_ = false;
   bool bestPreferred_ = false;
   std::atomic<bool> lost_{false};
   std::atomic<bool> linked_{false};
@@ -331,6 +328,7 @@ class BleController {
   char scanStatus_[48] = {};
   char detail_[112] = {};
   char name_[32] = {};
+  char peerName_[32] = {};
   int16_t bestScore_ = -1000;
   uint32_t started_ = 0;
   uint32_t preferredAt_ = 0;
@@ -340,6 +338,56 @@ class BleController {
   bool traceIine_ = false;
   HidReportTrace reportTrace_;
 #endif
+
+  bool acceptsAddress(const ble_addr_t& candidate) const {
+    if (!retainedOnly_) return true;
+    if (!havePeer_) return false;
+    return controllerPeerAllowed(true, true, peerAddress_.getVal(), peerAddress_.getType(),
+                                 candidate.val, candidate.type);
+  }
+
+  bool beginScan(uint32_t now, bool retainedOnly) {
+    stop();
+    if (initialized_) return false;
+    retainedOnly_ = retainedOnly;
+    queue_ = xQueueCreateStatic(QueueDepth, sizeof(Event), queueBytes_, &queueStorage_);
+    if (!queue_) return fail("Controller queue unavailable");
+    lost_.store(false);
+    linked_.store(false);
+    overflow_.store(false);
+    authentication_.store(0);
+    callbackError_.store(0);
+    seen_.store(0);
+    matches_.store(0);
+    notifications_.store(0);
+    lastError_ = 0;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+    traceIine_ = false;
+    reportTrace_.reset();
+#endif
+    if (!initializeRadio()) return fail(radio::status(radioFailure_));
+    NimBLEDevice::setSecurityAuth(true, false, true);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+    found_ = false;
+    bestPreferred_ = false;
+    preferredAt_ = 0;
+    bestScore_ = -1000;
+    if (retainedOnly_) memcpy(name_, peerName_, sizeof(name_));
+    else name_[0] = '\0';
+    state_ = State::Scanning;
+    started_ = now;
+    status_ = retainedOnly_ ? "Resuming controller" : "Searching BLE controllers";
+    snprintf(detail_, sizeof(detail_), "%s", retainedOnly_ ? "Wake the previous controller to reconnect" :
+             "IINE: H keyboard, hold Pair 3s");
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setScanCallbacks(&scanCallbacks_, false);
+    scan->setActiveScan(true);
+    scan->setInterval(50);
+    scan->setWindow(35);
+    scan->setMaxResults(0);
+    if (!scan->start(ScanDurationMs, false)) return fail("Controller scan failed");
+    return true;
+  }
 
   void setSnapshot(uint16_t buttons, bool connected, bool clearPressed = false) {
     portENTER_CRITICAL(&snapshotMux_);
@@ -396,7 +444,7 @@ class BleController {
   }
   void connect() {
     state_ = State::Connecting;
-    status_ = "Connecting controller";
+    status_ = retainedOnly_ ? "Reconnecting controller" : "Connecting controller";
     snprintf(detail_, sizeof(detail_), "%s", name_);
     started_ = millis();
     client_ = NimBLEDevice::createClient(bestAddress_);
@@ -441,7 +489,9 @@ class BleController {
   bool discover() {
     status_ = "Reading controller inputs";
     // Pairing may resolve an advertised private address to its bonded identity.
-    peerAddress_ = client_->getConnInfo().getIdAddress();
+    const NimBLEAddress identity = client_->getConnInfo().getIdAddress();
+    if (!acceptsAddress(*identity.getBase())) return fail("Previous controller identity changed");
+    peerAddress_ = identity;
     NimBLERemoteService* service = client_->getService(NimBLEUUID(uint16_t(0x1812)));
     if (!service) return fail("Controller has no BLE HID service");
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS

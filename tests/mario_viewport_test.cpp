@@ -98,6 +98,42 @@ static void exactRowDamage() {
   assert(viewport.worldTop() == 104);
 }
 
+static void alternatingSpriteFrames() {
+  MarioViewport viewport;
+  assert(viewport.configure(240, 135));
+  const uint16_t sky = 0x35a1, sprite = 0xe1c4;
+  std::vector<uint16_t> source(256 * 240, sky), output(240 * 135, 0), lcd(240 * 135, 0);
+  unsigned visibleFrames = 0, hiddenFrames = 0, phaseVisible[2] = {}, phaseHidden[2] = {};
+  bool displayed[2] = {};
+  for (int frame = 0; frame < 24; ++frame) {
+    const bool visible = (frame & 1) == 0;
+    for (int y = 193; y < 209; ++y)
+      for (int x = 40; x < 56; ++x) source[y * 256 + x] = visible ? sprite : sky;
+    viewport.trackPlayer(193, 16, visible);
+    for (int y = 0; y < 240; y += 8)
+      viewport.consume(0, y, 255, y + 7, source.data() + y * 256, output.data());
+    for (int row = 0; row < 135; ++row) {
+      if (frame)
+        assert(viewport.rowChanged(row) == (row >= viewport.targetRow(193) && row <= viewport.targetRow(208)));
+      if (viewport.rowChanged(row))
+        for (int x = 0; x < 240; ++x) lcd[row * 240 + x] = output[row * 240 + x];
+      for (int x = 0; x < 240; ++x)
+        assert(lcd[row * 240 + x] == source[viewport.sourceY(row) * 256 + x + 8]);
+    }
+    const bool onLcd = lcd[viewport.targetRow(200) * 240 + 40 - 8] == sprite;
+    assert(onLcd == visible);
+    visibleFrames += onLcd;
+    hiddenFrames += !onLcd;
+    const unsigned phase = unsigned(frame) & 1;
+    displayed[phase] = onLcd;
+    phaseVisible[phase] += displayed[phase];
+    phaseHidden[phase] += !displayed[phase];
+  }
+  assert(visibleFrames == 12 && hiddenFrames == 12);
+  assert(phaseVisible[0] == 12 && phaseHidden[0] == 0);
+  assert(phaseVisible[1] == 0 && phaseHidden[1] == 12);
+}
+
 static void controllerShortcuts() {
   using Screen = flappy::MarioCartridge::Screen;
   flappy::MarioController controller;
@@ -178,6 +214,7 @@ int main() {
   cameraAndPartialRectangles();
   guardedLauncher();
   exactRowDamage();
+  alternatingSpriteFrames();
   controllerShortcuts();
-  std::cout << "Mario native pixel mapping, camera, exact damage, controller shortcuts, bounds and guarded launcher passed\n";
+  std::cout << "Mario native pixel mapping, camera, alternating sprite damage, controller shortcuts, bounds and guarded launcher passed\n";
 }

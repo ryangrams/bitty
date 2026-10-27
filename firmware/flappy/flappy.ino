@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <driver/rtc_io.h>
 #include <driver/gpio.h>
+#include <esp_sleep.h>
 #include <new>
 #include "app_model.h"
 #include "ble_link.h"
@@ -31,6 +32,7 @@
 #include "render.h"
 #include "generated_sounds.h"
 #include "stick_power.h"
+#include "inactivity.h"
 
 flappy::AppModel app;
 flappy::coop::BleLink coopLink;
@@ -56,6 +58,10 @@ flappy::TetrisZero::Options zeroOptions;
 flappy::TetrisZero::Launcher zeroLauncher;
 flappy::DamageRows displayDamage;
 flappy::AsyncDisplay asyncDisplay;
+flappy::InactivityPolicy inactivity;
+flappy::PowerSource powerSource = flappy::PowerSource::Unknown;
+uint32_t lastPowerPollMs = 0;
+bool powerPolled = false;
 struct PeerTetrisHud {
   bool valid = false, fresh = false, toppedOut = false, large = false;
   uint32_t score = 0;
@@ -125,10 +131,13 @@ uint32_t nesRenderedFrames = 0, lcdFrames = 0, lcdRows = 0, appTicks = 0, appDra
 uint64_t lcdUs = 0, appRenderUs = 0;
 uint16_t marioBenchmarkFrames = 0;
 uint8_t benchmarkPrgCache = 0, benchmarkVideoDivisor = 0;
+uint8_t benchmarkIdleJump = 2;
 bool benchmarkPcm = false;
 bool timingProbe = false;
 uint16_t timingIntervals = 0;
 uint32_t timingStart = 0, timingPrevious = 0, timingMin = UINT32_MAX, timingMax = 0;
+uint32_t timingSourceStart = 0, timingPresentStart = 0;
+uint64_t timingPresentUs = 0;
 #endif
 
 void invalidateDisplay() {
@@ -151,6 +160,7 @@ void configureNesPerformance() {
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   nes.setPcmEnabled(benchmarkPcm);
   nes.setPrgCache(benchmarkPrgCache);
+  if (benchmarkIdleJump < 2) nes.setIdleJump(benchmarkIdleJump != 0);
 #endif
 }
 
@@ -370,6 +380,7 @@ void loadSettings() {
   }
   app.setBrightness(brightness);
   app.setVolume(preferences.getUChar("volume", 2));
+  app.setSleep(preferences.getUChar("sleepidx", 0));
   app.setSkin(preferences.getUChar("skin", 0));
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   const uint8_t boot = preferences.getUChar("bootgame", 0);
@@ -403,6 +414,7 @@ void saveSettings() {
   preferences.putUChar("mode", uint8_t(app.settings.mode));
   preferences.putUChar("brightness", app.settings.brightnessIndex);
   preferences.putUChar("volume", app.settings.volumeIndex);
+  preferences.putUChar("sleepidx", app.settings.sleepIndex);
   preferences.putUChar("skin", app.settings.skinIndex);
   preferences.putBool("clock24", app.settings.clock24Hour);
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
@@ -794,6 +806,7 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
     if (complete) {
       gameMessageShown = 0;
       recordLcdFrame(submittedRows, micros() - submitUs);
+      if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
     }
     return;
   }
@@ -870,6 +883,7 @@ void updateController(uint32_t nowMs) {
   if (!bluetoothPad) { padButtons = previousPadButtons = 0; controllerConnected = false; return; }
   bluetoothPad->update(nowMs);
   const Snapshot snapshot = bluetoothPad->consumeSnapshot();
+  if (snapshot.buttons || snapshot.pressed) inactivity.activity(nowMs);
   const bool justConnected = snapshot.connected && !controllerConnected;
   const flappy::MenuPage menuBefore = app.menu.page;
   const uint8_t selectionBefore = app.menu.selection;
@@ -981,6 +995,10 @@ flappy::TetrisZero::Options zeroSettings(uint32_t linkedSeed = 0) {
 void handleGameRequest() {
   if (handledGameRequest == app.gameRequest) return;
   handledGameRequest = app.gameRequest;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  marioBenchmarkFrames = 0;
+  timingProbe = false;
+#endif
   stopGameAudio();
   invalidateDisplay();
   pendingNesButtons = pendingControllerNesButtons = 0;
@@ -1363,6 +1381,89 @@ void startupFailure(const char* message) {
   }
 }
 
+flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false) {
+  if (!force && powerPolled && uint32_t(nowMs - lastPowerPollMs) < 1000) return powerSource;
+  powerPolled = true;
+  lastPowerPollMs = nowMs;
+  const auto board = M5.getBoard();
+  if (board != m5gfx::board_t::board_M5StickC && board != m5gfx::board_t::board_M5StickCPlus)
+    return powerSource = flappy::PowerSource::Unknown;
+  uint8_t status[2] = {};
+  const bool readOk = M5.Power.Axp192.readRegister(0, status, 2);
+  return powerSource = flappy::axp192PowerSource(readOk, status[0], status[1]);
+}
+
+void clearPendingInput() {
+  pendingAction = pendingPadAction = false;
+  pendingNesButtons = pendingControllerNesButtons = tetrisHeld = 0;
+  pendingTetrisDrop = pendingControllerTetrisDrop = false;
+  controllerDownTracking = false;
+  tetrisButtons.reset();
+  tetrisSoftDrop.reset();
+  zeroDrop1.reset();
+  zeroDrop2.reset();
+  nesSystemButton.reset(false);
+}
+
+bool sleepOnBattery() {
+  if (pollPowerSource(millis(), true) != flappy::PowerSource::Battery) return false;
+  const bool resumeController = bluetoothPad && bluetoothPad->canResumePeer();
+  const bool linked = coopLink.session().role() != flappy::coop::Role::Off;
+  if (linked) {
+    stopCoop();
+    if (tetrisLike()) app.openTetrisSettings();
+    else app.openMenu(flappy::MenuPage::GameSettings);
+  }
+  if (bluetoothPad) bluetoothPad->stop();
+  flappy::radio::EspBackend radioBackend;
+  if (radioBackend.hostInitialized() || radioBackend.state() || radioBackend.remainingClients()) {
+    inactivity.activity(millis());
+    return false;
+  }
+  controllerConnected = false;
+  padButtons = previousPadButtons = 0;
+  clearPendingInput();
+  saveSettings();
+  saveScores();
+  stopGameAudio();
+  soundOverride = false;
+  if (piezoDriver) { piezoOutput.request(0, 0); servicePiezoOutput(); }
+  asyncDisplay.drain();
+  const bool frontWake = gpio_wakeup_enable(GPIO_NUM_37, GPIO_INTR_LOW_LEVEL) == ESP_OK;
+  const bool sideWake = gpio_wakeup_enable(GPIO_NUM_39, GPIO_INTR_LOW_LEVEL) == ESP_OK;
+  const bool gpioWake = frontWake && sideWake && esp_sleep_enable_gpio_wakeup() == ESP_OK;
+  if (gpioWake) {
+    M5.Display.sleep();
+    esp_sleep_enable_timer_wakeup(1000000ULL);
+    while (pollPowerSource(millis(), true) == flappy::PowerSource::Battery &&
+           gpio_get_level(GPIO_NUM_37) && gpio_get_level(GPIO_NUM_39)) {
+      if (esp_light_sleep_start() != ESP_OK) break;
+      if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO) break;
+      M5.update();
+      if (M5.BtnPWR.wasClicked() || M5.BtnPWR.wasPressed()) break;
+    }
+    M5.Display.wakeup();
+    delay(120);
+    M5.Display.setBrightness(app.brightness());
+  }
+  gpio_wakeup_disable(GPIO_NUM_37);
+  gpio_wakeup_disable(GPIO_NUM_39);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  M5.update();
+  clearPendingInput();
+  inactivity.resumed(millis());
+  invalidateDisplay();
+  lastClockReadMs = millis() - 1000;
+  if (resumeController && bluetoothPad) {
+    bluetoothPad->resumePeer(millis());
+    app.setControllerStatus(bluetoothPad->statusText());
+  }
+  nextTick = micros() + TickMicros;
+  nextNesTick = micros();
+  return true;
+}
+
 void setup() {
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   Serial.begin(115200);
@@ -1387,7 +1488,7 @@ void setup() {
   cfg.output_power = false;
   M5.begin(cfg);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
-  Serial.printf("BOOT board=%u display=%ux%u heap=%u cpu_mhz=%u\n", unsigned(M5.getBoard()), M5.Display.width(), M5.Display.height(), ESP.getFreeHeap(), ESP.getCpuFreqMHz());Serial.flush();
+  Serial.printf("BOOT board=%u display=%ux%u heap=%u cpu_mhz=%u boot_flash_hz=%u\n", unsigned(M5.getBoard()), M5.Display.width(), M5.Display.height(), ESP.getFreeHeap(), ESP.getCpuFreqMHz(), ESP.getFlashChipSpeed());Serial.flush();
 #endif
   rtc_gpio_pullup_dis(GPIO_NUM_2);
   rtc_gpio_pulldown_en(GPIO_NUM_2);
@@ -1479,17 +1580,27 @@ void serviceDiagnostics() {
       timingStart = timingPrevious = 0;
       timingMin = UINT32_MAX;
       timingMax = 0;
+      asyncDisplay.startFrameProbe(500);
     } else if (!strncmp(command, "M5CACHE ", 8)) {
       unsigned mask = 0;
       if (sscanf(command + 8, "%u", &mask) == 1 && (mask == 0 || mask == 2 || mask == 3)) {
         benchmarkPrgCache = uint8_t(mask);
         nes.setPrgCache(benchmarkPrgCache);
       }
+    } else if (!strncmp(command, "M5VOLUME ", 9)) {
+      unsigned value = 0;
+      if (sscanf(command + 9, "%u", &value) == 1 && value < 6) app.setVolume(uint8_t(value));
     } else if (!strncmp(command, "M5PCM ", 6)) {
       unsigned enabled = 0;
       if (sscanf(command + 6, "%u", &enabled) == 1) {
         benchmarkPcm = enabled != 0;
         nes.setPcmEnabled(benchmarkPcm);
+      }
+    } else if (!strncmp(command, "M5IDLE ", 7)) {
+      unsigned enabled = 0;
+      if (sscanf(command + 7, "%u", &enabled) == 1 && enabled <= 1) {
+        benchmarkIdleJump = uint8_t(enabled);
+        nes.setIdleJump(enabled != 0);
       }
     } else if (!strncmp(command, "M5VIDEO ", 8)) {
       unsigned divisor = 0;
@@ -1499,6 +1610,10 @@ void serviceDiagnostics() {
       app.openMenu(flappy::MenuPage::Controller);
       app.step(true, false, millis());
       handleControllerRequest(millis());
+    } else if (!strcmp(command, "M5RECONNECT")) {
+      if (bluetoothPad) bluetoothPad->resumePeer(millis());
+      padButtons = previousPadButtons = 0;
+      pendingNesButtons = pendingControllerNesButtons = 0;
     } else if (!strcmp(command, "M5BEEP")) {
       piezo.stop();
       soundOverride = soundReady;
@@ -1536,9 +1651,12 @@ void serviceDiagnostics() {
           unsigned(soundFrequency), unsigned(soundDuty), unsigned(soundOverride), unsigned(piezo.active()));
       Serial.printf("APP ticks=%lu draws=%lu mode=%u skin=%u\n", (unsigned long)appTicks,
           (unsigned long)appDrawFrames, unsigned(app.settings.mode), unsigned(app.settings.skinIndex));
-      Serial.printf("OPT cache=%u pcm=%u render_us=%llu bg_bytes=%u\n", unsigned(nes.prgCacheMask()),
+      Serial.printf("SLEEP source=%u timeout_s=%lu idle_ms=%lu index=%u\n", unsigned(powerSource),
+          (unsigned long)app.sleepTimeoutSeconds(), (unsigned long)inactivity.idleMs(millis()),
+          unsigned(app.settings.sleepIndex));
+      Serial.printf("OPT cache=%u pcm=%u render_us=%llu bg_bytes=%u idle=%u\n", unsigned(nes.prgCacheMask()),
           unsigned(nes.pcmEnabled()), (unsigned long long)appRenderUs,
-          unsigned(renderer->backgroundCacheBytes()));
+          unsigned(renderer->backgroundCacheBytes()), unsigned(nes.idleJumpEnabled()));
       Serial.printf("PERF nes_us=%llu video_us=%llu source_frames=%lu lcd_frames=%lu lcd_rows=%lu lcd_us=%llu largest_heap=%u\n",
           (unsigned long long)nesWorkUs, (unsigned long long)nesVideoUs,
           (unsigned long)nesRenderedFrames, (unsigned long)lcdFrames, (unsigned long)lcdRows,
@@ -1547,6 +1665,13 @@ void serviceDiagnostics() {
       Serial.printf("ASYNC strips=%lu bytes=%llu work_us=%llu pending=%u\n",
           (unsigned long)asyncStats.strips, (unsigned long long)asyncStats.bytes,
           (unsigned long long)asyncStats.workUs, asyncStats.pending);
+      Serial.printf("TRANSFER submits=%lu waits=%lu wait_us=%llu copy_us=%llu encode_us=%llu max_wait_us=%lu max_copy_us=%lu max_work_us=%lu max_pending=%u frames=%lu frame_us=%llu\n",
+          (unsigned long)asyncStats.submits, (unsigned long)asyncStats.waits,
+          (unsigned long long)asyncStats.waitUs, (unsigned long long)asyncStats.copyUs,
+          (unsigned long long)asyncStats.encodeUs,
+          (unsigned long)asyncStats.maxWaitUs, (unsigned long)asyncStats.maxCopyUs,
+          (unsigned long)asyncStats.maxWorkUs, asyncStats.maxPending,
+          (unsigned long)asyncStats.completedFrames, (unsigned long long)asyncStats.frameIntervalUs);
 #if defined(NES_TEST_PROFILE) && NES_TEST_PROFILE == 1
       const auto* profile = nes_test_profile_get();
       Serial.printf("PROFILE frames=%llu frame=%llu cpu=%llu bg=%llu sprite=%llu apu=%llu draw=%llu\n",
@@ -1570,6 +1695,13 @@ void loop() {
 #endif
   M5.update();
   if (!renderer) { delay(10); return; }
+  if (inactivity.consumeWakeInput(M5.BtnA.isPressed() || M5.BtnB.isPressed() || padButtons, millis())) {
+    clearPendingInput();
+    nextTick = micros() + TickMicros;
+    nextNesTick = micros();
+    delay(1);
+    return;
+  }
   pendingAction |= M5.BtnA.wasPressed();
   const uint32_t nowMs = millis();
   readClock(nowMs);
@@ -1607,6 +1739,10 @@ void loop() {
     pendingNesButtons |= tilt.pressed;
   }
   const uint32_t now = micros();
+  const bool inputActive = M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnPWR.wasClicked() ||
+      M5.BtnPWR.wasPressed() || padButtons || pendingAction || pendingPadAction ||
+      pendingNesButtons || pendingControllerNesButtons || tetrisHeld;
+  if (inactivity.shouldSleep(nowMs, app.sleepTimeoutMs(), pollPowerSource(nowMs), inputActive) && sleepOnBattery()) return;
   if (int32_t(now - nextTick) >= 0) {
     int catchUp = 0;
     do {
@@ -1764,7 +1900,7 @@ void loop() {
             nes.setVideoRows(frameZero && zeroOptions.players == 2 ? 8 : 24,
                 frameZero && zeroOptions.players == 2 ? 223 : 215);
           }
-          const uint8_t videoInterval = frameZero && zeroOptions.players == 2 ? 3 : 2;
+          const uint8_t videoInterval = nativeMario ? 1 : frameZero && zeroOptions.players == 2 ? 3 : 2;
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
           nes.setVideoDivisor(benchmarkVideoDivisor ? benchmarkVideoDivisor : videoInterval);
 #else
@@ -1774,7 +1910,13 @@ void loop() {
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
           if (stepped && timingProbe) {
             const uint32_t stamp = micros();
-            if (!timingStart) timingStart = stamp;
+            if (!timingStart) {
+              timingStart = stamp;
+              timingSourceStart = nesRenderedFrames;
+              const auto displayStats = asyncDisplay.stats();
+              timingPresentStart = displayStats.completedFrames;
+              timingPresentUs = displayStats.frameIntervalUs;
+            }
             else {
               const uint32_t interval = stamp - timingPrevious;
               if (interval < timingMin) timingMin = interval;
@@ -1784,6 +1926,15 @@ void loop() {
                 Serial.printf("TIMING game=%u hz=%u intervals=500 elapsed_us=%lu min_us=%lu max_us=%lu\n",
                     unsigned(app.currentGame), unsigned(nes.frameRate()),
                     (unsigned long)(stamp - timingStart), (unsigned long)timingMin, (unsigned long)timingMax);
+                asyncDisplay.drain();
+                const auto displayStats = asyncDisplay.stats();
+                Serial.printf("PRESENT source_frames=%lu completed_frames=%lu elapsed_us=%llu pending=%u\n",
+                    (unsigned long)(nesRenderedFrames - timingSourceStart),
+                    (unsigned long)(displayStats.completedFrames - timingPresentStart),
+                    (unsigned long long)(displayStats.frameIntervalUs - timingPresentUs), displayStats.pending);
+                Serial.printf("DISPLAY_TIMING intervals=%lu elapsed_us=%llu complete=%u\n",
+                    (unsigned long)displayStats.probeIntervals,
+                    (unsigned long long)displayStats.probeElapsedUs, unsigned(displayStats.probeComplete));
               }
             }
             timingPrevious = stamp;
@@ -1812,8 +1963,15 @@ void loop() {
 
   serviceSound(millis());
   static uint32_t lastIdleMs = 0;
-  const bool nesBehind = emulatedGame() && !app.menuOpen() && nes.ready() &&
-      int32_t(micros() - nextNesTick) >= 0;
-  if (nesBehind && uint32_t(millis() - lastIdleMs) < 50) yield();
-  else { delay(1); lastIdleMs = millis(); }
+  const bool activeNes = emulatedGame() && !app.menuOpen() && nes.ready();
+  if (activeNes) {
+    int32_t remaining;
+    while ((remaining = int32_t(nextNesTick - micros())) > 1250) {
+      delay(1);
+      lastIdleMs = millis();
+    }
+    if (remaining > 0) delayMicroseconds(uint32_t(remaining));
+    if (uint32_t(millis() - lastIdleMs) < 50) yield();
+    else { delay(1); lastIdleMs = millis(); }
+  } else { delay(1); lastIdleMs = millis(); }
 }

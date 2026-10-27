@@ -1,10 +1,16 @@
 # Bluetooth controllers
 
-Pair a controller through **Controller > Pair controller**. The host scans for Bluetooth Low Energy HID devices only after you select that action. A successful connection shows **Controller ready**. **Disconnect** closes the link; select Pair controller again to reconnect. **Forget pairing** removes the last selected controller's bond when its identity is known in the current session.
+Selecting **Controller > Pair controller** starts a Bluetooth Low Energy HID scan. A successful connection shows **Controller ready**. **Disconnect** closes the link; select Pair controller again to reconnect. **Forget pairing** removes the last selected controller's bond when its identity is known in the current session.
 
 The Controller page stays visible during pairing so you can read its status.
 
 Controller mode, Flappy Bird co-op and the Tetris competition link share one Bluetooth stack. Starting controller pairing ends a device-to-device link, and starting either game link disconnects the controller.
+
+## Battery sleep and reconnect
+
+**Sleep** defaults to 30 seconds without input while running on battery. The menu also offers 1, 2, 5 or 10 minutes and Off. USB power keeps the device awake. During sleep, the screen and Bluetooth turn off while game state stays in RAM. Wake the M5 with its front or right side button, then release it before playing. Connecting USB also wakes it through periodic power checks.
+
+The M5 tries to resume a controller retained from the current powered session, including after an ordinary disconnect before sleep. An explicit **Disconnect** stays off. Wake the controller too if needed. **Controller > Pair controller** remains available for an explicit scan and device selection. Bluetooth shutdown and retained-peer reconnect passed a hardware check within two seconds. Battery sleep, button wake and USB wake still need physical checks.
 
 ## IINE Gamebrick Mini
 

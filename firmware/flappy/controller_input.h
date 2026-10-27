@@ -63,6 +63,15 @@ struct AdvertisementMatch {
   int16_t score = -1000;
 };
 
+// A retained peer is identified by its six address bytes and BLE address type.
+inline bool controllerPeerAllowed(bool retainedOnly, bool havePeer,
+                                  const uint8_t* peerBytes, uint8_t peerType,
+                                  const uint8_t* candidateBytes, uint8_t candidateType) {
+  if (!retainedOnly) return true;
+  return havePeer && peerBytes && candidateBytes && peerType == candidateType &&
+         memcmp(peerBytes, candidateBytes, 6) == 0;
+}
+
 inline AdvertisementMatch matchControllerAdvertisement(const char* name, bool hidService, bool connectable, int rssi) {
   AdvertisementMatch result;
   if (!connectable) return result;

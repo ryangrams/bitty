@@ -35,6 +35,46 @@ static void invalidate_selection(nes_t* nes) {
 #endif
 }
 
+static unsigned check_background_tiles(void) {
+    nes_t* actual = calloc(1, sizeof(*actual));
+    nes_t* reference = calloc(1, sizeof(*reference));
+    assert(actual && reference);
+    nes_color_t pixels[258] = {0};
+    nes_color_t expected[258] = {0};
+    const uint8_t positions[] = {0, 7, 8, 248};
+    unsigned cases = 0;
+    for (unsigned i = 0; i < 16; ++i)
+        actual->nes_ppu.background_palette[i] = reference->nes_ppu.background_palette[i] =
+            (nes_color_t)(0x2149u * i + 0x1234u);
+    for (unsigned position = 0; position < sizeof(positions); ++position) {
+        const uint8_t x = positions[position];
+        pixels[x] = expected[x] = pixels[x + 9u] = expected[x + 9u] = 0xABCDu;
+        for (unsigned mask = 0; mask < 2; ++mask) {
+            actual->nes_ppu.MASK_m = reference->nes_ppu.MASK_m = mask;
+            for (unsigned palette = 0; palette < 16; palette += 4) {
+                for (unsigned lo = 0; lo < 256; ++lo) {
+                    for (unsigned hi = 0; hi < 256; ++hi) {
+                        nes_draw_background_tile(actual, pixels + 1, x, lo, hi, palette);
+                        for (unsigned i = 0; i < 8; ++i) {
+                            const unsigned shift = 7u - i;
+                            const unsigned value = ((lo >> shift) & 1u) | (((hi >> shift) & 1u) << 1u);
+                            nes_draw_background_pixel(reference, expected + 1, x + i, palette | value);
+                        }
+                        assert(memcmp(pixels + 1 + x, expected + 1 + x, 8 * sizeof(*pixels)) == 0);
+                        assert(memcmp(actual->nes_ppu.bg_opaque + x,
+                                      reference->nes_ppu.bg_opaque + x, 8) == 0);
+                        assert(pixels[x] == 0xABCDu && pixels[x + 9u] == 0xABCDu);
+                        ++cases;
+                    }
+                }
+            }
+        }
+    }
+    free(actual);
+    free(reference);
+    return cases;
+}
+
 static void check_sprite_selection(nes_t* nes, unsigned scanline) {
     sprite_line_t actual;
     unsigned count = 0;
@@ -129,6 +169,7 @@ static unsigned check_sprite_cache(nes_t* nes) {
 }
 
 int main(void) {
+    const unsigned tile_cases = check_background_tiles();
     nes_t* nes = calloc(1, sizeof(*nes));
     uint8_t pattern[8192];
     nes_color_t output[256];
@@ -212,5 +253,6 @@ int main(void) {
     free(nes);
     printf("Skipped-video opacity: %u scroll/sprite cases, mapper fetches and overflow passed\n", cases);
     printf("Sprite selection: %u scanline cases, OAM writes, DMA and height changes passed\n", sprite_cases);
+    printf("Background tiles: %u bitplane, palette and clipping cases passed\n", tile_cases);
     return 0;
 }

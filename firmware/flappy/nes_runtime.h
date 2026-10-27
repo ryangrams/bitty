@@ -218,6 +218,9 @@ class NesRuntime {
   void setPcmEnabled(bool enabled) { if (core_) core_->host_pcm_enabled = enabled; }
   bool pcmEnabled() const { return core_ && core_->host_pcm_enabled; }
 
+  void setIdleJump(bool enabled) { if (core_) core_->host_idle_jump = enabled; }
+  bool idleJumpEnabled() const { return core_ && core_->host_idle_jump; }
+
   bool softReset() {
     if (!core_) return false;
     core_->nes_cpu.irq_nmi = core_->nes_cpu.irq_nmi_delay = core_->nes_cpu.irq_pending = 0;

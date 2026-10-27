@@ -462,7 +462,7 @@ static void menusScrollAndRenderEverySelection() {
   preparePlaying(app, flappy::Mode::Original, 10);
   app.setSkinNames(names, flappy::Skins::BuiltinCount);
   const auto noMenu = frame(app);
-  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::TetrisZeroPlayers); ++page) {
+  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::Sleep); ++page) {
     app.openMenu(flappy::MenuPage(page));
     const uint8_t count = app.menuItemCount();
     assert(count > 1);
@@ -507,7 +507,7 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
   for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
     assert(app.setCurrentGame(flappy::GameTitle(game)));
     for (uint8_t page = uint8_t(flappy::MenuPage::Home);
-         page <= uint8_t(flappy::MenuPage::TetrisZeroPlayers); ++page) {
+         page <= uint8_t(flappy::MenuPage::Sleep); ++page) {
       app.openMenu(flappy::MenuPage(page));
       assert(flappy::MenuFont::textWidth(app.menuTitle()) <= 128);
       for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
@@ -579,6 +579,31 @@ static void volumeMenuShowsLevelsAndCurrentValue() {
   }
 }
 
+static void sleepMenuShowsChoicesAndCurrentValue() {
+  flappy::AppModel app(237);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  app.openMenu();
+  app.menu.selection = 6;
+  assert(std::strcmp(app.menuLabel(6), "Sleep") == 0);
+  const auto defaultHome = frame(app);
+  app.setSleep(5);
+  assert(differentPixels(defaultHome, frame(app)) > 0);
+  app.openMenu(flappy::MenuPage::Sleep);
+  assert(app.menuItemCount() == 7 && std::strcmp(app.menuLabel(6), "Back") == 0);
+  for (uint8_t index = 0; index < flappy::AppModel::SleepChoiceCount; ++index) {
+    app.setSleep(index);
+    app.menu.selection = index;
+    for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options;
+      options.uiScale = uiScale;
+      const auto selected = frame(app, options);
+      app.setSleep(uint8_t((index + 1) % flappy::AppModel::SleepChoiceCount));
+      assert(differentPixels(selected, frame(app, options)) > 0);
+      app.setSleep(index);
+    }
+  }
+}
+
 static void launcherMenusShowAvailabilityAndTitles() {
   flappy::AppModel app(27);
   preparePlaying(app, flappy::Mode::Original, 10);
@@ -617,7 +642,7 @@ static void launcherMenusShowAvailabilityAndTitles() {
   app.setNesTitle(longTitle.c_str());
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
   app.openMenu();
-  assert(app.menuItemCount() == 7);
+  assert(app.menuItemCount() == 8);
   for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
     app.menu.selection = selected;
     flappy::RenderOptions options;
@@ -897,6 +922,7 @@ int main() {
   menusScrollAndRenderEverySelection();
   actualMenuLabelsFitAndSurviveNativeCrop();
   volumeMenuShowsLevelsAndCurrentValue();
+  sleepMenuShowsChoicesAndCurrentValue();
   launcherMenusShowAvailabilityAndTitles();
   controllerMenuShowsStatusAndActions();
   gameSettingsReflectEachSelectedGame();

@@ -75,7 +75,7 @@ static void everyMenuHasBack() {
   const MenuPage pages[] = {MenuPage::Home, MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
     MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume, MenuPage::Skins, MenuPage::Clock,
     MenuPage::Controller, MenuPage::TetrisLevel, MenuPage::TetrisType, MenuPage::TetrisControls,
-    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers};
+    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers, MenuPage::Sleep};
   for (MenuPage page : pages) {
     d.app.openMenu(page);
     const uint8_t count = d.app.menuItemCount();
@@ -124,13 +124,13 @@ static void volumeSettingsAndMenuNavigation() {
   d.app.setVolume(2);
   assert(!d.app.settingsDirty);
   d.holdMenu();
-  assert(d.app.menuItemCount() == 7);
-  const char* homeLabels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Back"};
+  assert(d.app.menuItemCount() == 8);
+  const char* homeLabels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Back"};
   const MenuPage homePages[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
-    MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller};
-  for (uint8_t index = 0; index < 7; ++index) assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
+    MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep};
+  for (uint8_t index = 0; index < 8; ++index) assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
   assert(std::string(d.app.menuValue(4)) == "40%");
-  for (uint8_t index = 0; index < 6; ++index) {
+  for (uint8_t index = 0; index < 7; ++index) {
     d.app.openMenu(); d.app.menu.selection = index; d.tick(true);
     assert(d.app.menu.page == homePages[index]);
   }
@@ -166,6 +166,69 @@ static void volumeSettingsAndMenuNavigation() {
   assert(d.app.menu.selection == 0);
   d.holdMenu();
   assert(!d.app.menuOpen());
+}
+
+static void sleepSettingsDefaultsChoicesAndNavigation() {
+  static_assert(uint8_t(MenuPage::TetrisZeroPlayers) == 16, "Existing menu ordinals remain stable");
+  static_assert(uint8_t(MenuPage::Sleep) == 17, "Sleep is appended to the menu enum");
+  Driver d;
+  const uint32_t seconds[] = {30, 60, 120, 300, 600, 0};
+  const char* labels[] = {"30 sec", "1 min", "2 min", "5 min", "10 min", "Off"};
+  assert(d.app.settings.sleepIndex == 0 && d.app.sleepTimeoutSeconds() == 30);
+  assert(d.app.sleepTimeoutMs() == 30000 && !d.app.settingsDirty);
+  d.app.setSleep(0);
+  assert(!d.app.settingsDirty);
+  d.holdMenu();
+  assert(d.app.menuItemCount() == 8 && std::string(d.app.menuLabel(6)) == "Sleep");
+  assert(std::string(d.app.menuValue(6)) == "30 sec");
+  for (unsigned index = 0; index < 6; ++index) d.tapMenu();
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Sleep && std::string(d.app.menuTitle()) == "Sleep");
+  assert(d.app.menuItemCount() == AppModel::SleepChoiceCount + 1);
+  const uint32_t worldTick = d.app.game.worldTick();
+  const uint32_t rounds = d.app.roundsStarted;
+  for (uint8_t index = 0; index < AppModel::SleepChoiceCount; ++index) {
+    assert(d.app.menu.selection == index && std::string(d.app.menuLabel(index)) == labels[index]);
+    const bool changed = d.app.settings.sleepIndex != index;
+    d.app.settingsDirty = false;
+    d.tick(true);
+    assert(d.app.menu.page == MenuPage::Sleep && d.app.settings.sleepIndex == index);
+    assert(d.app.sleepTimeoutSeconds() == seconds[index] && d.app.sleepTimeoutMs() == seconds[index] * 1000);
+    assert(d.app.settingsDirty == changed);
+    for (uint8_t marker = 0; marker < d.app.menuItemCount(); ++marker)
+      assert(std::string(d.app.menuValue(marker)) == (marker == index ? "*" : ""));
+    d.app.menu.page = MenuPage::Home;
+    assert(std::string(d.app.menuValue(6)) == labels[index]);
+    d.app.menu.page = MenuPage::Sleep;
+    d.app.settingsDirty = false;
+    d.tick(true);
+    assert(!d.app.settingsDirty);
+    d.tapMenu();
+  }
+  assert(d.app.menu.selection == 6 && std::string(d.app.menuLabel(6)) == "Back");
+  d.app.settingsDirty = false;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Home && !d.app.settingsDirty);
+  assert(d.app.game.worldTick() == worldTick && d.app.roundsStarted == rounds);
+  assert(d.app.currentGame == GameTitle::FlappyBird);
+  d.app.openMenu(MenuPage::Sleep);
+  for (unsigned index = 0; index < d.app.menuItemCount(); ++index) d.tapMenu();
+  assert(d.app.menu.selection == 0);
+  d.holdMenu();
+  assert(!d.app.menuOpen());
+  d.app.settingsDirty = false;
+  d.app.setSleep(UINT8_MAX);
+  assert(d.app.settings.sleepIndex == 0 && d.app.settingsDirty);
+  assert(d.app.sleepTimeoutMs() == 30000);
+  d.app.settingsDirty = false;
+  d.app.setSleep(UINT8_MAX);
+  assert(!d.app.settingsDirty);
+  d.app.settings.sleepIndex = UINT8_MAX;
+  assert(d.app.sleepTimeoutMs() == 30000);
+  d.app.openMenu(MenuPage::Home);
+  assert(std::string(d.app.menuValue(6)) == "30 sec");
+  d.app.openMenu(MenuPage::Sleep);
+  assert(std::string(d.app.menuValue(0)) == "*" && std::string(d.app.menuValue(6)).empty());
 }
 
 static void launcherBootAndImmediateChanges() {
@@ -242,7 +305,7 @@ static void controllerMenuRequestsAndStatus() {
   Driver d;
   assert(d.app.controllerRequest == 0 && d.app.controllerAction == 0);
   d.app.openMenu();
-  assert(std::string(d.app.menuLabel(5)) == "Controller" && std::string(d.app.menuLabel(6)) == "Back");
+  assert(std::string(d.app.menuLabel(5)) == "Controller" && std::string(d.app.menuLabel(6)) == "Sleep" && std::string(d.app.menuLabel(7)) == "Back");
   d.app.setControllerStatus("Searching");
   assert(std::string(d.app.menuValue(5)) == "Searching");
   d.app.menu.selection = 5; d.tick(true);
@@ -719,6 +782,7 @@ int main() {
   menuEdgesAndPause();
   everyMenuHasBack();
   volumeSettingsAndMenuNavigation();
+  sleepSettingsDefaultsChoicesAndNavigation();
   launcherBootAndImmediateChanges();
   controllerMenuRequestsAndStatus();
   perGameSettingsAndTetrisRequests();

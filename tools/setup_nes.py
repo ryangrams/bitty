@@ -56,6 +56,9 @@ CONFIG = """#pragma once
 #ifndef NES_CPU_O3
 #define NES_CPU_O3 1
 #endif
+#ifndef NES_CPU_IDLE_JUMP
+#define NES_CPU_IDLE_JUMP 1
+#endif
 #ifndef NES_SPRITE_CACHE
 #define NES_SPRITE_CACHE 1
 #endif
@@ -193,6 +196,7 @@ def patch(relative, text):
     if relative == "inc/nes.h":
         text = replace_once(text, "    uint8_t nes_quit;", """    uint8_t nes_quit;
     uint8_t host_dot_remainder;
+    uint8_t host_idle_jump;
     uint8_t host_video_divisor;
     uint8_t host_pcm_enabled;
     uint8_t host_pcm_valid;
@@ -234,6 +238,7 @@ def patch(relative, text):
 #endif''')
         text = replace_once(text, "    nes_memset(nes, 0, sizeof(nes_t));", """    nes_memset(nes, 0, sizeof(nes_t));
     nes->host_video_divisor = NES_VIDEO_DIVISOR;
+    nes->host_idle_jump = NES_CPU_IDLE_JUMP;
     nes->host_pcm_enabled = 1;
     nes->host_pcm_valid = 15;""")
         text = replace_once(text, "    nes->nes_quit = 1;\n    nes_deinitex(nes);",
@@ -253,19 +258,43 @@ def patch(relative, text):
         text = text[:start] + palette + text[stop:]
         text = replace_once(text, "void nes_run(nes_t* nes){", "void NES_FRAME_CODE nes_run_frame(nes_t* nes){")
         text = replace_once(text, "static inline void nes_draw_background_tile(",
-                            "static inline void NES_FRAME_CODE nes_draw_background_tile(")
+                            "static __attribute__((always_inline)) inline void nes_draw_background_tile(")
+        text = replace_once(text, """    NES_BG_PIXEL(0, 7); NES_BG_PIXEL(1, 6);
+    NES_BG_PIXEL(2, 5); NES_BG_PIXEL(3, 4);
+    NES_BG_PIXEL(4, 3); NES_BG_PIXEL(5, 2);
+    NES_BG_PIXEL(6, 1); NES_BG_PIXEL(7, 0);""", """    if ((lo | hi) == 0u) {
+        const nes_color_t color = colors[0];
+        opaque[0] = opaque[1] = opaque[2] = opaque[3] = 0;
+        opaque[4] = opaque[5] = opaque[6] = opaque[7] = 0;
+        out[0] = out[1] = out[2] = out[3] = color;
+        out[4] = out[5] = out[6] = out[7] = color;
+    } else {
+        NES_BG_PIXEL(0, 7); NES_BG_PIXEL(1, 6);
+        NES_BG_PIXEL(2, 5); NES_BG_PIXEL(3, 4);
+        NES_BG_PIXEL(4, 3); NES_BG_PIXEL(5, 2);
+        NES_BG_PIXEL(6, 1); NES_BG_PIXEL(7, 0);
+    }""")
         text = replace_once(text, "    nes_cpu_reset(nes);\n", "")
         text = replace_once(text, "    uint8_t dot_remainder = 0;", "    uint8_t dot_remainder = nes->host_dot_remainder;")
         text = replace_once(text, "    while(!nes->nes_quit){", "    if(!nes->nes_quit){")
         text = replace_once(text, "        nes_frame(nes);", "        nes->host_dot_remainder = dot_remainder;\n        nes_frame(nes);")
         text = replace_once(text, "static void nes_render_background_opacity_line(nes_t* nes){",
                             SKIPPED_SPRITE0_OPACITY +
-                            "static void nes_render_background_opacity_line(nes_t* nes, uint16_t scanline){\n"
-                            "    if (nes_skipped_sprite0_opacity(nes, scanline)) return;")
+                            "static __attribute__((noinline)) void nes_render_background_opacity_fallback(nes_t* nes){")
         text = replace_once(text, "nes_render_background_opacity_line(nes);",
                             "nes_render_background_opacity_line(nes, nes->scanline);")
         text = text.replace("#if (NES_FRAME_SKIP != 0)", "#if NES_HOST_VIDEO_CONTROL")
         text = text.replace("#endif /* NES_FRAME_SKIP */", "#endif /* NES_HOST_VIDEO_CONTROL */")
+        text = replace_once(text, "}\n#endif /* NES_HOST_VIDEO_CONTROL */\n\ntypedef struct {", """}
+/* Keep the mapper fetch fallback in flash. The no-hook sprite-zero shortcut
+ * stays in the scanline loop alongside the inlined full-tile pixel path. */
+static inline void nes_render_background_opacity_line(nes_t* nes, uint16_t scanline) {
+    if (!nes_skipped_sprite0_opacity(nes, scanline))
+        nes_render_background_opacity_fallback(nes);
+}
+#endif /* NES_HOST_VIDEO_CONTROL */
+
+typedef struct {""")
         text = replace_once(text, "static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){", """/* Rows outside the host's windows retain PPU fetches and sprite status.
  * Their RGB data is unused by the host and does not need composition. */
 static inline int nes_video_row_enabled(const nes_t* nes, uint16_t row) {
@@ -394,6 +423,33 @@ static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,n
         text = replace_once(text,
                             "return nes->nes_cpu.prg_banks[(address >> 13)-4][address & 0x1fffu];",
                             "return nes->host_prg_reads[(address >> 13)-4][address & 0x1fffu];")
+        text = replace_once(text,
+                            "case 0x4C:{nes_jmp(nes, nes_abs(nes)); nes->nes_cpu.cycles += 3;break;}// JMP ABS     3",
+                            """case 0x4C:{
+            const uint16_t from = (uint16_t)(nes->nes_cpu.PC - 1u);
+            nes_jmp(nes, nes_abs(nes));
+            nes->nes_cpu.cycles += 3;
+#if !defined(NES_TEST_MODE) || (NES_TEST_MODE != 1)
+            /* A stable NROM self-jump has no register, bus-hook or memory side
+             * effects. Batch its remaining 3-cycle repetitions within this CPU
+             * budget. PPU/APU timing and the next interrupt boundary stay exact. */
+            if (nes->host_idle_jump && nes->nes_cpu.PC == from &&
+                from >= 0x8000u && from <= 0xfffdu &&
+                nes->nes_rom.mapper_number == 0 &&
+                nes->nes_mapper.mapper_cpu_clock == NULL &&
+                nes->nes_mapper.mapper_read_prg == NULL &&
+                !nes->nes_cpu.irq_nmi && !nes->nes_cpu.irq_nmi_delay &&
+                (nes->nes_cpu.I || (!nes->nes_cpu.irq_pending
+#if (NES_ENABLE_SOUND == 1)
+                    && !nes_apu_irq_pending(nes)
+#endif
+                )) && nes->nes_cpu.cycles < ticks) {
+                const uint16_t remaining = (uint16_t)(ticks - nes->nes_cpu.cycles);
+                nes->nes_cpu.cycles += (uint16_t)(((remaining + 2u) / 3u) * 3u);
+            }
+#endif
+            break;
+        }// JMP ABS     3""")
         text = replace_once(text, "            else if (address == 0x4014){", """            else if (address == 0x4014){
 #if NES_SPRITE_CACHE
                 nes->host_sprite_cache_valid = 0;
@@ -509,15 +565,20 @@ def prepare(dependency_root=DEFAULT_ROOT, offline=False):
                            "mapper118 per-slot CHR-controlled CIRAM, 16-bit bank counts and 8 KiB SRAM",
                            "profile hook declarations available without full test-mode logging",
                            "Xtensa opcode switch tables enabled for the flash-resident CPU interpreter",
-                           "optional NES_IRAM_FRAME places the scanline loop and tile helper in instruction RAM",
+                           "optional NES_IRAM_FRAME places the scanline loop and inlined tile pixels in instruction RAM; the mapper opacity fallback stays in flash",
+                           "blank background tile rows fill exact palette colors and opacity without per-pixel bit extraction",
                            "optional NES_CPU_O3 optimizes the CPU source independently of the IRAM frame loop",
+                           "guarded NROM self-JMP batches preserve CPU budget cycles and interrupt boundaries without skipping frames",
                            "NES_SPRITE_CACHE stores scanline OAM selection with write, DMA, height and frame invalidation"]}
     (library / "dependency_receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     (library / "NOTICE").write_text(
         "PeakNES uses PeakRacing/nes, Copyright PeakRacing, Apache-2.0.\n"
         "Source: " + REPOSITORY + "/tree/" + REVISION + "\n"
         "Locally modified for cooperative mapper 0/1/4/37/118 frames, RGB565 strips and 24 kHz audio.\n"
-        "NES_VIDEO_DIVISOR controls video refresh; CPU, APU, sprite status and mapper timing run every frame.\n",
+        "NES_VIDEO_DIVISOR controls video refresh; CPU, APU, sprite status and mapper timing run every frame.\n"
+        "The scanline loop and tile pixels can use instruction RAM; the mapper opacity fallback remains in flash.\n"
+        "Blank background tile rows preserve exact palette colors, clipping and opacity.\n"
+        "Guarded NROM self-JMP batching preserves CPU cycles and interrupt boundaries without skipping frames.\n",
         encoding="utf-8")
     return library
 

@@ -57,6 +57,37 @@ static void advertisementCompatibility() {
   assert(classifyControllerName(excessive) == ControllerName::Unknown);
 }
 
+static void retainedControllerFiltering() {
+  const uint8_t previous[] = {0x10, 0x23, 0x45, 0x67, 0x89, 0xab};
+  uint8_t other[sizeof(previous)];
+  memcpy(other, previous, sizeof(other));
+  assert(!controllerPeerAllowed(true, false, previous, 0, previous, 0));
+  assert(!controllerPeerAllowed(true, true, nullptr, 0, previous, 0));
+  assert(!controllerPeerAllowed(true, true, previous, 0, nullptr, 0));
+  assert(controllerPeerAllowed(false, false, nullptr, 0, nullptr, 1));
+  // Public, random, public identity and random identity types remain distinct.
+  for (uint8_t rememberedType = 0; rememberedType < 4; ++rememberedType) {
+    for (uint8_t advertisedType = 0; advertisedType < 4; ++advertisedType) {
+      assert(controllerPeerAllowed(true, true, previous, rememberedType, previous, advertisedType) ==
+             (rememberedType == advertisedType));
+    }
+  }
+  for (size_t byte = 0; byte < sizeof(other); ++byte) {
+    other[byte] ^= 0x80;
+    assert(!controllerPeerAllowed(true, true, previous, 1, other, 1));
+    assert(controllerPeerAllowed(false, true, previous, 1, other, 1));
+    other[byte] ^= 0x80;
+  }
+  const AdvertisementMatch retained = matchControllerAdvertisement("Keyboard", true, true, -100);
+  const AdvertisementMatch stronger = matchControllerAdvertisement("IINE-keyboard", true, true, -10);
+  assert(retained.eligible && stronger.eligible && stronger.score > retained.score);
+  other[5] ^= 1;
+  // A preferred nearby HID cannot replace the retained peer during resume.
+  assert(controllerPeerAllowed(true, true, previous, 0, previous, 0));
+  assert(!controllerPeerAllowed(true, true, previous, 0, other, 0));
+  assert(controllerPeerAllowed(false, true, previous, 0, other, 0));
+}
+
 static void keyboardReports() {
   HidReportParser parser;
   assert(parser.configureBootKeyboard());
@@ -333,6 +364,7 @@ static void boundedChangedReportTrace() {
 int main() {
   accumulatedEdges();
   advertisementCompatibility();
+  retainedControllerFiltering();
   keyboardReports();
   iineKeyboardProfile();
   gamepadReports();

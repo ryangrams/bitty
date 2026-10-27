@@ -75,7 +75,7 @@ In Flappy Bird, the front M5 button is **Action**: flap, start a round, or selec
 
 Hold the right side button for at least 700 ms (0.7 seconds) to open the menu during play. While the menu is open, tap the right button to move through options and press Action to select. Hold the right button again to exit. A dedicated controller Menu button opens the menu with a tap. Every page ends with Back. The menu pauses single-player play.
 
-Home contains **Game at Boot**, **Change Game**, **Game Settings**, **Brightness**, **Volume**, **Controller** and **Back**. Game at Boot saves your startup choice; Change Game switches immediately. The three visible game choices are **Flappy Bird**, the general **NES** cartridge with its imported title, and **Tetris**. Missing cartridges remain unavailable. Flappy Bird is the initial startup choice.
+Home contains **Game at Boot**, **Change Game**, **Game Settings**, **Brightness**, **Volume**, **Controller**, **Sleep** and **Back**. Game at Boot saves your startup choice; Change Game switches immediately. The three visible game choices are **Flappy Bird**, the general **NES** cartridge with its imported title, and **Tetris**. Missing cartridges remain unavailable. Flappy Bird is the initial startup choice.
 
 Game Settings holds the selected game's options. Flappy Bird puts Mode, Skins, Set clock and Co-op link there. Selecting a skin returns immediately to play. Menus and Tetris use portrait orientation. General NES play uses landscape with a scaled 4:3 picture or the recognized Mario cartridge's native pixel view. See [NES display details](docs/NES.md#screen-and-controls).
 
@@ -102,6 +102,10 @@ The [StickC Plus has a passive buzzer](https://docs.m5stack.com/en/core/StickC-P
 The [original StickC lists a microphone](https://docs.m5stack.com/en/core/StickC); the Plus buzzer path targets the StickC Plus. Other models need compatible audio output hardware. Sound and volume still need a listening test on the physical device.
 
 Brightness has three settings: Low, Medium and High. All keep the backlight on. Medium is the default, and your selection is saved across restarts.
+
+**Sleep** saves battery after 30 seconds without input by default. Choose 30 seconds, 1, 2, 5 or 10 minutes, or Off. Your selection is saved across restarts. Sleep applies only while the StickC or StickC Plus confirms battery power; USB power keeps it awake.
+
+Sleep pauses the game in RAM, turns off the screen and stops Bluetooth. Press the front M5 button or right side button to wake it, then release before playing. Connecting USB also wakes it through periodic power checks. A controller retained from the current powered session gets a reconnect attempt, including after an ordinary disconnect before sleep. An explicit Disconnect stays off. Device-to-device links end before sleep. Bluetooth shutdown and retained-peer reconnect passed a hardware check within two seconds. Battery sleep, button wake and USB wake still need physical checks.
 
 ## Flappy Bird modes
 
@@ -143,7 +147,7 @@ python tools/package_source.py --git
 
 With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, HID reports, the link protocol, ROM validation, BPS and IPS patch checks and publication checks. The optional `--nes` suite prepares the pinned core and runs a synthetic cartridge program through CPU, video, audio, timing and input checks. Physical checks confirm H-mode pairing and reconnect after flashing, Tetris movement and A/B rotations, and Mario's jump, run and combined running jump. Tetris Up, Down, Hold and board layouts, Mario title shortcuts and the revised camera, power-cycle coverage, complete playthroughs, RTC retention, and sound and volume still need hardware verification. A second M5 is unavailable, so complete two-device games remain untested on hardware.
 
-NES video uses 8-row RGB565 strips, keeping its pixel buffer at 4 KiB. Display composition can skip frames independently of the simulation. CPU, audio and cartridge timing advance on every emulated frame. A 60 Hz simulation setting does not guarantee 60 LCD refreshes per second. The measured defaults use 30 source frames per second for Mario and solo Tetris, and 20 for two-player Tetris, while every game targets a 60 Hz simulation clock. A connected-controller device probe measured 500 Mario game frames in 8.333 seconds. The optional NES checks compare sprite-zero behavior across 65,536 scroll and sprite cases.
+NES uses a 4 KiB core pixel buffer and six 8-row DMA strips with about 23 KiB of queued pixels. Native Mario renders every NTSC frame; solo Tetris renders 30 source frames per second and two-player Tetris renders 20 while game timing advances independently. With Bluetooth connected and volume Full, three Mario probes measured 1,500 completed SPI frame intervals in 25.005376 seconds, or **59.9871 FPS**. This measures completed display transfers; panel scanout and vertical sync require separate measurement. See [test conditions and emulator details](docs/NES.md#accepted-formats).
 
 The source exporter writes `.local/releases/m5-flap-source.zip` from the explicit [publication list](PUBLIC_FILES.txt). [Distribution instructions](docs/DISTRIBUTION.md) explain the checks and exclusions. These tools support review and cannot establish ownership or legal clearance.
 
@@ -153,4 +157,4 @@ Project code uses the [MIT license](LICENSE) with [upstream notices](THIRD_PARTY
 
 Original development media, generated headers, firmware, device backups, and machine-specific notes were moved into ignored `.local/` during source preparation. Nothing was uploaded. Installed local toolchains stay ignored under `toolchain/`. Test executables and temporary build caches can be removed and recreated with the commands above. Preserve private input files you cannot recover before deleting `.local/`.
 
-After the feature build, temporary compiler objects, staged sketches, test executables, and used dependency downloads were removed. Recreate them with `python tools/build.py` and `python tools/test.py`. The verified private firmware files remain under `.local/releases/private-firmware/` for later device testing.
+After the Mario 60 FPS and battery sleep release, temporary compiler objects, staged sketches and test executables were removed. Recreate them with `python tools/build.py` and `python tools/test.py`. Verified private firmware and its receipt remain under `.local/releases/mario60-sleep/`. Performance logs remain under `.local/performance-candidates/`; intermediate compiler images were removed after the final build was verified.

@@ -42,7 +42,13 @@ Firmware distribution also carries the obligations of its linked libraries, incl
 
 ## NES core modifications
 
-`tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/1/4/37/118 registry, 8-row RGB565 strip buffers, 24 kHz audio, and a filesystem guard around the trainer helper. Its video divisor skips composition and display callbacks while retaining CPU, APU, sprite status and mapper timing. The opacity shortcut retains full mapper fetches when they have side effects. A scanline sprite cache preserves OAM ordering, overflow and pattern fetches, with invalidation on frame start, OAM writes, DMA and sprite-height changes. Modified files receive a change notice. Upstream source notices, the license and a generated modification notice remain with the prepared dependency.
+`tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/1/4/37/118 registry, 8-row RGB565 strip buffers, 24 kHz audio, and a filesystem guard around the trainer helper.
+
+Runtime video intervals can skip composition and display callbacks while retaining CPU, APU, sprite status and mapper timing. Two visible source-row windows limit RGB work while preserving offscreen PPU fetches and frame callbacks. The opacity shortcut retains full mapper fetches when they have side effects. A scanline sprite cache preserves OAM ordering, overflow and pattern fetches, with invalidation on frame start, OAM writes, DMA and sprite-height changes.
+
+Optional PCM suppression retains channel phase, envelopes, length counters, noise state, DMC bus reads and interrupt behavior. An optional fixed-window PRG read cache preserves the mapper's original ROM pointers. Guarded NROM self-jump batching combines repeated idle instructions within one CPU budget, preserving consumed cycles and interrupt boundaries. It requires a stable self-jump in ROM, excludes mapper CPU-clock and PRG-read hooks, and retains the unbatched path when its interrupt guards apply.
+
+Modified files receive a change notice. Upstream source notices, the license and a generated modification notice remain with the prepared dependency. The public project contains the preparation script and synthetic verification programs. The fetched upstream implementation stays outside the source package.
 
 The emulator's software license grants no rights to NES cartridge images, game artwork, music, names or other imported content. Local ROMs and firmware containing them are excluded from the public source distribution.
 
