@@ -4,7 +4,7 @@ A small game launcher for ESP32-based M5StickC devices. Play Flappy Bird modes, 
 
 The public package contains project source, two project-created procedural themes, tools, synthetic test fixtures, and upstream license notices. Imported artwork, sounds, logos, ROMs, generated headers, screenshots, and firmware containing imported material stay private. The NES core is fetched separately at a pinned revision. This is an independent project with no affiliation with the original games' creators or M5Stack.
 
-For the IINE Gamebrick Mini, start with **H mode**, its yellow-light keyboard profile named **IINE-keyboard**. Hold its Pairing button for three seconds, then select **Controller > Pair controller** on the M5. H-mode pairing and directional movement in Tetris have been physically confirmed. A/B report mapping is still under diagnosis, and a complete controller playthrough remains pending. See [controller setup and controls](docs/CONTROLLERS.md).
+For the IINE Gamebrick Mini, start with **H mode**, its yellow-light keyboard profile named **IINE-keyboard**. Hold its Pairing button for three seconds, then select **Controller > Pair controller** on the M5. H-mode pairing, reconnect after flashing, Tetris movement and both rotations have been physically confirmed. Mario's A jump, B+Right run, and A jump while B+Right stays held also work. The IINE profile maps the captured Space and Enter reports to game A and B. Complete controller playthroughs and power-cycle coverage remain pending. See [controller setup and controls](docs/CONTROLLERS.md).
 
 ## Build your copy
 
@@ -85,7 +85,7 @@ Tetris defaults to **Tilt move**: tilt to move left or right, short-tap the left
 
 Tetris Game Settings offers **Players**, A-Type or B-Type, starting level, controls, Link and Start / restart. **Players > Solo** selects TetrisGYM, with levels 0 through 29 and NTSC 60 Hz or PAL 50 Hz. **Players > 2 players** selects Tetris Zero, with levels 0 through 9 and a portrait view of both wells. A Zero-only build can also run its native solo mode. Start / restart applies the selected game options. PAL/NTSC changes both the TetrisGYM cartridge timing flag and emulator clock.
 
-For local two-player Tetris, the M5 controls Player 1 and a connected Bluetooth controller controls Player 2. Controller Down taps move one row and holds continue soft drop; Up hard-drops; A and B rotate; A+B exchanges the current piece with NEXT once per piece. Physical A/B operation is still under diagnosis.
+For local two-player Tetris, the M5 controls Player 1 and a connected Bluetooth controller controls Player 2. Controller Down taps move one row and holds continue soft drop; Up hard-drops; A and B rotate; A+B exchanges the current piece with NEXT once per piece. Both IINE rotation buttons have been physically confirmed. Manual Up, Down and current/NEXT exchange checks remain pending.
 
 The experimental solo link gives two devices the same piece order, host level and timing, compares score and lines, and sends no garbage. The two-player link sends both players' inputs to identical Tetris Zero emulators. Both link modes still need a complete physical playthrough with two devices. See [Tetris controls, settings and local patch builds](docs/TETRIS.md).
 
@@ -135,7 +135,7 @@ python tools/check_distribution.py --git
 python tools/package_source.py --git
 ```
 
-With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, HID reports, the link protocol, ROM validation, BPS and IPS patch checks and publication checks. The optional `--nes` suite prepares the pinned core and runs a synthetic cartridge program through CPU, video, audio, timing and input checks. H-mode controller pairing and Tetris directions have been physically confirmed. A/B input, reconnect behavior, complete controller playthroughs, sustained NES and Tetris speed and display output, RTC retention, sound and volume, and complete two-device games still need hardware verification.
+With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, HID reports, the link protocol, ROM validation, BPS and IPS patch checks and publication checks. The optional `--nes` suite prepares the pinned core and runs a synthetic cartridge program through CPU, video, audio, timing and input checks. Physical checks confirm H-mode pairing and reconnect after flashing, Tetris movement and A/B rotations, and Mario's jump, run and combined running jump. Tetris Up, Down and current/NEXT exchange, power-cycle coverage, complete controller playthroughs, sustained NES and Tetris speed and display output, RTC retention, sound and volume, and complete two-device games still need hardware verification.
 
 NES video uses 8-row RGB565 strips, keeping its pixel buffer at 4 KiB. Arduino builds display every second emulated frame by default; CPU, audio and cartridge timing advance every frame. The optional NES checks cover video divisors 1 and 3 and compare sprite-zero behavior across 65,536 scroll and sprite cases. Physical frame rate still needs measurement.
 

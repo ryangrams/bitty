@@ -65,4 +65,6 @@ This build supports the BLE HID service (`0x1812`), reads its Report Map and Rep
 
 Connections request encryption with bonding and no man-in-the-middle requirement. A controller that requires entering or confirming a PIN gets a visible status; this build has no PIN-entry or confirmation screen. Disconnects, invalid reports and receive overflow clear affected held inputs.
 
-The IINE has reached **Controller ready**, and its directions have worked in Tetris. Captured A and B presses sent Space and Enter; the profile mapping now handles those reports. Reconnect behavior, on-device face-button actions and a complete controller playthrough still need physical verification.
+The IINE has reached **Controller ready** and reconnected after flashing. Physical checks confirm Tetris movement and both A/B rotations. In Mario, A jumps, B+Right runs, and A still jumps while B+Right stays held. Captured A and B presses sent Space and Enter; the IINE-only mapping handles those reports and passes host tests.
+
+Manual Tetris Up, Down and current/NEXT exchange checks, power-cycle coverage and complete controller playthroughs remain pending. C-mode profiles and other controllers still need physical testing.

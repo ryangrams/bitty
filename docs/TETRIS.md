@@ -112,7 +112,7 @@ A Bluetooth controller uses these Tetris assignments:
 
 The current/NEXT exchange reuses the queued piece. The M5 front button keeps its downward-movement assignment. In local two-player mode, the M5 controls Player 1 and Bluetooth controls Player 2. General NES play uses the front button for Start and Select. See [controller setup](CONTROLLERS.md).
 
-H-mode Bluetooth pairing and directional movement have been physically confirmed. A/B report mapping is still under diagnosis, and a complete controller playthrough remains pending.
+H-mode Bluetooth pairing, reconnect after flashing, directional movement and both A/B rotations have been physically confirmed. Captured IINE face-button reports send Space for A and Enter for B; the firmware maps those reports specifically for IINE-keyboard. Manual Up, Down and current/NEXT exchange checks, power-cycle coverage and a complete controller playthrough remain pending.
 
 ## Add the two-player engine
 
