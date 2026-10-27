@@ -14,6 +14,8 @@ enum : uint8_t { A = 1, B = 2, Up = 16, Down = 32, Left = 64 };
 struct Runtime {
   std::array<uint8_t, 32768> ram = {};
   bool available = true;
+  bool randomizerAvailable = true;
+  unsigned randomCalls = 0;
   std::vector<uint16_t> writes;
 
   Runtime() {
@@ -32,6 +34,10 @@ struct Runtime {
   uint8_t readRam(uint16_t address) const { assert(address < ram.size()); return ram[address]; }
   bool writeRam(uint16_t address, uint8_t value) {
     assert(address < ram.size()); writes.push_back(address); ram[address] = value; return true;
+  }
+  bool runTetrisRandomizer(bool, uint8_t& orientation) {
+    if (!randomizerAvailable) return false;
+    ++randomCalls; orientation = 2; return true;
   }
 };
 
@@ -123,15 +129,17 @@ static void dropsUseTheFloorAndStack() {
   assert(actions.hardDropped());
 }
 
-static void swapIsOncePerNativePiece() {
+static void holdIsSeparateAndOncePerNativePiece() {
   Runtime runtime;
   runtime.ram[0x62] = 12;
   TetrisActions actions;
   assert(actions.apply(runtime, true, 1, A | B | Left) == Left);
   assert(actions.swapped() && !actions.hardDropped());
-  assert(runtime.ram[0x62] == 10 && runtime.ram[0xbf] == 11);
+  assert(runtime.ram[0x62] == 10 && runtime.ram[0xbf] == 2);
+  assert(actions.hasHeldPiece() && actions.heldOrientation() == 11 && actions.heldType() == 4);
+  assert(runtime.randomCalls == 1 && actions.heldThisFrame());
   assert(runtime.ram[0x60] == 5 && runtime.ram[0x61] == 0);
-  assert(runtime.ram[0x65] == 0 && runtime.ram[0x66] == 0);
+  assert(runtime.ram[0x65] == 0 && runtime.ram[0x66] == 18);
   assert(runtime.ram[0x6e] == 0 && runtime.ram[0x6f] == 0);
   runtime.writes.clear();
   runtime.ram[0xa7] = 7;
@@ -150,26 +158,30 @@ static void swapIsOncePerNativePiece() {
   runtime.ram[0x62] = 2;
   runtime.ram[0xbf] = 7;
   actions.apply(runtime, true, 1, A | B);
-  assert(actions.swapped() && runtime.ram[0x62] == 7 && runtime.ram[0xbf] == 2);
+  assert(actions.swapped() && runtime.ram[0x62] == 11 && runtime.ram[0xbf] == 7);
+  assert(actions.heldOrientation() == 2 && runtime.randomCalls == 1);
   actions.reset();
+  assert(!actions.hasHeldPiece() && actions.heldOrientation() == 255 && actions.heldType() == 255);
   actions.apply(runtime, true, 1, A | B);
-  assert(actions.swapped());
+  assert(actions.swapped() && runtime.randomCalls == 2 && actions.heldOrientation() == 11);
 }
 
 static void rejectedActionsAreAtomic() {
-  for (int condition = 0; condition < 5; ++condition) {
+  for (int condition = 0; condition < 6; ++condition) {
     Runtime runtime;
     if (condition == 0) runtime.ram[0x62] = 19;
     if (condition == 1) runtime.ram[0xbf] = 255;
     if (condition == 2) runtime.ram[0x400 + 4] = 1;
     if (condition == 3) runtime.ram[0x60] = 0;
     if (condition == 4) runtime.ram[0x400 + 45] = 1;
+    if (condition == 5) runtime.randomizerAvailable = false;
     const auto before = runtime.ram;
     TetrisActions actions;
-    const uint8_t input = condition <= 2 ? uint8_t(A | B) : uint8_t(Up);
+    const uint8_t input = condition <= 2 || condition == 5 ? uint8_t(A | B) : uint8_t(Up);
     assert(actions.apply(runtime, true, 1, input) == 0);
     assert(!actions.swapped() && !actions.hardDropped());
     assert(runtime.writes.empty() && runtime.ram == before);
+    assert(!actions.hasHeldPiece());
   }
   Runtime runtime;
   runtime.ram[0x400 + 4] = 1;
@@ -182,6 +194,33 @@ static void rejectedActionsAreAtomic() {
   assert(actions.swapped());
 }
 
+static void heldExchangeKeepsQueueAndRejectsBlockedSpawn() {
+  Runtime runtime;
+  TetrisActions actions;
+  actions.apply(runtime, true, 1, A | B);
+  runtime.ram[0x68] = 8;
+  actions.apply(runtime, true, 1, 0);
+  runtime.ram[0x68] = 1;
+  actions.apply(runtime, true, 1, A | B);
+  assert(!actions.heldThisFrame());
+  runtime.ram[0x68] = 2;
+  actions.apply(runtime, true, 1, 0);
+  runtime.ram[0x68] = 1;
+  runtime.ram[0x62] = 2;
+  runtime.ram[0xbf] = 255;
+  runtime.ram[0x400 + 5] = 1;
+  const auto before = runtime.ram;
+  runtime.writes.clear();
+  actions.apply(runtime, true, 1, A | B);
+  assert(!actions.heldThisFrame() && actions.heldOrientation() == 11);
+  assert(runtime.writes.empty() && runtime.ram == before && runtime.randomCalls == 1);
+  runtime.ram[0x400 + 5] = 0xef;
+  actions.apply(runtime, true, 1, 0);
+  actions.apply(runtime, true, 1, A | B);
+  assert(actions.heldThisFrame() && runtime.ram[0x62] == 11);
+  assert(actions.heldOrientation() == 2 && runtime.ram[0xbf] == 255 && runtime.randomCalls == 1);
+}
+
 static void mirrorsStayInsideTheSelectedPlayer() {
   for (int mode = 0; mode < 4; ++mode) {
     Runtime runtime;
@@ -191,6 +230,7 @@ static void mirrorsStayInsideTheSelectedPlayer() {
     runtime.ram[0xbe] = players;
     const unsigned current = live(zero, players, player);
     runtime.ram[current + 2] = 12;
+    if (zero && player == 2) runtime.ram[0x7ff0] = 12;
     const auto before = runtime.ram;
     TetrisActions actions;
     actions.apply(runtime, zero, player, A | B);
@@ -199,7 +239,7 @@ static void mirrorsStayInsideTheSelectedPlayer() {
     const unsigned next = zero && player == 2 ? 0x7ff1 : 0xbf;
     allowed.insert(next);
     const auto allowBlock = [&](unsigned base) {
-      for (unsigned offset : {0u, 1u, 2u, 5u, 6u, 14u, 15u}) allowed.insert(base + offset);
+      for (unsigned offset : {0u, 1u, 2u, 5u, 14u, 15u}) allowed.insert(base + offset);
     };
     if (!zero) allowBlock(0x40);
     else {
@@ -210,7 +250,8 @@ static void mirrorsStayInsideTheSelectedPlayer() {
     for (uint16_t address : runtime.writes) assert(allowed.count(address));
     for (unsigned address = 0; address < runtime.ram.size(); ++address)
       if (!allowed.count(address)) assert(runtime.ram[address] == before[address]);
-    assert(runtime.ram[current + 2] == 10 && runtime.ram[next] == 11);
+    assert(runtime.ram[current + 2] == 10 && runtime.ram[next] == 2);
+    assert(actions.heldOrientation() == 11 && runtime.randomCalls == 1);
     if (zero && player == 2) assert(runtime.ram[0x82] == 10 && runtime.ram[0x7ff0] == 10);
     if (zero && players == 1) assert(runtime.ram[0x62] == 10);
   }
@@ -227,13 +268,37 @@ static void nativeButtonsPassThrough() {
   }
 }
 
+static void chordReleaseCannotRotate() {
+  for (uint8_t released : {uint8_t(A), uint8_t(B)}) for (int outcome = 0; outcome < 3; ++outcome) {
+    Runtime runtime;
+    TetrisActions actions;
+    if (outcome == 1) runtime.randomizerAvailable = false;
+    actions.apply(runtime, true, 1, A | B);
+    if (outcome == 2) {
+      actions.apply(runtime, true, 1, 0);
+      actions.apply(runtime, true, 1, A | B);
+      assert(!actions.heldThisFrame());
+    }
+    assert(actions.apply(runtime, true, 1, released | Left) == Left);
+    assert(actions.apply(runtime, true, 1, released | Up) == 0);
+    assert(actions.hardDropped());
+    runtime.ram[0x68] = 3;
+    assert(actions.apply(runtime, true, 1, released) == 0);
+    assert(actions.apply(runtime, true, 1, 0) == 0);
+    runtime.ram[0x68] = 1;
+    assert(actions.apply(runtime, true, 1, released) == released);
+  }
+}
+
 int main() {
   geometryAndSpawnOrientations();
   guardedRuntimesKeepInputAndRam();
   dropsUseTheFloorAndStack();
-  swapIsOncePerNativePiece();
+  holdIsSeparateAndOncePerNativePiece();
   rejectedActionsAreAtomic();
+  heldExchangeKeepsQueueAndRejectsBlockedSpawn();
   mirrorsStayInsideTheSelectedPlayer();
   nativeButtonsPassThrough();
-  std::cout << "Tetris action geometry, native lock setup, swap lifecycle and RAM isolation passed.\n";
+  chordReleaseCannotRotate();
+  std::cout << "Tetris action geometry, native lock setup, separate hold lifecycle and RAM isolation passed.\n";
 }

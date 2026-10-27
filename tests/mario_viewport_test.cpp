@@ -16,9 +16,9 @@ static void pixelsAndBounds() {
   std::vector<uint16_t> output(guard + 244 * 135 + guard, 0xa55a);
   std::vector<uint16_t> source(256 * 240);
   for (unsigned i = 0; i < source.size(); ++i) source[i] = i;
-  for (int camera : {121, 90, 32}) {
+  for (int camera : {105, 90, 32}) {
     viewport.resetCamera();
-    viewport.trackPlayer(camera + 18, 16, true);
+    viewport.trackPlayer(camera + 6, 16, true);
     assert(viewport.worldTop() == camera);
     for (int y = 0; y < 240; y += 8)
       assert(viewport.consume(0, y, 255, y + 7, source.data() + y * 256,
@@ -43,15 +43,15 @@ static void cameraAndPartialRectangles() {
   MarioViewport viewport;
   assert(viewport.configure(240, 135));
   viewport.trackPlayer(193, 16, true);
-  assert(viewport.worldTop() == 121);
+  assert(viewport.worldTop() == 105);
   viewport.trackPlayer(100, 16, true);
-  assert(viewport.worldTop() == 82);
+  assert(viewport.worldTop() == 94);
   viewport.trackPlayer(110, 16, true);
-  assert(viewport.worldTop() == 82);
+  assert(viewport.worldTop() == 104);
   viewport.trackPlayer(190, 16, true);
   assert(viewport.worldTop() == 105);
   viewport.trackPlayer(239, 64, true);
-  assert(viewport.worldTop() == 121);
+  assert(viewport.worldTop() == 105);
   viewport.trackPlayer(32, 16, true);
   assert(viewport.worldTop() == 32);
   viewport.trackPlayer(200, 0, true);
@@ -66,6 +66,79 @@ static void cameraAndPartialRectangles() {
   assert(!viewport.consume(16, 32, 17, 33, block, output.data()));
   assert(output[16 * 240 + 8] == 1 && output[16 * 240 + 9] == 2);
   assert(output[17 * 240 + 8] == 3 && output[17 * 240 + 9] == 4);
+}
+
+
+static void exactRowDamage() {
+  MarioViewport viewport;
+  assert(viewport.configure(240, 135));
+  std::vector<uint16_t> source(256 * 240, 0x35a1), output(240 * 135, 0x35a1);
+  auto render = [&]() {
+    for (int y = 0; y < 240; y += 8)
+      viewport.consume(0, y, 255, y + 7, source.data() + y * 256, output.data());
+  };
+  render();
+  for (int row = 0; row < 135; ++row) assert(viewport.rowChanged(row));
+  render();
+  for (int row = 0; row < 135; ++row) assert(!viewport.rowChanged(row));
+  source[16 * 256 + 8] ^= 1;
+  source[180 * 256 + 180] ^= 1;
+  source[64 * 256 + 64] ^= 1;  // Hidden source row.
+  render();
+  for (int row = 0; row < 135; ++row)
+    assert(viewport.rowChanged(row) == (row == 0 || row == viewport.targetRow(180)));
+  viewport.invalidate();
+  render();
+  for (int row = 0; row < 135; ++row) assert(viewport.rowChanged(row));
+  assert(!viewport.rowChanged(-1) && !viewport.rowChanged(135));
+  // A descending jump restores lower ground immediately.
+  viewport.trackPlayer(100, 16, true);
+  assert(viewport.worldTop() + 118 >= 208);
+  viewport.trackPlayer(110, 16, true);
+  assert(viewport.worldTop() == 104);
+}
+
+static void controllerShortcuts() {
+  using Screen = flappy::MarioCartridge::Screen;
+  flappy::MarioController controller;
+  for (uint8_t trigger : {2, 16, 32}) {
+    controller.reset();
+    unsigned starts = 0;
+    for (int frame = 0; frame < 20; ++frame) {
+      const auto output = controller.step(Screen::Title, trigger);
+      starts += output == 8;
+      assert(!(output & trigger));
+    }
+    assert(starts == 1);
+    assert(controller.step(Screen::Playing, trigger) == 0);
+    assert(controller.step(Screen::Playing, 0) == 0);
+    assert(controller.step(Screen::Playing, trigger) == trigger);
+  }
+  for (bool staggered : {false, true}) {
+    controller.reset();
+    if (staggered) assert(!controller.step(Screen::Title, 2));
+    bool heldA = false, continued = false;
+    for (int frame = 0; frame < 20; ++frame) {
+      const auto output = controller.step(Screen::Title, frame < 3 ? 3 : 0);
+      if (output == 1) heldA = true;
+      if (output == 9) { assert(heldA); continued = true; }
+      assert(output != 8);
+    }
+    assert(continued);
+  }
+  controller.reset();
+  assert(!controller.step(Screen::GameOver, 3));
+  for (int frame = 0; frame < 100; ++frame) assert(!controller.step(Screen::Other, 0));
+  bool continued = false;
+  for (int frame = 0; frame < 20; ++frame) continued |= controller.step(Screen::Title, 0) == 9;
+  assert(continued);
+  controller.reset();
+  for (unsigned pad = 0; pad < 256; ++pad)
+    assert(controller.step(Screen::Playing, uint8_t(pad)) == pad);
+  // Buttons held before the title appears do not start a game on their own.
+  controller.reset();
+  assert(controller.step(Screen::Playing, 3) == 3);
+  for (int frame = 0; frame < 20; ++frame) assert(controller.step(Screen::Title, 3) != 9);
 }
 
 static void guardedLauncher() {
@@ -104,5 +177,7 @@ int main() {
   pixelsAndBounds();
   cameraAndPartialRectangles();
   guardedLauncher();
-  std::cout << "Mario native pixel mapping, camera, bounds and guarded launcher passed\n";
+  exactRowDamage();
+  controllerShortcuts();
+  std::cout << "Mario native pixel mapping, camera, exact damage, controller shortcuts, bounds and guarded launcher passed\n";
 }

@@ -66,7 +66,7 @@ The build includes `.local/tetris-rom/` when present. Use `--tetris-dir /path/to
 
 Choose **Tetris** through **Change Game** to switch immediately, or save it through **Game at Boot** for the next power-on. Flappy Bird remains the initial startup choice. The selected player mode is saved separately from the boot-game choice. Older builds' Tetris Zero boot choice migrates to the single Tetris entry.
 
-The portrait layout requires a display at least 131 by 240 pixels, including the 135 by 240 StickC Plus screen. The frontend presents game settings on the M5 and launches the cartridge automatically. During play it arranges the cartridge's playfield, preview and counters in portrait.
+The portrait layout requires a display at least 131 by 240 pixels, including the 135 by 240 StickC Plus screen. The frontend presents game settings on the M5 and launches the cartridge automatically. During play it arranges the playfield, Hold, NEXT and counters in portrait.
 
 ## Game settings
 
@@ -78,11 +78,14 @@ Open **Game Settings** while Tetris is selected:
 | Game type | A-Type or B-Type. Solo uses TetrisGYM's type 0 or type 6. |
 | Starting level | 0 through 29 for TetrisGYM; 0 through 9 for Tetris Zero. |
 | Controls | Tilt move, Tilt rotate, and tilt calibration. |
-| Speed | Solo TetrisGYM: NTSC 60 Hz or PAL 50 Hz. This sets both the cartridge's timing flag and emulator clock. |
+| Speed | Solo TetrisGYM: NTSC 60 Hz by default, or PAL 50 Hz by choice. This sets both the cartridge's timing flag and emulator clock. |
 | Link | Disconnect, Host or Join. Solo uses same-piece competition; two-player mode uses the shared native game. |
+| Board size | Large 11-pixel cells by default, or Native 8-pixel cells for solo. Two-player play uses 6-pixel cells for both wells. |
 | Start / restart | Restart the cartridge and apply the selected level, game type and speed. |
 
 Settings are saved locally. Each engine keeps its own valid level and game-type choices. Use **Start / restart** to apply changes to the next game. Controller Start or Select opens these M5 settings during Tetris play.
+
+NTSC 60 Hz is the default simulation clock. TetrisGYM's Speed setting provides an explicit PAL option. Simulation timing and LCD refresh are separate; sustained hardware speed is still being tested.
 
 A build with only TetrisGYM supports solo. A build with only Tetris Zero can use its native solo mode as a fallback, with levels 0 through 9. Two-player mode requires the Zero image. A build with neither image keeps the Tetris choice unavailable.
 
@@ -107,12 +110,16 @@ A Bluetooth controller uses these Tetris assignments:
 | Down, hold | Continue soft drop. |
 | Up | Hard drop. |
 | A or B | Use the cartridge's native rotations. |
-| A+B together | Exchange the current piece and NEXT once per piece. |
+| A+B together | Use Hold once until the active piece locks. |
 | Start or Select | Open Tetris Game Settings. |
 
-The current/NEXT exchange reuses the queued piece. The M5 front button keeps its downward-movement assignment. In local two-player mode, the M5 controls Player 1 and Bluetooth controls Player 2. General NES play uses the front button for Start and Select. See [controller setup](CONTROLLERS.md).
+Hold is an M5 frontend extension with its own slot and preview. The first successful Hold stores the current piece, spawns NEXT and runs the cartridge's randomizer for a replacement NEXT. Later Holds exchange the current and held pieces while leaving NEXT unchanged. Another Hold becomes available after the active piece locks. Restart clears the slot.
 
-H-mode Bluetooth pairing, reconnect after flashing, directional movement and both A/B rotations have been physically confirmed. Captured IINE face-button reports send Space for A and Enter for B; the firmware maps those reports specifically for IINE-keyboard. Manual Up, Down and current/NEXT exchange checks, power-cycle coverage and a complete controller playthrough remain pending.
+Large mode draws each occupied cell as an equal 11 by 11 pixel block using colors sampled from the cartridge. Native mode preserves the original 8 by 8 cell artwork. The two-player view fits both wells with equal 6 by 6 cells. Hold and NEXT previews use consistent cell geometry.
+
+The M5 front button keeps its downward-movement assignment. In local two-player mode, the M5 controls Player 1 and Bluetooth controls Player 2. General NES play uses the front button for Start and Select. See [controller setup](CONTROLLERS.md).
+
+H-mode Bluetooth pairing, reconnect after flashing, directional movement and both A/B rotations have been physically confirmed. Captured IINE face-button reports send Space for A and Enter for B; the firmware maps those reports specifically for IINE-keyboard. Manual Up, Down, Hold and board-layout checks, power-cycle coverage and a complete controller playthrough remain pending. A second M5 is unavailable for a physical link playthrough.
 
 ## Add the two-player engine
 

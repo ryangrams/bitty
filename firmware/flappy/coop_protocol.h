@@ -7,7 +7,7 @@
 namespace flappy {
 namespace coop {
 
-constexpr uint8_t ProtocolVersion = 1;
+constexpr uint8_t ProtocolVersion = 2;
 constexpr size_t MaxPacketBytes = 20;
 constexpr uint32_t SnapshotIntervalMs = 50;
 constexpr uint32_t InterpolationMs = 50;

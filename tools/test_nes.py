@@ -1,17 +1,40 @@
 #!/usr/bin/env python3
 """Build and run portable NES checks using a synthetic cartridge program."""
+import argparse
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
-from setup_nes import ROOT, prepare
+from setup_nes import DEFAULT_ROOT, ROOT, prepare
+
+
+def firmware_function(source, signature):
+    start = source.index(signature)
+    tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*[\s\S]*?\*/|[{}]')
+    depth = 0
+    for token in tokens.finditer(source, start):
+        if token.group() == "{":
+            depth += 1
+        elif token.group() == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:token.end()] + "\n"
+    raise ValueError("The firmware function has no closing brace: " + signature)
 
 
 def main():
-    library = prepare()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dependency-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--offline", action="store_true")
+    args = parser.parse_args()
+    library = prepare(args.dependency_root, args.offline)
     source = library / "src"
     output = ROOT / ".local" / "tests" / "nes"
     output.mkdir(parents=True, exist_ok=True)
+    firmware = (ROOT / "firmware" / "flappy" / "flappy.ino").read_text()
+    (output / "generated_nes_launcher.h").write_text(
+        firmware_function(firmware, "void handleGameRequest() {"))
     cc = shutil.which("cc") or shutil.which("gcc")
     cxx = shutil.which("c++") or shutil.which("g++")
     if not cc or not cxx:
@@ -31,6 +54,28 @@ def main():
                         str(ROOT / "tests" / "nes_runtime_test.cpp"), *map(str, objects),
                         "-o", str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
+        if divisor == 1:
+            executable = case_output / "nes_launcher_test"
+            subprocess.run([cxx, "-std=c++11", "-Wall", "-Wextra", "-Werror", *case_flags,
+                            "-I" + str(output), str(ROOT / "tests" / "nes_launcher_test.cpp"),
+                            *map(str, objects), "-o", str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
+        executable = case_output / "nes_timing_test"
+        subprocess.run([cxx, "-std=c++11", "-Wall", "-Wextra", *case_flags,
+                        str(ROOT / "tests" / "nes_timing_test.cpp"), *map(str, objects),
+                        "-o", str(executable)], check=True)
+        subprocess.run([str(executable)], check=True)
+        executable = case_output / "nes_prg_cache_test"
+        subprocess.run([cxx, "-std=c++11", "-Wall", "-Wextra", *case_flags,
+                        str(ROOT / "tests" / "nes_prg_cache_test.cpp"), *map(str, objects),
+                        "-o", str(executable)], check=True)
+        subprocess.run([str(executable)], check=True)
+        if divisor == 1:
+            executable = case_output / "nes_apu_pcm_test"
+            subprocess.run([cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror", *case_flags,
+                            str(ROOT / "tests" / "nes_apu_pcm_test.c"), str(source / "nes_apu.c"),
+                            "-o", str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
         if divisor == 3:
             executable = case_output / "nes_video_skip_test"
             other_objects = [str(path) for path in objects if path.name != "nes.o"]

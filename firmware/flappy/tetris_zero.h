@@ -40,6 +40,16 @@ struct TetrisZero {
     const uint8_t low = runtime.readRam(address);
     return uint16_t(runtime.readRam(address + 1) * 100 + (low >> 4) * 10 + (low & 15));
   }
+  static uint32_t score(const NesRuntime& runtime, uint8_t player = 1) {
+    const uint16_t address = playerBase(runtime, player) + 0x13;
+    uint32_t value = 0, place = 1;
+    for (uint8_t i = 0; i < 3; ++i) {
+      const uint8_t digits = runtime.readRam(address + i);
+      value += uint32_t((digits >> 4) * 10 + (digits & 15)) * place;
+      place *= 100;
+    }
+    return value;
+  }
   static bool finished(const NesRuntime& runtime) {
     if (!playing(runtime)) return false;
     if (runtime.readRam(playerBase(runtime, 1) + 8) == 10) return true;

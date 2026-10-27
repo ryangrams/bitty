@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "app_model.h"
 #include "menu_font.h"
@@ -28,7 +29,24 @@ struct RenderOptions {
 class Renderer {
  public:
   explicit Renderer(uint16_t* pixels) : pixels_(pixels) { skins_.select(0); }
-  void setSkin(uint8_t index) { skins_.select(index); }
+  ~Renderer() { releaseBackgroundCache(); }
+  Renderer(const Renderer&) = delete;
+  Renderer& operator=(const Renderer&) = delete;
+
+  static constexpr size_t BackgroundCacheLimit = 16 * 1024;
+  void setBackgroundCacheEnabled(bool enabled, size_t limitBytes = BackgroundCacheLimit) {
+    const size_t limit = limitBytes < BackgroundCacheLimit ? limitBytes : BackgroundCacheLimit;
+    if (enabled != backgroundCacheEnabled_ || limit != backgroundCacheLimit_) releaseBackgroundCache();
+    backgroundCacheEnabled_ = enabled;
+    backgroundCacheLimit_ = uint16_t(limit);
+  }
+  size_t backgroundCacheBytes() const { return backgroundCacheBytes_; }
+
+  void setSkin(uint8_t index) {
+    index = index < Skins::count() ? index : 0;
+    if (index != skins_.selected) releaseBackgroundCache();
+    skins_.select(index);
+  }
   static uint8_t skinCount() { return Skins::count(); }
   static const char* skinName(uint8_t index) { return Skins::name(index); }
   const uint64_t (*birdMasks() const)[24] { return skins_.masks(); }
@@ -59,8 +77,11 @@ class Renderer {
   void draw(const Game& game) { drawGame(game, Mode::Original, nullptr, RenderOptions()); }
   void draw(const AppModel& app, const RenderOptions& options = RenderOptions()) {
     if (skins_.selected != app.settings.skinIndex) setSkin(app.settings.skinIndex);
-    drawGame(app.game, app.settings.mode, &app, options);
-    if (app.menuOpen()) drawMenu(app, options);
+    if (app.menu.page == MenuPage::Skins) drawSkinPicker(app, options);
+    else {
+      drawGame(app.game, app.settings.mode, &app, options);
+      if (app.menuOpen()) drawMenu(app, options);
+    }
     if (options.notice && *options.notice) {
       panel(3, app.menuOpen() ? 48 : 222, 138, 9);
       text(options.notice, 5, app.menuOpen() ? 50 : 224, 1, 0xffff, 33);
@@ -70,6 +91,92 @@ class Renderer {
  private:
   uint16_t* pixels_;
   Skins skins_;
+  Skins::BirdPreview previewCards_[6];
+  uint8_t previewFirst_ = UINT8_MAX, previewSkinCount_ = 0;
+  uint8_t* backgroundCache_ = nullptr;
+  size_t backgroundCacheBytes_ = 0;
+  uint16_t backgroundCacheLimit_ = BackgroundCacheLimit;
+  uint8_t backgroundCacheScale_ = 0;
+  bool backgroundCacheEnabled_ = true;
+
+  void releaseBackgroundCache() {
+    free(backgroundCache_);
+    backgroundCache_ = nullptr;
+    backgroundCacheBytes_ = 0;
+    backgroundCacheScale_ = 0;
+  }
+
+  void backgroundRow(int y, int scale, uint16_t* target) const {
+    const auto& bg = skins_.background();
+    const auto& base = FlappyAssets::background;
+    const int sy = scale == 1 ? y : y / scale + 60;
+    const int sourceRow = (sy < bg.height ? sy : bg.height - 1) * bg.width;
+    const int baseRow = (sy < base.height ? sy : base.height - 1) * base.width;
+    for (int x = 0; x < PixelWidth; ++x) {
+      const int source = sourceRow + x / scale;
+      uint16_t color = bg.pixels[source];
+      if (color == FlappyAssets::kTransparent || bg.alpha) {
+        const uint8_t alpha = color == FlappyAssets::kTransparent ? 0 : bg.alpha[source];
+        if (alpha != 255) {
+          const uint16_t underneath = base.pixels[baseRow + x / scale];
+          color = alpha ? blend(color, underneath, alpha) : underneath;
+        }
+      }
+      target[x] = skins_.palette(color);
+    }
+  }
+
+  void buildBackgroundCache(int scale) {
+    constexpr size_t RowBytes = PixelWidth * sizeof(uint16_t);
+    constexpr size_t MaxRows = (BackgroundCacheLimit - PixelHeight) / RowBytes;
+    if (backgroundCacheLimit_ < PixelHeight + RowBytes) return;
+    const size_t capacity = (backgroundCacheLimit_ - PixelHeight) / RowBytes;
+    uint8_t rowMap[PixelHeight], representatives[MaxRows];
+    uint32_t hashes[MaxRows];
+    uint16_t row[PixelWidth], candidate[PixelWidth];
+    size_t count = 0;
+    for (int y = 0; y < PixelHeight; ++y) {
+      backgroundRow(y, scale, row);
+      uint32_t hash = 2166136261u;
+      for (int x = 0; x < PixelWidth; ++x) hash = (hash ^ row[x]) * 16777619u;
+      size_t index = 0;
+      for (; index < count; ++index) {
+        if (hashes[index] != hash) continue;
+        backgroundRow(representatives[index], scale, candidate);
+        if (memcmp(row, candidate, RowBytes) == 0) break;
+      }
+      if (index == count) {
+        if (count >= capacity) return;
+        hashes[count] = hash;
+        representatives[count++] = uint8_t(y);
+      }
+      rowMap[y] = uint8_t(index);
+    }
+    const size_t bytes = PixelHeight + count * RowBytes;
+    uint8_t* cache = static_cast<uint8_t*>(malloc(bytes));
+    if (!cache) return;
+    memcpy(cache, rowMap, PixelHeight);
+    uint16_t* rows = reinterpret_cast<uint16_t*>(cache + PixelHeight);
+    for (size_t index = 0; index < count; ++index)
+      backgroundRow(representatives[index], scale, rows + index * PixelWidth);
+    backgroundCache_ = cache;
+    backgroundCacheBytes_ = bytes;
+  }
+
+  bool drawCachedBackground(int scale) {
+    if (!backgroundCacheEnabled_) return false;
+    if (backgroundCacheScale_ != scale) {
+      releaseBackgroundCache();
+      backgroundCacheScale_ = uint8_t(scale);
+      buildBackgroundCache(scale);
+    }
+    if (!backgroundCache_) return false;
+    const uint16_t* rows = reinterpret_cast<const uint16_t*>(backgroundCache_ + PixelHeight);
+    for (int y = 0; y < PixelHeight; ++y)
+      memcpy(pixels_ + y * PixelWidth, rows + backgroundCache_[y] * PixelWidth,
+             PixelWidth * sizeof(uint16_t));
+    return true;
+  }
 
   static uint16_t blend(uint16_t top, uint16_t base, uint8_t alpha) {
     const unsigned inverse = 255 - alpha;
@@ -93,27 +200,97 @@ class Renderer {
     rect(x, y + h - 1, w, 1, rgb(255, 220, 116));
   }
   void sprite(const FlappyAssets::Sprite& asset, int x, int y, int scale = 1, bool recolor = true) {
-    const int x0 = x < 0 ? -x : 0, y0 = y < 0 ? -y : 0;
-    const int x1 = x + asset.width * scale > PixelWidth ? PixelWidth - x : asset.width * scale;
-    const int y1 = y + asset.height * scale > PixelHeight ? PixelHeight - y : asset.height * scale;
-    for (int row = y0; row < y1; ++row) for (int col = x0; col < x1; ++col) {
-      const int source = (row / scale) * asset.width + col / scale;
-      uint16_t c = asset.pixels[source];
-      if (c == FlappyAssets::kTransparent) continue;
-      if (recolor) c = skins_.palette(c);
-      uint16_t& target = pixels_[(y + row) * PixelWidth + x + col];
-      target = asset.alpha ? blend(c, target, asset.alpha[source]) : c;
+    if (scale == 1) {
+      const int firstX = x < 0 ? -x : 0, firstY = y < 0 ? -y : 0;
+      const int lastX = x + asset.width > PixelWidth ? PixelWidth - x : asset.width;
+      const int lastY = y + asset.height > PixelHeight ? PixelHeight - y : asset.height;
+      if (firstX >= lastX || firstY >= lastY) return;
+      for (int row = firstY; row < lastY; ++row) {
+        const uint16_t* source = asset.pixels + row * asset.width;
+        const uint8_t* alpha = asset.alpha ? asset.alpha + row * asset.width : nullptr;
+        uint16_t* target = pixels_ + (y + row) * PixelWidth + x + firstX;
+        if (&asset == &FlappyAssets::ground && !alpha) {
+          for (int col = firstX; col < lastX;) {
+            const uint16_t color = source[col];
+            int end = col + 1;
+            while (end < lastX && source[end] == color) ++end;
+            if (color != FlappyAssets::kTransparent) {
+              const uint16_t output = recolor ? skins_.palette(color) : color;
+              for (int at = col; at < end; ++at) target[at - firstX] = output;
+            }
+            col = end;
+          }
+        } else for (int col = firstX; col < lastX; ++col) {
+          uint16_t color = source[col];
+          if (color == FlappyAssets::kTransparent) continue;
+          if (recolor) color = skins_.palette(color);
+          uint16_t& destination = target[col - firstX];
+          destination = alpha && alpha[col] != 255 ? blend(color, destination, alpha[col]) : color;
+        }
+      }
+      return;
+    }
+    const int x0 = x < 0 ? -x / scale : 0, y0 = y < 0 ? -y / scale : 0;
+    const int right = (PixelWidth - x + scale - 1) / scale;
+    const int bottom = (PixelHeight - y + scale - 1) / scale;
+    const int x1 = right < asset.width ? right : asset.width;
+    const int y1 = bottom < asset.height ? bottom : asset.height;
+    for (int sy = y0; sy < y1; ++sy) {
+      const int top = y + sy * scale, endY = top + scale < PixelHeight ? top + scale : PixelHeight;
+      for (int sx = x0; sx < x1; ++sx) {
+        const int source = sy * asset.width + sx;
+        uint16_t color = asset.pixels[source];
+        if (color == FlappyAssets::kTransparent) continue;
+        if (recolor) color = skins_.palette(color);
+        const uint8_t alpha = asset.alpha ? asset.alpha[source] : 255;
+        if (!alpha) continue;
+        const int left = x + sx * scale, endX = left + scale < PixelWidth ? left + scale : PixelWidth;
+        for (int row = top < 0 ? 0 : top; row < endY; ++row)
+          for (int col = left < 0 ? 0 : left; col < endX; ++col) {
+            uint16_t& target = pixels_[row * PixelWidth + col];
+            target = alpha == 255 ? color : blend(color, target, alpha);
+          }
+      }
     }
   }
   void bird(int frame, int x, int y, float angle, int scale, bool tint) {
     frame = frame < 3 ? frame : 1;
+    const auto& asset = skins_.bird(frame);
+    const uint8_t* alphaPixels = skins_.selected == 10 || skins_.selected == 11 ? nullptr : asset.alpha;
+    if (angle == 0) {
+      for (int sy = 0; sy < 12; ++sy) for (int sx = 0; sx < 17; ++sx) {
+        uint16_t color = skins_.birdPixel(frame, sx, sy);
+        if (color == FlappyAssets::kTransparent) continue;
+        if (tint) color = oppositeColor(color, skins_.monochrome);
+        const uint8_t alpha = alphaPixels ? alphaPixels[sy * asset.width + sx] : 255;
+        if (!alpha) continue;
+        for (int dy = 0; dy < scale; ++dy) for (int dx = 0; dx < scale; ++dx) {
+          const int ox = x + sx * scale + dx, oy = y + sy * scale + dy;
+          if (ox < 0 || ox >= PixelWidth || oy < 0 || oy >= PixelHeight) continue;
+          uint16_t& target = pixels_[oy * PixelWidth + ox];
+          target = alpha == 255 ? color : blend(color, target, alpha);
+        }
+      }
+      return;
+    }
     const float radians = angle * 0.01745329252f;
     const float c = cosf(radians), s = sinf(radians);
     const float cx = x + (17 * scale - 1) * 0.5f, cy = y + (12 * scale - 1) * 0.5f;
     const int radius = 12 * scale;
-    for (int oy = int(floorf(cy)) - radius; oy <= int(ceilf(cy)) + radius; ++oy)
-      for (int ox = int(floorf(cx)) - radius; ox <= int(ceilf(cx)) + radius; ++ox) {
-      if (ox < 0 || ox >= PixelWidth || oy < 0 || oy >= PixelHeight) continue;
+    const float extentX = (fabsf(c) * 17 + fabsf(s) * 12) * scale * 0.5f + 1;
+    const float extentY = (fabsf(s) * 17 + fabsf(c) * 12) * scale * 0.5f + 1;
+    int firstX = int(floorf(cx - extentX)), lastX = int(ceilf(cx + extentX));
+    int firstY = int(floorf(cy - extentY)), lastY = int(ceilf(cy + extentY));
+    if (firstX < int(floorf(cx)) - radius) firstX = int(floorf(cx)) - radius;
+    if (lastX > int(ceilf(cx)) + radius) lastX = int(ceilf(cx)) + radius;
+    if (firstY < int(floorf(cy)) - radius) firstY = int(floorf(cy)) - radius;
+    if (lastY > int(ceilf(cy)) + radius) lastY = int(ceilf(cy)) + radius;
+    if (firstX < 0) firstX = 0;
+    if (lastX >= PixelWidth) lastX = PixelWidth - 1;
+    if (firstY < 0) firstY = 0;
+    if (lastY >= PixelHeight) lastY = PixelHeight - 1;
+    for (int oy = firstY; oy <= lastY; ++oy)
+      for (int ox = firstX; ox <= lastX; ++ox) {
       const float dx = ox - cx, dy = oy - cy;
       const int sx = int(roundf(c * dx - s * dy + (17 * scale - 1) * 0.5f));
       const int sy = int(roundf(s * dx + c * dy + (12 * scale - 1) * 0.5f));
@@ -121,11 +298,7 @@ class Renderer {
       uint16_t color = skins_.birdPixel(frame, sx / scale, sy / scale);
       if (color == FlappyAssets::kTransparent) continue;
       if (tint) color = oppositeColor(color, skins_.monochrome);
-      uint8_t alpha = 255;
-      if (skins_.selected != 10 && skins_.selected != 11) {
-        const auto& asset = skins_.bird(frame);
-        if (asset.alpha) alpha = asset.alpha[(sy / scale) * asset.width + sx / scale];
-      }
+      const uint8_t alpha = alphaPixels ? alphaPixels[(sy / scale) * asset.width + sx / scale] : 255;
       uint16_t& target = pixels_[oy * PixelWidth + ox];
       target = alpha == 255 ? color : blend(color, target, alpha);
     }
@@ -233,6 +406,7 @@ class Renderer {
     using namespace FlappyAssets;
     const int scale = game.rules().spriteScale;
     if (skins_.selected == 10 || skins_.selected == 11) ownBackground(scale);
+    else if (drawCachedBackground(scale)) {}
     else if (scale == 1 && skins_.selected == 0) memcpy(pixels_, background.pixels, PixelWidth * PixelHeight * sizeof(uint16_t));
     else {
       const auto& bg = skins_.background();
@@ -249,9 +423,12 @@ class Renderer {
           const int source = sourceRow + x / scale;
           uint16_t color = bg.pixels[source];
           if (color == kTransparent || bg.alpha) {
-            const int baseY = sy < background.height ? sy : background.height - 1;
-            const uint16_t base = background.pixels[baseY * background.width + x / scale];
-            color = color == kTransparent ? base : blend(color, base, bg.alpha[source]);
+            const uint8_t alpha = color == kTransparent ? 0 : bg.alpha[source];
+            if (alpha != 255) {
+              const int baseY = sy < background.height ? sy : background.height - 1;
+              const uint16_t base = background.pixels[baseY * background.width + x / scale];
+              color = alpha ? blend(color, base, alpha) : base;
+            }
           }
           pixels_[y * PixelWidth + x] = skins_.palette(color);
         }
@@ -373,6 +550,82 @@ class Renderer {
     centered(opt.remoteReady ? "PEER: READY" : "WAITING FOR PEER", 153, 1);
     centered(opt.multipleHosts ? "MULTIPLE HOSTS FOUND" : "MENU ENDS RACE", 177, 1);
     centered("HOST / JOIN IN MENU", 188, 1);
+  }
+  static void skinLabelLines(const char* label, char (&first)[11], char (&second)[11]) {
+    if (!label) label = "";
+    const size_t length = strlen(label);
+    size_t split = length < 10 ? length : 10;
+    if (length > split) {
+      for (size_t index = split; index > 0; --index)
+        if (label[index] == ' ') { split = index; break; }
+    }
+    memcpy(first, label, split);
+    first[split] = '\0';
+    label += split;
+    while (*label == ' ') ++label;
+    const size_t remaining = strlen(label);
+    const size_t visible = remaining > 10 ? 8 : remaining;
+    memcpy(second, label, visible);
+    if (remaining > 10) { second[visible] = '.'; second[visible + 1] = '.'; second[visible + 2] = '\0'; }
+    else second[visible] = '\0';
+  }
+  void drawSkinPicker(const AppModel& app, const RenderOptions& opt) {
+    const uint8_t count = uint8_t(app.menuItemCount() - 1);
+    const unsigned focus = app.menu.selection < count ? app.menu.selection : count - 1u;
+    const uint8_t first = uint8_t(focus / 6u * 6u);
+    if (previewFirst_ != first || previewSkinCount_ != count) {
+      Skins preview;
+      for (uint8_t slot = 0; slot < 6 && first + slot < count; ++slot) {
+        preview.select(uint8_t(first + slot));
+        previewCards_[slot].capture(preview);
+      }
+      previewFirst_ = first;
+      previewSkinCount_ = count;
+    }
+    const uint16_t background = rgb(10, 17, 26), card = rgb(26, 35, 49);
+    const uint16_t gold = rgb(255, 220, 116), outline = rgb(77, 104, 121);
+    rect(0, 0, PixelWidth, PixelHeight, background);
+    menuCentered("Skins", 13, 1, gold);
+    const char* caption = app.menuLabel(app.menu.selection);
+    const size_t captionLength = strlen(caption);
+    const unsigned maxCaption = 31;
+    unsigned captionOffset = 0;
+    if (captionLength > maxCaption) {
+      captionOffset = (opt.nowMs / 400) % unsigned(captionLength - maxCaption + 4);
+      if (captionOffset > captionLength - maxCaption) captionOffset = unsigned(captionLength - maxCaption);
+    }
+    text(caption + captionOffset, 10, 31, 1, rgb(166, 224, 232), maxCaption);
+    static const uint8_t animation[] = {0, 1, 2, 1};
+    const uint8_t frame = animation[(opt.nowMs / 120) % 4];
+    for (uint8_t slot = 0; slot < 6 && first + slot < count; ++slot) {
+      const uint8_t index = uint8_t(first + slot);
+      const int x = 6 + (slot % 2) * 68, y = 42 + (slot / 2) * 62;
+      const bool selected = index == app.menu.selection;
+      rect(x, y, 64, 60, selected ? gold : outline);
+      rect(x + 2, y + 2, 60, 56, card);
+      rect(x + 3, y + 3, 58, 27, rgb(142, 195, 204));
+      const auto& preview = previewCards_[slot];
+      for (int sy = 0; sy < 12; ++sy) for (int sx = 0; sx < 17; ++sx) {
+        const uint16_t color = preview.pixel(frame, sx, sy);
+        if (color == FlappyAssets::kTransparent) continue;
+        const uint8_t alpha = preview.alpha(frame, sx, sy);
+        if (!alpha) continue;
+        for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx) {
+          uint16_t& target = pixels_[(y + 5 + sy * 2 + dy) * PixelWidth + x + 15 + sx * 2 + dx];
+          target = alpha == 255 ? color : blend(color, target, alpha);
+        }
+      }
+      if (index == app.settings.skinIndex) menuText("*", x + 54, y + 3, 1, rgb(30, 36, 46), 1);
+      char label[11], continuation[11];
+      skinLabelLines(app.menuLabel(index), label, continuation);
+      const int labelY = y + (*continuation ? 32 : 38);
+      menuText(label, x + (64 - MenuFont::textWidth(label)) / 2, labelY, 1, 0xffff, 10);
+      if (*continuation) menuText(continuation, x + (64 - MenuFont::textWidth(continuation)) / 2,
+                                  y + 45, 1, 0xffff, 10);
+    }
+    const bool back = app.menu.selection == count;
+    rect(6, 230, 132, 16, back ? gold : card);
+    menuCentered("Back", 232, 1, back ? rgb(30, 36, 46) : 0xffff);
   }
   void drawMenu(const AppModel& app, const RenderOptions& opt) {
     // The opaque panel covers its interior, so dim only the exposed border.

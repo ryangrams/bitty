@@ -7,28 +7,47 @@ namespace flappy {
 // Extra controller actions use the cartridge's board and ordinary lock phase.
 class TetrisActions {
  public:
-  void reset() { previousPad_ = 0; swappedPiece_ = hardDropped_ = swapped_ = false; }
+  void reset() {
+    previousPad_ = 0; heldOrientation_ = NoPiece;
+    heldPiece_ = hardDropped_ = heldThisFrame_ = chord_ = false;
+  }
   bool hardDropped() const { return hardDropped_; }
-  bool swapped() const { return swapped_; }
+  bool swapped() const { return heldThisFrame_; }
+  bool heldThisFrame() const { return heldThisFrame_; }
+  bool hasHeldPiece() const { return heldOrientation_ != NoPiece; }
+  uint8_t heldOrientation() const { return heldOrientation_; }
+  uint8_t heldType() const {
+    const uint8_t types[] = {2, 7, 8, 10, 11, 14, 18};
+    for (uint8_t i = 0; i < 7; ++i) if (heldOrientation_ == types[i]) return i;
+    return NoPiece;
+  }
 
   template <class Runtime>
   uint8_t apply(Runtime& runtime, bool zero, uint8_t player, uint8_t pad) {
     const uint8_t pressed = uint8_t(pad & ~previousPad_);
     previousPad_ = pad;
-    hardDropped_ = swapped_ = false;
+    hardDropped_ = heldThisFrame_ = false;
     const uint16_t live = liveBase(runtime, zero, player);
+    const uint8_t phase = runtime.readRam(live + 8);
+    if (phase >= 2 && phase <= 7) heldPiece_ = false;
     if (!active(runtime, zero, player, live)) {
-      if (runtime.readRam(live + 8) != 1) swappedPiece_ = false;
+      if (chord_) {
+        if (!(pad & (A | B))) chord_ = false;
+        return uint8_t(pad & ~(A | B));
+      }
       return pad;
     }
     uint8_t result = uint8_t(pad & ~Up);
-    if ((pad & (A | B)) == (A | B)) {
-      result &= uint8_t(~(A | B));
-      if ((pressed & (A | B)) && !swappedPiece_) {
-        swapped_ = swapNext(runtime, zero, player, live);
-        swappedPiece_ |= swapped_;
+    const bool chord = (pad & (A | B)) == (A | B);
+    if (chord) chord_ = true;
+    if (chord_) result &= uint8_t(~(A | B));
+    if (chord) {
+      if ((pressed & (A | B)) && !heldPiece_) {
+        heldThisFrame_ = hold(runtime, zero, player, live);
+        heldPiece_ |= heldThisFrame_;
       }
     } else if (pressed & Up) hardDropped_ = hardDrop(runtime, zero, player, live);
+    if (!(pad & (A | B))) chord_ = false;
     return result;
   }
 
@@ -69,9 +88,10 @@ class TetrisActions {
   }
 
  private:
-  enum : uint8_t { A = 1, B = 2, Up = 16 };
+  enum : uint8_t { A = 1, B = 2, Up = 16, NoPiece = 255 };
   uint8_t previousPad_ = 0;
-  bool swappedPiece_ = false, hardDropped_ = false, swapped_ = false;
+  uint8_t heldOrientation_ = NoPiece;
+  bool heldPiece_ = false, hardDropped_ = false, heldThisFrame_ = false, chord_ = false;
 
   template <class Runtime>
   static uint16_t liveBase(const Runtime& runtime, bool zero, uint8_t player) {
@@ -114,7 +134,7 @@ class TetrisActions {
 
   template <class Runtime>
   static bool hardDrop(Runtime& runtime, bool zero, uint8_t player, uint16_t live) {
-    const uint8_t orientation = runtime.readRam(live + 2);
+    const uint8_t orientation = runtime.readRam(zero && player == 2 ? 0x7ff0 : live + 2);
     const int x = int8_t(runtime.readRam(live));
     int y = int8_t(runtime.readRam(live + 1));
     const uint16_t board = zero && player == 2 ? 0x500 : 0x400;
@@ -129,20 +149,24 @@ class TetrisActions {
   }
 
   template <class Runtime>
-  static bool swapNext(Runtime& runtime, bool zero, uint8_t player, uint16_t live) {
+  bool hold(Runtime& runtime, bool zero, uint8_t player, uint16_t live) {
     const uint16_t nextAddress = zero && player == 2 ? 0x7ff1 : 0xbf;
-    const uint8_t incoming = spawnOrientation(runtime.readRam(nextAddress));
-    const uint8_t outgoing = spawnOrientation(runtime.readRam(live + 2));
+    const uint8_t incoming = hasHeldPiece() ? heldOrientation_ : spawnOrientation(runtime.readRam(nextAddress));
+    const uint8_t outgoing = spawnOrientation(runtime.readRam(zero && player == 2 ? 0x7ff0 : live + 2));
     const uint16_t board = zero && player == 2 ? 0x500 : 0x400;
     if (incoming == 255 || outgoing == 255 || !valid(runtime, board, incoming, 5, 0)) return false;
-    runtime.writeRam(nextAddress, outgoing);
+    if (!hasHeldPiece()) {
+      uint8_t next = NoPiece;
+      if (!runtime.runTetrisRandomizer(zero, next)) return false;
+      runtime.writeRam(nextAddress, next);
+    }
     writeField(runtime, zero, player, 0, 5);
     writeField(runtime, zero, player, 1, 0);
     writeField(runtime, zero, player, 2, incoming);
     writeField(runtime, zero, player, 5, 0);
-    writeField(runtime, zero, player, 6, 0);
     writeField(runtime, zero, player, 14, 0);
     writeField(runtime, zero, player, 15, 0);
+    heldOrientation_ = outgoing;
     return true;
   }
 };

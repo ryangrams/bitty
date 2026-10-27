@@ -46,6 +46,7 @@ firmware/flappy/tetris_viewport.h
 firmware/flappy/tetris_zero.h
 firmware/flappy/tetris_zero_viewport.h
 firmware/flappy/display_damage.h
+firmware/flappy/async_display.h
 requirements.txt
 tests/app_model_test.cpp
 tests/coop_protocol_test.cpp
@@ -55,6 +56,10 @@ tests/game_core_test.cpp
 tests/menu_font_test.cpp
 tests/mario_viewport_test.cpp
 tests/nes_runtime_test.cpp
+tests/nes_launcher_test.cpp
+tests/nes_timing_test.cpp
+tests/nes_prg_cache_test.cpp
+tests/nes_apu_pcm_test.c
 tests/nes_sound_events_test.cpp
 tests/nes_video_skip_test.c
 tests/nes_viewport_test.cpp
@@ -72,8 +77,10 @@ tests/test_rom_import.py
 tests/test_skins_import.py
 tests/tetris_input_test.cpp
 tests/tetris_actions_test.cpp
+tests/tetris_viewport_test.cpp
 tests/tetris_zero_viewport_test.cpp
 tests/display_damage_test.cpp
+tests/async_display_test.cpp
 tools/apply_bps.py
 tools/apply_ips.py
 tools/build.py

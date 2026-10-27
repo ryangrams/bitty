@@ -52,6 +52,7 @@ CONFIG = """#pragma once
 #error "NES_VIDEO_DIVISOR must be between 1 and 255"
 #endif
 #define NES_FRAME_SKIP (NES_VIDEO_DIVISOR - 1)
+#define NES_HOST_VIDEO_CONTROL 1
 #ifndef NES_CPU_O3
 #define NES_CPU_O3 1
 #endif
@@ -140,6 +141,47 @@ static void nes_cache_sprite_selection(nes_t* nes, uint8_t height) {
 """
 
 
+PRG_CACHE_CONTROL = """/* Cache at most two fixed CPU windows. Each reusable buffer is 8 KiB.
+ * Original mapper pointers remain available to cartridge helpers and DMA. */
+int nes_host_prg_cache(nes_t* nes, uint8_t mask) {
+    if (nes == NULL || (mask & 0xf0u)) return NES_ERROR;
+    unsigned count = 0;
+    for (unsigned i = 0; i < 4u; ++i) count += (mask >> i) & 1u;
+    if (count > 2u) return NES_ERROR;
+    if (mask == nes->host_prg_cache_mask) return NES_OK;
+    if (mask) {
+        for (unsigned i = 0; i < 4u; ++i)
+            if (nes->nes_cpu.prg_banks[i] == NULL) return NES_ERROR;
+    }
+    uint8_t* previous[2] = {nes->host_prg_cache, nes->host_prg_cache_extra};
+    uint8_t* replacement[2] = {previous[0], previous[1]};
+    for (unsigned i = 0; i < count; ++i) {
+        if (replacement[i] == NULL) replacement[i] = nes_malloc(8192);
+        if (replacement[i] == NULL) {
+            for (unsigned j = 0; j < i; ++j)
+                if (replacement[j] != previous[j]) nes_free(replacement[j]);
+            return NES_ERROR;
+        }
+    }
+    unsigned slot = 0;
+    for (unsigned i = 0; i < 4u; ++i) {
+        uint8_t* original = nes->nes_cpu.prg_banks[i];
+        if ((mask >> i) & 1u) {
+            uint8_t* cached = replacement[slot++];
+            nes_memcpy(cached, original, 8192u);
+            nes->host_prg_reads[i] = cached;
+        } else nes->host_prg_reads[i] = original;
+    }
+    nes->host_prg_cache = count ? replacement[0] : NULL;
+    nes->host_prg_cache_extra = count > 1u ? replacement[1] : NULL;
+    nes->host_prg_cache_mask = mask;
+    if (!count && previous[0] != NULL) nes_free(previous[0]);
+    if (count < 2u && previous[1] != NULL) nes_free(previous[1]);
+    return NES_OK;
+}
+"""
+
+
 def replace_once(source, before, after):
     if source.count(before) != 1:
         raise RuntimeError("Pinned core patch did not match exactly once: " + before[:80])
@@ -151,13 +193,25 @@ def patch(relative, text):
     if relative == "inc/nes.h":
         text = replace_once(text, "    uint8_t nes_quit;", """    uint8_t nes_quit;
     uint8_t host_dot_remainder;
+    uint8_t host_video_divisor;
+    uint8_t host_pcm_enabled;
+    uint8_t host_pcm_valid;
+    uint8_t host_video_window_enabled;
+    uint8_t host_video_first[2];
+    uint8_t host_video_last[2];
+    uint8_t* host_prg_reads[4];
+    uint8_t* host_prg_cache;
+    uint8_t* host_prg_cache_extra;
+    uint8_t host_prg_cache_mask;
 #if NES_SPRITE_CACHE
     uint8_t host_sprite_cache_valid;
     uint8_t host_sprite_cache_height;
     uint8_t host_sprite_count[NES_HEIGHT];
     uint8_t host_sprite_indices[NES_HEIGHT][8];
 #endif""")
-        text = replace_once(text, "void nes_run(nes_t* nes);", "void nes_run(nes_t* nes);\nvoid nes_run_frame(nes_t* nes);")
+        text = replace_once(text, "#if (NES_FRAME_SKIP != 0)", "#if NES_HOST_VIDEO_CONTROL")
+        text = replace_once(text, "void nes_run(nes_t* nes);", "void nes_run(nes_t* nes);\nvoid nes_run_frame(nes_t* nes);\n"
+                            "int nes_host_prg_cache(nes_t* nes, uint8_t mask);")
         changed = True
     elif relative == "inc/nes_apu.h":
         text = replace_once(text, "#define NES_APU_SAMPLE_RATE         (44100)", "#define NES_APU_SAMPLE_RATE         (24000)")
@@ -178,6 +232,13 @@ def patch(relative, text):
 #else
 #define NES_FRAME_CODE
 #endif''')
+        text = replace_once(text, "    nes_memset(nes, 0, sizeof(nes_t));", """    nes_memset(nes, 0, sizeof(nes_t));
+    nes->host_video_divisor = NES_VIDEO_DIVISOR;
+    nes->host_pcm_enabled = 1;
+    nes->host_pcm_valid = 15;""")
+        text = replace_once(text, "    nes->nes_quit = 1;\n    nes_deinitex(nes);",
+                            "    nes->nes_quit = 1;\n    nes_host_prg_cache(nes, 0);\n    nes_deinitex(nes);")
+        text += "\n" + PRG_CACHE_CONTROL
         rgb_block = text[text.index("#if (NES_COLOR_DEPTH == 32)"):text.index("#elif (NES_COLOR_DEPTH == 16)")]
         colors = [int(value, 16) for value in re.findall(r"0xFF([0-9A-Fa-f]{6})", rgb_block)]
         if len(colors) != 64:
@@ -203,6 +264,31 @@ def patch(relative, text):
                             "    if (nes_skipped_sprite0_opacity(nes, scanline)) return;")
         text = replace_once(text, "nes_render_background_opacity_line(nes);",
                             "nes_render_background_opacity_line(nes, nes->scanline);")
+        text = text.replace("#if (NES_FRAME_SKIP != 0)", "#if NES_HOST_VIDEO_CONTROL")
+        text = text.replace("#endif /* NES_FRAME_SKIP */", "#endif /* NES_HOST_VIDEO_CONTROL */")
+        text = replace_once(text, "static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){", """/* Rows outside the host's windows retain PPU fetches and sprite status.
+ * Their RGB data is unused by the host and does not need composition. */
+static inline int nes_video_row_enabled(const nes_t* nes, uint16_t row) {
+    return !nes->host_video_window_enabled ||
+           (row >= nes->host_video_first[0] && row <= nes->host_video_last[0]) ||
+           (row >= nes->host_video_first[1] && row <= nes->host_video_last[1]);
+}
+
+static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,nes_color_t* draw_data){""")
+        sprite_start = text.index("static void nes_render_sprite_line(")
+        frame_start = text.index("void NES_FRAME_CODE nes_run_frame(")
+        sprite_code = text[sprite_start:frame_start]
+        sprite_code = replace_once(sprite_code, "if(nes->nes_frame_skip_count == 0)",
+                                   "if(nes->nes_frame_skip_count == 0 && nes_video_row_enabled(nes, nes->scanline))")
+        text = text[:sprite_start] + sprite_code + text[frame_start:]
+        text = replace_once(text, "            sprite_line_t sprite_line = {0};", """            sprite_line_t sprite_line = {0};
+            const int render_line = nes->nes_frame_skip_count == 0 &&
+                                    nes_video_row_enabled(nes, nes->scanline);""")
+        if text.count("if (nes->nes_frame_skip_count == 0)") != 2:
+            raise RuntimeError("Pinned NES RGB row guards did not match")
+        text = text.replace("if (nes->nes_frame_skip_count == 0)", "if (render_line)")
+        text = replace_once(text, "if ( ++nes->nes_frame_skip_count > NES_FRAME_SKIP){", """const uint8_t divisor = nes->host_video_divisor ? nes->host_video_divisor : NES_VIDEO_DIVISOR;
+        if (++nes->nes_frame_skip_count >= divisor){""")
         text = replace_once(text, "static void nes_prepare_sprite_line(nes_t* nes,uint16_t scanline,sprite_line_t* sprite_line){",
                             SPRITE_SELECTION_CACHE +
                             "static void nes_prepare_sprite_line(nes_t* nes,uint16_t scanline,sprite_line_t* sprite_line){")
@@ -242,10 +328,58 @@ def patch(relative, text):
                     NES_PROF_END(nes, NES_PROF_DRAW);
                 }""" + text[draw_stop:]
         changed = True
+    elif relative == "src/nes_apu.c":
+        text = replace_once(text, "    for (uint16_t i = sample_start; i < sample_end; i++) {",
+                            """#if (NES_ENABLE_EXPANSION_AUDIO == 0)
+    if (!nes->host_pcm_enabled) {
+        const uint32_t count = (uint32_t)(sample_end - sample_start);
+        p1_phase += p1_inc * count;
+        p2_phase += p2_inc * count;
+        tri_phase += tri_inc * count;
+        if (noi_active && count) {
+            const uint32_t first = noi_acc + noi_inc;
+            const uint64_t remaining = (uint64_t)(first & 0xffffu) +
+                                       (uint64_t)(count - 1u) * noi_inc;
+            uint32_t steps = (first >> 16) + (uint32_t)(remaining >> 16);
+            noi_acc = (uint32_t)remaining & 0xffffu;
+            while (steps--) {
+                const uint16_t feedback = (uint16_t)(((lfsr ^ (lfsr >> (noi_mode ? 6u : 1u))) & 1u) << 14);
+                lfsr = (uint16_t)((lfsr >> 1) | feedback);
+            }
+        }
+        // Keep per-sample DMC quantization and bus-read order unchanged.
+        for (uint32_t sample = 0; sample < count; ++sample)
+            if (apu->dmc.enabled) nes_apu_dmc_advance(nes, dmc_step_q8);
+        p1->phase_acc = p1_phase;
+        p2->phase_acc = p2_phase;
+        tri->phase_acc = tri_phase;
+        noi->lfsr_acc = noi_acc;
+        noi->lfsr = lfsr;
+        nes->host_pcm_valid = 0;
+        return;
+    }
+#endif
+
+    for (uint16_t i = sample_start; i < sample_end; i++) {""")
+        text = replace_once(text, "    if (seg == 3) {", """    nes->host_pcm_valid |= (uint8_t)(1u << seg);
+    if (seg == 3 && nes->host_pcm_valid == 15u) {""")
+        changed = True
     elif relative == "src/nes_mapper.c":
         text, removed = re.subn(r"^\s*NES_CASE_LOAD_MAPPER\((?!0\)|1\)|4\)|37\)|118\))\d+\);[^\n]*", "", text, flags=re.MULTILINE)
         if removed < 100:
             raise RuntimeError("Pinned mapper registry patch did not match")
+        text = replace_once(text,
+                            "    nes->nes_cpu.prg_banks[des] = nes->nes_rom.prg_rom + 8 * 1024 * src;",
+                            """    uint8_t* bank = nes->nes_rom.prg_rom + 8 * 1024 * src;
+    uint8_t* previous = nes->nes_cpu.prg_banks[des];
+    nes->nes_cpu.prg_banks[des] = bank;
+    if (nes->host_prg_cache != NULL && (nes->host_prg_cache_mask & (1u << des))) {
+        unsigned slot = 0;
+        for (unsigned i = 0; i < des; ++i) slot += (nes->host_prg_cache_mask >> i) & 1u;
+        uint8_t* cached = slot ? nes->host_prg_cache_extra : nes->host_prg_cache;
+        if (previous != bank) nes_memcpy(cached, bank, 8192u);
+        nes->host_prg_reads[des] = cached;
+    } else nes->host_prg_reads[des] = bank;""")
         changed = True
     elif relative == "src/nes_cpu.c":
         text = replace_once(text, '#include "nes.h"', '''#include "nes.h"
@@ -257,6 +391,9 @@ def patch(relative, text):
 #pragma GCC optimize ("O3")
 #endif
 #endif''')
+        text = replace_once(text,
+                            "return nes->nes_cpu.prg_banks[(address >> 13)-4][address & 0x1fffu];",
+                            "return nes->host_prg_reads[(address >> 13)-4][address & 0x1fffu];")
         text = replace_once(text, "            else if (address == 0x4014){", """            else if (address == 0x4014){
 #if NES_SPRITE_CACHE
                 nes->host_sprite_cache_valid = 0;
@@ -356,7 +493,7 @@ def prepare(dependency_root=DEFAULT_ROOT, offline=False):
     receipt = {"repository": REPOSITORY, "revision": REVISION, "license": "Apache-2.0",
                "source_sha256": SOURCES, "configuration": {"sound": True, "sample_rate": 24000,
                "color_bits": 16, "video_rows_default": 8,
-               "video_divisor_arduino_default": 2, "video_divisor_desktop_default": 1,
+               "video_divisor_arduino_default": 3, "video_divisor_desktop_default": 1,
                "iram_frame_xtensa_arduino_default": True,
                "sprite_selection_cache_default": True,
                "mappers": [0, 1, 4, 37, 118]},
@@ -364,6 +501,9 @@ def prepare(dependency_root=DEFAULT_ROOT, offline=False):
                            "mapper 0/1/4/37/118 registry", "24 kHz sample rate", "RGB565 palette derived from upstream RGB888 constants",
                            "file trainer helper guarded for filesystem-free builds",
                            "NES_VIDEO_DIVISOR skips video work while preserving emulated clocks",
+                           "runtime video divisor and two RGB row windows retain frame callbacks and offscreen PPU timing",
+                           "optional 16 KiB fixed-window PRG read cache preserves mapper ROM pointers",
+                           "optional host PCM suppression retains exact APU phase, noise, DMC and IRQ state",
                            "skipped-frame opacity limited to sprite 0 when mapper fetches have no side effects",
                            "NES_VIDEO_ROWS bounded RGB565 strip buffer and synchronous video callbacks",
                            "mapper118 per-slot CHR-controlled CIRAM, 16-bit bank counts and 8 KiB SRAM",

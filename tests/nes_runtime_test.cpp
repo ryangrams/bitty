@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <assert.h>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -112,6 +113,168 @@ static void realCpuVideoAudioAndInput() {
   runtime.unload();
   assert(!runtime.ready());
   assert(!runtime.step(0));
+}
+
+struct VideoTrace {
+  const nes_t* owner = nullptr;
+  std::vector<uint16_t> pixels = std::vector<uint16_t>(256 * 240, 0);
+  std::vector<uint32_t> ppuEvents;
+  uint32_t audioHash = 2166136261u;
+  unsigned rectangles = 0;
+};
+
+static VideoTrace* activeVideoTraces[3] = {};
+
+static VideoTrace& videoTrace(nes_t* nes) {
+  for (auto* trace : activeVideoTraces) if (trace && trace->owner == nes) return *trace;
+  assert(false);
+  return *activeVideoTraces[0];
+}
+
+static void tracePatternFetch(nes_t* nes, uint16_t address) {
+  videoTrace(nes).ppuEvents.push_back(0x10000000u | uint32_t(nes->scanline) << 16u | address);
+  // A fetch changes the next pattern mapping, as a latch mapper would.
+  nes->nes_ppu.pattern_table[0] = nes->nes_rom.chr_rom + ((address >> 4u) & 7u) * 1024u;
+}
+
+static void traceRenderMode(nes_t* nes, uint8_t background) {
+  videoTrace(nes).ppuEvents.push_back(0x20000000u | uint32_t(nes->scanline) << 8u | background);
+}
+
+static void traceHsync(nes_t* nes) {
+  videoTrace(nes).ppuEvents.push_back(0x30000000u | uint32_t(nes->scanline) << 8u | nes->nes_ppu.ppu_status);
+}
+
+static void captureVideo(void* context, int x1, int y1, int x2, int y2, const uint16_t* pixels) {
+  auto& trace = *static_cast<VideoTrace*>(context);
+  assert(x1 == 0 && x2 == 255 && y2 == y1 + NES_VIDEO_ROWS - 1);
+  assert(y1 == int(trace.rectangles % (240 / NES_VIDEO_ROWS)) * NES_VIDEO_ROWS);
+  std::copy(pixels, pixels + 256 * NES_VIDEO_ROWS, trace.pixels.begin() + y1 * 256);
+  ++trace.rectangles;
+}
+
+static void captureAudio(void* context, const int16_t* samples, size_t count, uint32_t rate) {
+  auto& trace = *static_cast<VideoTrace*>(context);
+  assert(rate == 24000);
+  for (size_t i = 0; i < count; ++i) {
+    trace.audioHash = (trace.audioHash ^ uint8_t(samples[i])) * 16777619u;
+    trace.audioHash = (trace.audioHash ^ uint8_t(uint16_t(samples[i]) >> 8u)) * 16777619u;
+  }
+}
+
+static void sameMachineState(const NesRuntime& reference, const NesRuntime& candidate) {
+  const nes_t* a = reference.core();
+  const nes_t* b = candidate.core();
+  assert(std::memcmp(&a->nes_cpu, &b->nes_cpu, sizeof(a->nes_cpu)) == 0);
+  assert(std::memcmp(&a->nes_apu, &b->nes_apu, sizeof(a->nes_apu)) == 0);
+  assert(a->host_dot_remainder == b->host_dot_remainder);
+  assert(std::memcmp(&a->timing, &b->timing, sizeof(a->timing)) == 0);
+  auto ap = a->nes_ppu;
+  auto bp = b->nes_ppu;
+  // Presentation caches and pointers differ between instances. PPU registers,
+  // VRAM, OAM and palette RAM must remain identical.
+  std::memset(ap.bg_opaque, 0, sizeof(ap.bg_opaque));
+  std::memset(bp.bg_opaque, 0, sizeof(bp.bg_opaque));
+  std::memset(ap.palette, 0, sizeof(ap.palette));
+  std::memset(bp.palette, 0, sizeof(bp.palette));
+  std::memset(ap.chr_banks, 0, sizeof(ap.chr_banks));
+  std::memset(bp.chr_banks, 0, sizeof(bp.chr_banks));
+  assert(std::memcmp(&ap, &bp, sizeof(ap)) == 0);
+}
+
+static void runtimeVideoWindowsPreserveMachineAndVisiblePixels() {
+  auto rom = syntheticNrom();
+  for (unsigned i = 0; i < 8192; ++i) rom[16 + 32768 + i] = uint8_t((i * 37u) ^ (i >> 4u));
+  for (bool hooks : {false, true}) {
+    NesRuntime reference, windowed, skipped;
+    VideoTrace traces[3];
+    NesRuntime* runtimes[] = {&reference, &windowed, &skipped};
+    for (unsigned i = 0; i < 3; ++i) {
+      assert(runtimes[i]->load(rom.data(), rom.size()));
+      assert(runtimes[i]->setVideoDivisor(i == 2 ? 3 : 1));
+      runtimes[i]->setCallbacks(captureVideo, captureAudio, &traces[i]);
+      auto* core = const_cast<nes_t*>(runtimes[i]->core());
+      traces[i].owner = core;
+      activeVideoTraces[i] = &traces[i];
+      core->nes_mapper.mapper_hsync = traceHsync;
+      if (hooks) {
+        core->nes_mapper.mapper_ppu = tracePatternFetch;
+        core->nes_mapper.mapper_ppu_tile_min = 0;
+        core->nes_mapper.mapper_ppu_tile_max = 255;
+        core->nes_mapper.mapper_render_screen = traceRenderMode;
+      }
+    }
+    for (unsigned frame = 0; frame < 120; ++frame) {
+      const int worldTop = 32 + int(frame % 90u);
+      assert(windowed.setVideoRows(16, 31, worldTop, worldTop + 118));
+      assert(skipped.setVideoRows(16, 31, worldTop, worldTop + 118));
+      for (unsigned i = 0; i < 3; ++i) {
+        auto* core = const_cast<nes_t*>(runtimes[i]->core());
+        std::memset(core->nes_ppu.oam_data, 0xff, sizeof(core->nes_ppu.oam_data));
+        for (unsigned sprite = 0; sprite < 12; ++sprite) {
+          auto& item = core->nes_ppu.sprite_info[sprite];
+          item.y = uint8_t((sprite * 19u + frame * 3u) % 238u);
+          item.x = uint8_t((sprite * 27u + frame) % 256u);
+          item.tile_index_number = uint8_t(sprite * 13u + frame);
+          item.attributes = uint8_t((sprite + frame) << 5u);
+        }
+        core->nes_ppu.ppu_mask = frame % 7u ? 0x1e : 0x18;
+        traces[i].ppuEvents.clear();
+        assert(runtimes[i]->step(frame & 1u ? NesRuntime::A : 0));
+      }
+      sameMachineState(reference, windowed);
+      sameMachineState(reference, skipped);
+      for (unsigned i = 1; i < 3; ++i) {
+        assert(traces[0].ppuEvents == traces[i].ppuEvents);
+        assert(traces[0].audioHash == traces[i].audioHash);
+        if (i == 2 && frame % 3u) continue;
+        for (int y = 0; y < 240; ++y) {
+          if ((y < 16 || y > 31) && (y < worldTop || y > worldTop + 118)) continue;
+          assert(std::equal(traces[0].pixels.begin() + y * 256, traces[0].pixels.begin() + (y + 1) * 256,
+                            traces[i].pixels.begin() + y * 256));
+        }
+      }
+    }
+    assert(traces[0].rectangles == 120u * (240u / NES_VIDEO_ROWS));
+    assert(traces[1].rectangles == traces[0].rectangles);
+    assert(traces[2].rectangles == 40u * (240u / NES_VIDEO_ROWS));
+    for (auto& trace : activeVideoTraces) trace = nullptr;
+  }
+}
+
+static void runtimeVideoCadenceAndBounds() {
+  NesRuntime runtime;
+  assert(!runtime.setVideoDivisor(1));
+  assert(!runtime.setVideoRows(16, 31));
+  auto rom = syntheticNrom();
+  assert(runtime.load(rom.data(), rom.size()));
+  VideoTrace trace;
+  runtime.setCallbacks(captureVideo, nullptr, &trace);
+  assert(!runtime.setVideoDivisor(0));
+  assert(runtime.videoDivisor() == NES_VIDEO_DIVISOR);
+  for (auto bounds : {std::vector<int>{-1, 5, -1, -1}, {5, 4, -1, -1}, {0, 240, -1, -1},
+                     {0, 239, -1, 5}, {0, 239, 5, -1}, {0, 239, 10, 9}, {0, 239, 0, 240}})
+    assert(!runtime.setVideoRows(bounds[0], bounds[1], bounds[2], bounds[3]));
+  assert(runtime.setVideoRows(0, 0));
+  assert(runtime.setVideoRows(0, 239, 0, 239));
+  runtime.resetVideoRows();
+  assert(!runtime.core()->host_video_window_enabled);
+  for (unsigned frame = 0; frame < 7; ++frame) {
+    assert(runtime.setVideoDivisor(2));
+    assert(runtime.step(0));
+  }
+  assert(trace.rectangles == 4u * (240u / NES_VIDEO_ROWS));
+  assert(runtime.setVideoDivisor(1));
+  assert(runtime.step(0));
+  assert(trace.rectangles == 5u * (240u / NES_VIDEO_ROWS));
+  assert(runtime.setVideoDivisor(3));
+  for (unsigned frame = 0; frame < 7; ++frame) assert(runtime.step(0));
+  assert(trace.rectangles == 8u * (240u / NES_VIDEO_ROWS));
+  assert(runtime.softReset() && runtime.videoDivisor() == 3);
+  assert(runtime.step(0));
+  assert(trace.rectangles == 9u * (240u / NES_VIDEO_ROWS));
+  assert(runtime.load(rom.data(), rom.size()));
+  assert(runtime.videoDivisor() == NES_VIDEO_DIVISOR && !runtime.core()->host_video_window_enabled);
 }
 
 static void rejectsUnsupportedAndTruncatedImages() {
@@ -443,8 +606,58 @@ static void zeroRoundCompletionDoesNotTreatPauseOrClearsAsGameOver() {
   assert(!flappy::TetrisZero::finished(runtime));
 }
 
+static void cartridgeRandomizerRejectsUnpinnedImages() {
+  NesRuntime runtime;
+  uint8_t orientation = 0xa5;
+  assert(!runtime.runTetrisRandomizer(false, orientation));
+  assert(!runtime.runTetrisRandomizer(true, orientation) && orientation == 0xa5);
+  auto rom = syntheticNrom();
+  assert(runtime.load(rom.data(), rom.size()));
+  assert(runtime.step(0));
+  runtime.writeRam(0xc0, 4);
+  runtime.writeRam(0xa7, 2);
+  runtime.writeRam(0xbd, 3);
+  runtime.writeRam(0xbe, 2);
+  const char signature[] = "T-GYM";
+  for (unsigned i = 0; i < 5; ++i) runtime.writeRam(0x75b + i, signature[i]);
+  const uint32_t frames = runtime.frames();
+  std::vector<uint8_t> before(sizeof(nes_t));
+  std::memcpy(before.data(), runtime.core(), before.size());
+  for (bool zero : {false, true}) {
+    assert(!runtime.runTetrisRandomizer(zero, orientation));
+    assert(orientation == 0xa5 && runtime.frames() == frames);
+    assert(std::memcmp(before.data(), runtime.core(), before.size()) == 0);
+  }
+  runtime.unload();
+  assert(!runtime.runTetrisRandomizer(false, orientation) && orientation == 0xa5);
+}
+
+static void zeroScoreReadsEachPlayersBcdDigits() {
+  auto rom = syntheticNrom();
+  NesRuntime runtime;
+  assert(runtime.load(rom.data(), rom.size()));
+  for (uint8_t players : {uint8_t(1), uint8_t(2)}) {
+    runtime.writeRam(0xbe, players);
+    for (uint8_t player = 1; player <= players; ++player) {
+      const unsigned base = players == 2 && player == 1 ? 0x60 : 0x40;
+      runtime.writeRam(base + 0x13, 0x56);
+      runtime.writeRam(base + 0x14, 0x34);
+      runtime.writeRam(base + 0x15, 0x12);
+      assert(flappy::TetrisZero::score(runtime, player) == 123456);
+      runtime.writeRam(base + 0x13, 0);
+      runtime.writeRam(base + 0x14, 0);
+      runtime.writeRam(base + 0x15, 0);
+      assert(flappy::TetrisZero::score(runtime, player) == 0);
+    }
+  }
+}
+
 int main() {
+  cartridgeRandomizerRejectsUnpinnedImages();
+  zeroScoreReadsEachPlayersBcdDigits();
   realCpuVideoAudioAndInput();
+  runtimeVideoWindowsPreserveMachineAndVisiblePixels();
+  runtimeVideoCadenceAndBounds();
   rejectsUnsupportedAndTruncatedImages();
   mapper37BankSwitching();
   mapper118BankingMirroringAndIrq();

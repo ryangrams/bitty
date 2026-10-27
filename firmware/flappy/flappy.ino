@@ -21,6 +21,7 @@
 #include "tetris_zero.h"
 #include "tetris_zero_viewport.h"
 #include "display_damage.h"
+#include "async_display.h"
 #include "tetris_input.h"
 #include "tetris_actions.h"
 #include "build_clock.h"
@@ -48,11 +49,18 @@ flappy::NesViewport nesViewport;
 flappy::MarioViewport marioViewport;
 flappy::MarioCartridge marioCartridge;
 flappy::MarioLauncher marioLauncher;
+flappy::MarioController marioController;
 flappy::TetrisViewport tetrisViewport;
 flappy::TetrisZeroViewport zeroViewport;
 flappy::TetrisZero::Options zeroOptions;
 flappy::TetrisZero::Launcher zeroLauncher;
 flappy::DamageRows displayDamage;
+flappy::AsyncDisplay asyncDisplay;
+struct PeerTetrisHud {
+  bool valid = false, fresh = false, toppedOut = false, large = false;
+  uint32_t score = 0;
+  uint16_t lines = 0;
+} peerTetrisHud;
 flappy::TetrisButtons tetrisButtons;
 flappy::TetrisTilt tetrisTilt;
 flappy::TetrisSoftDrop tetrisSoftDrop;
@@ -113,8 +121,23 @@ uint8_t appliedVolume = UINT8_MAX;
 uint8_t appliedSkin = UINT8_MAX;
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
 uint64_t nesWorkUs = 0, nesVideoUs = 0;
-uint32_t nesRenderedFrames = 0;
+uint32_t nesRenderedFrames = 0, lcdFrames = 0, lcdRows = 0, appTicks = 0, appDrawFrames = 0;
+uint64_t lcdUs = 0, appRenderUs = 0;
+uint16_t marioBenchmarkFrames = 0;
+uint8_t benchmarkPrgCache = 0, benchmarkVideoDivisor = 0;
+bool benchmarkPcm = false;
+bool timingProbe = false;
+uint16_t timingIntervals = 0;
+uint32_t timingStart = 0, timingPrevious = 0, timingMin = UINT32_MAX, timingMax = 0;
 #endif
+
+void invalidateDisplay() {
+  displayDamage.invalidate();
+  marioViewport.invalidate();
+  tetrisViewport.invalidate();
+  zeroViewport.invalidate();
+  peerTetrisHud.valid = false;
+}
 
 uint32_t nonzeroRandom() {
   const uint32_t value = esp_random();
@@ -122,6 +145,14 @@ uint32_t nonzeroRandom() {
 }
 
 bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird; }
+
+void configureNesPerformance() {
+  nes.setPcmEnabled(!piezoDriver);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  nes.setPcmEnabled(benchmarkPcm);
+  nes.setPrgCache(benchmarkPrgCache);
+#endif
+}
 
 bool tetrisLinked() {
   return coopLink.gameProfile() == flappy::coop::GameProfile::Tetris &&
@@ -348,7 +379,12 @@ void loadSettings() {
   app.setTetrisControls(preferences.getUChar("tetctrl", 0));
   app.setTetrisTilt(true);
   if (preferences.isKey("tetneutral")) tetrisTilt.calibrate(preferences.getFloat("tetneutral", 0));
+  if (!preferences.getUChar("timingver", 0)) {
+    preferences.putBool("tetpal", false);
+    preferences.putUChar("timingver", 1);
+  }
   app.setTetrisPal(preferences.getBool("tetpal", false));
+  app.setTetrisLarge(preferences.getBool("tetlarge", true));
   app.setTetrisZeroLevel(preferences.getUChar("zerolevel", 0));
   app.setTetrisZeroGameType(preferences.getUChar("zerotype", 0));
   app.setTetrisZeroPlayers(preferences.getUChar("zeroplayers", 2));
@@ -375,6 +411,7 @@ void saveSettings() {
   preferences.putUChar("tetctrl", app.settings.tetrisControls);
   preferences.putBool("tettilt", app.settings.tetrisTilt);
   preferences.putBool("tetpal", app.settings.tetrisPal);
+  preferences.putBool("tetlarge", app.settings.tetrisLarge);
   preferences.putUChar("zerolevel", app.settings.tetrisZeroLevel);
   preferences.putUChar("zerotype", app.settings.tetrisZeroGameType);
   preferences.putUChar("zeroplayers", app.settings.tetrisZeroPlayers);
@@ -406,6 +443,7 @@ void applyOutputSettings() {
     else if (preview) playCue(flappy::PiezoCue::Preview, millis());
   }
   if (appliedBrightness != app.settings.brightnessIndex) {
+    asyncDisplay.drain();
     M5.Display.setBrightness(app.brightness());
     appliedBrightness = app.settings.brightnessIndex;
   }
@@ -448,7 +486,7 @@ flappy::coop::PlayerSnapshot localSnapshot() {
 
 void stopCoop() {
   coopLink.stop();
-  displayDamage.invalidate();
+  invalidateDisplay();
   coopRoundPrepared = false;
   coopRoundLaunched = false;
   tetrisRoundPrepared = false;
@@ -470,6 +508,7 @@ void handleCoopRequest(uint32_t nowMs) {
   coopRoundLaunched = false;
   if (app.settings.coopRole) {
     app.setCurrentGame(flappy::GameTitle::FlappyBird);
+    nes.setPrgCache(0);
     if (bluetoothPad) bluetoothPad->stop();
     previousPadButtons = padButtons = 0;
     pendingPadAction = false;
@@ -517,8 +556,9 @@ void updateCoop(uint32_t nowMs) {
 
 void setNesDisplay(bool landscape) {
   if (nesLandscape == landscape) return;
+  asyncDisplay.drain();
   nesLandscape = landscape;
-  displayDamage.invalidate();
+  invalidateDisplay();
   M5.Display.setRotation(landscape ? 1 : 0);
   M5.Display.fillScreen(TFT_BLACK);
   if (landscape) {
@@ -528,36 +568,79 @@ void setNesDisplay(bool landscape) {
   else viewport.configure(M5.Display.width(), M5.Display.height());
 }
 
-void pushGameFrame(int width, int height) {
+void submitDisplay(int x, int y, int width, int height, const uint16_t* pixels, int stride = 0) {
+  if (!stride) stride = width;
+  for (int row = 0; row < height; row += flappy::DisplayStrip::MaxRows) {
+    const int rows = height - row < flappy::DisplayStrip::MaxRows ? height - row : flappy::DisplayStrip::MaxRows;
+    const uint16_t* source = pixels + row * stride;
+    if (asyncDisplay.enabled() && asyncDisplay.submit(x, y + row, width, rows, source, stride)) continue;
+    asyncDisplay.drain();
+    if (asyncDisplay.enabled()) invalidateDisplay();
+    M5.Display.startWrite();
+    if (stride == width) M5.Display.pushImage(x, y + row, width, rows, source);
+    else for (int dy = 0; dy < rows; ++dy)
+      M5.Display.pushImage(x, y + row + dy, width, 1, source + dy * stride);
+    M5.Display.endWrite();
+  }
+}
+
+void recordLcdFrame(unsigned rows, uint32_t start) {
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  if (rows) { ++lcdFrames; lcdRows += rows; }
+  lcdUs += uint32_t(micros() - start);
+#else
+  (void)rows; (void)start;
+#endif
+}
+
+void pushGameFrame(int width, int height, bool exactTetris = false, int peerDirtyFrom = -1) {
+  const uint32_t start = micros();
+  unsigned pushed = 0;
   displayDamage.beginFrame(width, height, millis());
-  M5.Display.startWrite();
   int first = -1;
   for (int row = 0; row <= height; ++row) {
-    const bool changed = row < height && displayDamage.changed(row, canvasStorage + row * width);
+    const bool changed = row < height && (exactTetris ?
+        (app.currentGame == flappy::GameTitle::TetrisZero ? zeroViewport.rowChanged(row) :
+          tetrisViewport.rowChanged(row)) || (peerDirtyFrom >= 0 && row >= peerDirtyFrom) :
+        displayDamage.changed(row, canvasStorage + row * width));
     if (changed && first < 0) first = row;
     if (!changed && first >= 0) {
-      M5.Display.pushImage(0, first, width, row - first, canvasStorage + first * width);
+      submitDisplay(0, first, width, row - first, canvasStorage + first * width);
+      pushed += unsigned(row - first);
       first = -1;
     }
   }
-  M5.Display.endWrite();
   displayDamage.endFrame();
+  recordLcdFrame(pushed, start);
 }
 
 void pushAppCanvas() {
-  M5.Display.startWrite();
+  const uint32_t start = micros();
+  unsigned pushed = 0;
+  displayDamage.beginFrame(viewport.width, viewport.height, millis());
   for (int y = 0; y < viewport.height; y += StripRows) {
     const int rows = viewport.height - y < StripRows ? viewport.height - y : StripRows;
     viewport.copyRows(canvasStorage, stripStorage, y, rows);
-    M5.Display.pushImage(viewport.outputX, viewport.outputY + y, viewport.width, rows, stripStorage);
+    int first = -1;
+    for (int dy = 0; dy <= rows; ++dy) {
+      const bool changed = dy < rows && displayDamage.changed(y + dy, stripStorage + dy * viewport.width);
+      if (changed && first < 0) first = dy;
+      if (!changed && first >= 0) {
+        submitDisplay(viewport.outputX, viewport.outputY + y + first, viewport.width,
+            dy - first, stripStorage + first * viewport.width);
+        pushed += unsigned(dy - first);
+        first = -1;
+      }
+    }
   }
-  M5.Display.endWrite();
+  displayDamage.endFrame();
+  recordLcdFrame(pushed, start);
 }
 
 void showGameMessage(uint8_t message) {
   if (gameMessageShown == message || !renderer) return;
   gameMessageShown = message;
-  displayDamage.invalidate();
+  invalidateDisplay();
   if (message == 2) {
     renderer->drawMessageLandscape("Mario", "Starting game");
     pushGameFrame(240, 135);
@@ -580,7 +663,7 @@ void openTetrisFrontend(bool focusRestart) {
   app.openTetrisSettings();
   if (focusRestart && app.menuItemCount() >= 2) app.menu.selection = uint8_t(app.menuItemCount() - 2);
   stopGameAudio();
-  displayDamage.invalidate();
+  invalidateDisplay();
   gameMessageShown = 0;
   pendingNesButtons = pendingControllerNesButtons = tetrisHeld = 0;
   pendingTetrisDrop = pendingControllerTetrisDrop = false;
@@ -603,6 +686,24 @@ void updateTetrisFrontend(uint32_t nowMs) {
   }
 }
 
+void prepareTetrisView(bool zero) {
+  if (zero) {
+    zeroViewport.setLargeCells(app.settings.tetrisLarge);
+    for (uint8_t player = 1; player <= flappy::TetrisZero::players(nes); ++player) {
+      zeroViewport.setHeld(player, tetrisActions[player - 1].heldOrientation());
+      zeroViewport.setNext(player, nes.readRam(player == 2 ? 0x7ff1 : 0xbf));
+      zeroViewport.setStats(player, flappy::TetrisZero::score(nes, player),
+          flappy::TetrisZero::lines(nes, player), flappy::TetrisZero::level(nes, player));
+    }
+  } else {
+    tetrisViewport.setLargeCells(app.settings.tetrisLarge);
+    tetrisViewport.setHeld(tetrisActions[0].heldOrientation());
+    tetrisViewport.setNext(nes.readRam(0xbf));
+    tetrisViewport.setStats(flappy::TetrisGym::score(nes), flappy::TetrisGym::lines(nes),
+        flappy::TetrisGym::level(nes));
+  }
+}
+
 void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   struct VideoTimer {
@@ -615,34 +716,84 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
     if (tetrisLaunching || zeroLaunching || !tetrisNativePlaying()) return;
     if (tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || zeroLaunching)) return;
     const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
+
     const bool complete = zero ? zeroViewport.consume(x1, y1, x2, y2, source, canvasStorage,
         flappy::TetrisZero::playing(nes), flappy::TetrisZero::players(nes) == 2) :
         tetrisViewport.consume(x1, y1, x2, y2, source, canvasStorage, flappy::TetrisGym::playing(nes));
     if (complete) {
       gameMessageShown = 0;
-      pushGameFrame(zero ? zeroViewport.width : tetrisViewport.width,
-          zero ? zeroViewport.height : tetrisViewport.height);
+      int peerDirtyFrom = -1;
       if (tetrisLinked()) {
         const auto peer = coopLink.remoteTetris(millis());
-        M5.Display.pushImage(0, 55, tetrisViewport.width, 8, canvasStorage + 55 * tetrisViewport.width);
-        M5.Display.setTextSize(1);
-        M5.Display.setTextWrap(false);
-        M5.Display.setTextColor(TFT_CYAN, TFT_BLACK);
-        M5.Display.setCursor(1, 55);
-        if (peer.fresh) M5.Display.printf("P2:%lu L:%u%s", (unsigned long)peer.stats.score,
-            unsigned(peer.stats.lines), peer.stats.toppedOut ? " END" : "");
-        else M5.Display.print("P2: waiting for score");
-        M5.Display.setTextWrap(true);
+        const int px = app.settings.tetrisLarge ? 111 : 0;
+        int py = app.settings.tetrisLarge ? 116 : 70;
+        const bool changed = !peerTetrisHud.valid || peerTetrisHud.fresh != peer.fresh ||
+            peerTetrisHud.toppedOut != peer.stats.toppedOut ||
+            peerTetrisHud.score != peer.stats.score || peerTetrisHud.lines != peer.stats.lines ||
+            peerTetrisHud.large != app.settings.tetrisLarge;
+        if (changed) {
+          peerTetrisHud = {true, peer.fresh, peer.stats.toppedOut, app.settings.tetrisLarge,
+              peer.stats.score, peer.stats.lines};
+          peerDirtyFrom = py;
+          const int clearWidth = app.settings.tetrisLarge ? tetrisViewport.width - px : 18;
+          for (int row = py; row < tetrisViewport.height; ++row)
+            memset(canvasStorage + row * tetrisViewport.width + px, 0, size_t(clearWidth) * sizeof(uint16_t));
+          flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width, tetrisViewport.height,
+              tetrisViewport.width, "P2", px, py);
+          py += 14;
+          char text[16];
+          if (peer.fresh) {
+            snprintf(text, sizeof(text), "%lu", static_cast<unsigned long>(peer.stats.score));
+            for (unsigned offset = 0; text[offset]; offset += 3) {
+              char group[4] = {};
+              for (unsigned i = 0; i < 3 && text[offset + i]; ++i) group[i] = text[offset + i];
+              flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width, tetrisViewport.height,
+                  tetrisViewport.width, group, px, py);
+              py += 12;
+              if (strlen(text + offset) <= 3) break;
+            }
+            py += 4;
+            flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width, tetrisViewport.height,
+                tetrisViewport.width, "Ln", px, py);
+            snprintf(text, sizeof(text), "%u", unsigned(peer.stats.lines));
+            flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width, tetrisViewport.height,
+                tetrisViewport.width, text, px, py + 12);
+            if (peer.stats.toppedOut) flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width,
+                tetrisViewport.height, tetrisViewport.width, "END", px, py + 28);
+          } else flappy::TetrisViewport::label(canvasStorage, tetrisViewport.width, tetrisViewport.height,
+              tetrisViewport.width, "...", px, py);
+        }
       }
+      pushGameFrame(zero ? zeroViewport.width : tetrisViewport.width,
+          zero ? zeroViewport.height : tetrisViewport.height, true, peerDirtyFrom);
     }
     return;
   }
   if (!nesLandscape || app.menuOpen() || !source || x1 < 0 || y1 < 0 || x2 > 255 || y2 > 239 || x2 < x1 || y2 < y1) return;
   if (nativeMario) {
     if (marioLaunching) return;
-    if (marioViewport.consume(x1, y1, x2, y2, source, canvasStorage)) {
+    static unsigned submittedRows = 0;
+    static uint32_t submitUs = 0;
+    if (y1 == 0) { submittedRows = 0; submitUs = 0; }
+    const uint32_t submittedAt = micros();
+    const bool complete = marioViewport.consume(x1, y1, x2, y2, source, canvasStorage);
+    int first = -1;
+    int previous = -2;
+    for (int sy = y1; sy <= y2 + 1; ++sy) {
+      const int dy = sy <= y2 ? marioViewport.targetRow(sy) : -1;
+      const bool changed = dy >= 0 && marioViewport.rowChanged(dy);
+      if (first >= 0 && (!changed || dy != previous + 1)) {
+        submitDisplay(0, first, 240, previous + 1 - first, canvasStorage + first * 240);
+        submittedRows += unsigned(previous + 1 - first);
+        first = -1;
+      }
+      if (changed && first < 0) first = dy;
+      if (changed) previous = dy;
+    }
+    submitUs += uint32_t(micros() - submittedAt);
+    if (complete) {
       gameMessageShown = 0;
-      pushGameFrame(240, 135);
+      recordLcdFrame(submittedRows, micros() - submitUs);
     }
     return;
   }
@@ -651,7 +802,6 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
   if (end > nesViewport.height) end = nesViewport.height;
   const int sourceWidth = x2 - x1 + 1;
   if (y1 == 0) displayDamage.beginFrame(nesViewport.width, nesViewport.height, millis());
-  M5.Display.startWrite();
   for (int row = first; row < end; row += StripRows) {
     const int rows = end - row < StripRows ? end - row : StripRows;
     for (int dy = 0; dy < rows; ++dy) {
@@ -666,13 +816,12 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
       const bool changed = dy < rows && displayDamage.changed(row + dy, canvasStorage + dy * nesViewport.width);
       if (changed && firstChanged < 0) firstChanged = dy;
       if (!changed && firstChanged >= 0) {
-        M5.Display.pushImage(nesViewport.x, nesViewport.y + row + firstChanged, nesViewport.width,
+        submitDisplay(nesViewport.x, nesViewport.y + row + firstChanged, nesViewport.width,
             dy - firstChanged, canvasStorage + firstChanged * nesViewport.width);
         firstChanged = -1;
       }
     }
   }
-  M5.Display.endWrite();
   if (y2 == 239) displayDamage.endFrame();
 }
 
@@ -774,6 +923,7 @@ void handleControllerRequest(uint32_t nowMs) {
   if (handledControllerRequest == app.controllerRequest) return;
   handledControllerRequest = app.controllerRequest;
   if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+  nes.setPrgCache(0);
   if (!bluetoothPad) bluetoothPad = new (std::nothrow) flappy::controller::BleController;
   if (!bluetoothPad) { app.setControllerStatus("Controller memory unavailable"); return; }
   if (app.controllerAction == 1) bluetoothPad->beginPairing(nowMs);
@@ -794,6 +944,8 @@ bool beginZero(const flappy::TetrisZero::Options& options) {
   }
   nes.setCallbacks(nesVideo, piezoDriver ? nullptr : nesAudio, nullptr);
   if (!nes.load(TetrisZeroRom::data, TetrisZeroRom::length)) return false;
+  configureNesPerformance();
+  nes.setPal(false);
   for (uint16_t address = 0x6000; address < 0x8000; ++address) nes.writeRam(address, 0);
   zeroOptions = options;
   zeroLauncher.reset(zeroOptions);
@@ -811,7 +963,7 @@ bool beginZero(const flappy::TetrisZero::Options& options) {
   controllerDownTracking = false;
   tetrisButtons.reset();
   tetrisSoftDrop.reset();
-  displayDamage.invalidate();
+  invalidateDisplay();
   gameMessageShown = 0;
   tetrisFrontendAt = 0;
   nextNesTick = micros();
@@ -830,7 +982,7 @@ void handleGameRequest() {
   if (handledGameRequest == app.gameRequest) return;
   handledGameRequest = app.gameRequest;
   stopGameAudio();
-  displayDamage.invalidate();
+  invalidateDisplay();
   pendingNesButtons = pendingControllerNesButtons = 0;
   nesSystemButton.reset(M5.BtnA.isPressed());
   tetrisButtons.reset();
@@ -847,6 +999,7 @@ void handleGameRequest() {
   tetrisFrontendAt = 0;
   runtimeNotice = "";
   if (emulatedGame()) {
+    renderer->setBackgroundCacheEnabled(false);
     if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
     if (!piezoDriver && !nesAudioBuffers) nesAudioBuffers = new (std::nothrow) int16_t[3][512];
     nes.setCallbacks(nesVideo, piezoDriver ? nullptr : nesAudio, nullptr);
@@ -859,15 +1012,19 @@ void handleGameRequest() {
         !zero || flappy::RomFingerprint::tetris(TetrisZeroRom::data, TetrisZeroRom::length, true);
     const bool loaded = displayReady && validCartridge && (zero ? beginZero(zeroSettings()) :
         nes.load(tetris ? TetrisRom::data : FlappyRom::data, tetris ? TetrisRom::length : FlappyRom::length));
-    if (!loaded) {
-      runtimeNotice = !validCartridge ? "Unsupported Tetris cartridge" :
+    const bool ntscCartridge = tetris || zero || !loaded || nes.frameRate() == 60;
+    if (!loaded || !ntscCartridge) {
+      runtimeNotice = !ntscCartridge ? "Import an NTSC ROM" : !validCartridge ? "Unsupported Tetris cartridge" :
           displayReady ? nes.error() : "Tetris needs a 135x240 display";
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
       handledGameRequest = app.gameRequest;
       app.openMenu(flappy::MenuPage::ChangeGame);
       nes.unload();
+      renderer->setBackgroundCacheEnabled(true);
       return;
     }
+    nes.setPal(false);
+    configureNesPerformance();
     if (tetris) {
       tetrisLaunching = true;
       tetrisLaunchStage = tetrisStableFrames = 0;
@@ -877,11 +1034,13 @@ void handleGameRequest() {
     } else if (!zero) {
       nativeMario = marioCartridge.supported() && marioViewport.configure(M5.Display.width(), M5.Display.height());
       marioLauncher.reset(nativeMario);
+      marioController.reset();
       marioLaunching = nativeMario;
     }
     nextNesTick = micros();
   } else {
     nes.unload();
+    renderer->setBackgroundCacheEnabled(true);
     // Keep the three audio buffers alive while the speaker drains its stop marker.
   }
   nextTick = micros() + TickMicros;
@@ -935,9 +1094,18 @@ void handleTetrisRequests(uint32_t nowMs) {
     if (app.currentGame == flappy::GameTitle::Nes) {
       stopGameAudio();
       if (nativeMario) {
-        if (!nes.load(FlappyRom::data, FlappyRom::length)) runtimeNotice = nes.error();
+        if (!nes.load(FlappyRom::data, FlappyRom::length)) {
+          runtimeNotice = nes.error();
+          marioLaunching = false;
+          app.openMenu(flappy::MenuPage::GameSettings);
+          invalidateDisplay();
+          return;
+        }
+        configureNesPerformance();
+        nes.setPal(false);
         marioViewport.resetCamera();
         marioLauncher.reset(true);
+        marioController.reset();
         marioLaunching = true;
         gameMessageShown = 0;
       } else nes.softReset();
@@ -977,6 +1145,7 @@ void handleTetrisRequests(uint32_t nowMs) {
     app.tetrisLinkRole = role;
     if (bluetoothPad) bluetoothPad->stop();
     padButtons = previousPadButtons = 0;
+    nes.setPrgCache(0);
     pendingControllerNesButtons = 0;
     tetrisRoundPrepared = false;
     const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
@@ -1051,10 +1220,10 @@ void updateTetrisLink(uint32_t nowMs) {
 }
 
 void showFrame(uint32_t nowMs) {
-  if (emulatedGame() && app.menuOpen()) {
-    displayDamage.invalidate();
-    gameMessageShown = 0;
-  }
+  static bool previousMenu = false;
+  if (previousMenu != app.menuOpen()) invalidateDisplay();
+  previousMenu = app.menuOpen();
+  if (emulatedGame() && app.menuOpen()) gameMessageShown = 0;
   const bool landscape = app.currentGame == flappy::GameTitle::Nes && !app.menuOpen();
   setNesDisplay(landscape);
   if (tetrisLike() && !app.menuOpen()) {
@@ -1062,7 +1231,8 @@ void showFrame(uint32_t nowMs) {
       static uint32_t lastLobby = UINT32_MAX - 1000;
       if (uint32_t(nowMs - lastLobby) >= 200) {
         lastLobby = nowMs;
-        displayDamage.invalidate();
+        asyncDisplay.drain();
+        invalidateDisplay();
         M5.Display.fillScreen(TFT_BLACK);
         M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
         M5.Display.setTextSize(1);
@@ -1110,7 +1280,14 @@ void showFrame(uint32_t nowMs) {
       *tiltZeroNotice && uint32_t(nowMs - tiltZeroNoticeMs) < 4000 ? tiltZeroNotice :
       app.menu.page == flappy::MenuPage::Controller && bluetoothPad
       ? bluetoothPad->detailText() : app.menu.page == flappy::MenuPage::TetrisLink ? coopLink.statusText() : runtimeNotice;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  ++appDrawFrames;
+  const uint32_t renderStart = micros();
+#endif
   renderer->draw(app, options);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  appRenderUs += uint32_t(micros() - renderStart);
+#endif
   pushAppCanvas();
 }
 
@@ -1142,7 +1319,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   }
   const uint8_t events = app.step(actionForApp, menuDown, nowMs);
   if (!menuWasOpen && app.menuOpen()) {
-    displayDamage.invalidate();
+    invalidateDisplay();
     pendingNesButtons = pendingControllerNesButtons = 0;
     nesSystemButton.reset(M5.BtnA.isPressed());
     tetrisButtons.reset();
@@ -1174,6 +1351,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
 }
 
 void startupFailure(const char* message) {
+  asyncDisplay.drain();
   Serial.begin(115200);
   Serial.printf("STARTUP ERROR: %s\n", message);
   if (M5.Display.width() > 0 && M5.Display.height() > 0) {
@@ -1224,6 +1402,12 @@ void setup() {
   }
   renderer = new (std::nothrow) flappy::Renderer(canvasStorage);
   if (!renderer) { startupFailure("Display memory unavailable"); return; }
+  const bool asyncReady = asyncDisplay.begin();
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  Serial.printf("BOOT async_display=%u heap=%u\n", unsigned(asyncReady), ESP.getFreeHeap());
+#else
+  (void)asyncReady;
+#endif
   uint8_t count = renderer->skinCount();
   if (count > MaxSkins) count = MaxSkins;
   for (uint8_t i = 0; i < count; ++i) skinNames[i] = renderer->skinName(i);
@@ -1280,6 +1464,37 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5MARIO")) {
       app.setCurrentGame(flappy::GameTitle::Nes);
       app.closeMenu(); handleGameRequest();
+    } else if (!strcmp(command, "M5DEMO") || !strcmp(command, "M5ORIGINAL")) {
+      app.setCurrentGame(flappy::GameTitle::FlappyBird);
+      app.setMode(!strcmp(command, "M5DEMO") ? flappy::Mode::Demo : flappy::Mode::Original);
+      app.closeMenu(); handleGameRequest();
+    } else if (!strncmp(command, "M5SKIN ", 7)) {
+      unsigned skin = 0;
+      if (sscanf(command + 7, "%u", &skin) == 1 && skin < renderer->skinCount()) app.setSkin(uint8_t(skin));
+    } else if (!strcmp(command, "M5RUN")) {
+      marioBenchmarkFrames = 600;
+    } else if (!strcmp(command, "M5TIMING")) {
+      timingProbe = true;
+      timingIntervals = 0;
+      timingStart = timingPrevious = 0;
+      timingMin = UINT32_MAX;
+      timingMax = 0;
+    } else if (!strncmp(command, "M5CACHE ", 8)) {
+      unsigned mask = 0;
+      if (sscanf(command + 8, "%u", &mask) == 1 && (mask == 0 || mask == 2 || mask == 3)) {
+        benchmarkPrgCache = uint8_t(mask);
+        nes.setPrgCache(benchmarkPrgCache);
+      }
+    } else if (!strncmp(command, "M5PCM ", 6)) {
+      unsigned enabled = 0;
+      if (sscanf(command + 6, "%u", &enabled) == 1) {
+        benchmarkPcm = enabled != 0;
+        nes.setPcmEnabled(benchmarkPcm);
+      }
+    } else if (!strncmp(command, "M5VIDEO ", 8)) {
+      unsigned divisor = 0;
+      if (sscanf(command + 8, "%u", &divisor) == 1 && divisor <= 4)
+        benchmarkVideoDivisor = uint8_t(divisor);
     } else if (!strcmp(command, "M5PAIR")) {
       app.openMenu(flappy::MenuPage::Controller);
       app.step(true, false, millis());
@@ -1297,11 +1512,19 @@ void serviceDiagnostics() {
       else if (soundReady) M5.Speaker.tone(2500, 200, 0, true);
       Serial.printf("BEEP driver=%s ready=%u frequency=%u duration_ms=200\n", piezoDriver ? "GPIO2-LEDC" : "M5Speaker", unsigned(soundReady), unsigned(soundFrequency));
     } else if (!strcmp(command, "M5STATUS")) {
+      asyncDisplay.drain();
       Serial.printf("STATUS game=%u menu=%u frames=%lu time=%lu heap=%u gym=%u level=%u score=%lu lines=%u pad=%u\n",
           unsigned(app.currentGame), unsigned(app.menu.page), (unsigned long)nes.frames(),
           (unsigned long)millis(), ESP.getFreeHeap(), unsigned(flappy::TetrisGym::stage(nes)),
           unsigned(flappy::TetrisGym::level(nes)), (unsigned long)flappy::TetrisGym::score(nes),
           unsigned(flappy::TetrisGym::lines(nes)), unsigned(controllerConnected));
+      if (nativeMario) {
+        const auto player = marioCartridge.sample(nes);
+        Serial.printf("MARIO screen=%u mode=%u task=%u y=%d h=%d camera=%d hz=%u divisor=%u launch=%u\n",
+            unsigned(marioCartridge.screen(nes)), unsigned(nes.readRam(0x770)), unsigned(nes.readRam(0x772)),
+            player.y, player.height, marioViewport.worldTop(), unsigned(nes.frameRate()),
+            unsigned(nes.videoDivisor()), unsigned(marioLaunching));
+      }
       if (app.currentGame == flappy::GameTitle::TetrisZero)
         Serial.printf("ZERO stage=%u players=%u level1=%u level2=%u active1=%u active2=%u launch=%u linkframe=%lu\n",
             unsigned(flappy::TetrisZero::stage(nes)), unsigned(flappy::TetrisZero::players(nes)),
@@ -1311,9 +1534,19 @@ void serviceDiagnostics() {
       Serial.printf("SOUND driver=%s ready=%u volume=%u frequency=%u duty=%u override=%u active=%u\n",
           piezoDriver ? "GPIO2-LEDC" : "M5Speaker", unsigned(soundReady), unsigned(app.settings.volumeIndex),
           unsigned(soundFrequency), unsigned(soundDuty), unsigned(soundOverride), unsigned(piezo.active()));
-      Serial.printf("PERF nes_us=%llu video_us=%llu rendered=%lu largest_heap=%u\n",
+      Serial.printf("APP ticks=%lu draws=%lu mode=%u skin=%u\n", (unsigned long)appTicks,
+          (unsigned long)appDrawFrames, unsigned(app.settings.mode), unsigned(app.settings.skinIndex));
+      Serial.printf("OPT cache=%u pcm=%u render_us=%llu bg_bytes=%u\n", unsigned(nes.prgCacheMask()),
+          unsigned(nes.pcmEnabled()), (unsigned long long)appRenderUs,
+          unsigned(renderer->backgroundCacheBytes()));
+      Serial.printf("PERF nes_us=%llu video_us=%llu source_frames=%lu lcd_frames=%lu lcd_rows=%lu lcd_us=%llu largest_heap=%u\n",
           (unsigned long long)nesWorkUs, (unsigned long long)nesVideoUs,
-          (unsigned long)nesRenderedFrames, ESP.getMaxAllocHeap());
+          (unsigned long)nesRenderedFrames, (unsigned long)lcdFrames, (unsigned long)lcdRows,
+          (unsigned long long)lcdUs, ESP.getMaxAllocHeap());
+      const auto asyncStats = asyncDisplay.stats();
+      Serial.printf("ASYNC strips=%lu bytes=%llu work_us=%llu pending=%u\n",
+          (unsigned long)asyncStats.strips, (unsigned long long)asyncStats.bytes,
+          (unsigned long long)asyncStats.workUs, asyncStats.pending);
 #if defined(NES_TEST_PROFILE) && NES_TEST_PROFILE == 1
       const auto* profile = nes_test_profile_get();
       Serial.printf("PROFILE frames=%llu frame=%llu cpu=%llu bg=%llu sprite=%llu apu=%llu draw=%llu\n",
@@ -1384,6 +1617,9 @@ void loop() {
       }
       const bool physicalMenu = M5.BtnB.isPressed();
       const bool menuDown = physicalMenu;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+      ++appTicks;
+#endif
       stepGame(action, menuDown, millis());
       pendingAction = pendingPadAction = false;
       nextTick += TickMicros;
@@ -1413,7 +1649,7 @@ void loop() {
           if (launch.complete) {
             marioLaunching = false;
             gameMessageShown = 0;
-            displayDamage.invalidate();
+            invalidateDisplay();
           } else if (launch.failed) {
             marioLaunching = false;
             runtimeNotice = "Mario launch timed out";
@@ -1508,8 +1744,51 @@ void loop() {
               if (tetrisActions[1].hardDropped()) zeroDrop2.reset();
             }
           }
-          if (!frameTetris && !frameZero && nativeMario) marioViewport.trackPlayer(marioCartridge.sample(nes));
+          if (!frameTetris && !frameZero && nativeMario) {
+            if (!marioLaunching) input1 = uint8_t(marioController.step(marioCartridge.screen(nes),
+                uint8_t(nesButtons(padButtons) | pendingControllerNesButtons)) | pendingNesButtons);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            if (!marioLaunching && marioBenchmarkFrames) {
+              const auto screen = marioCartridge.screen(nes);
+              const unsigned phase = (600 - marioBenchmarkFrames) % 120;
+              input1 = screen == flappy::MarioCartridge::Screen::Title ? flappy::NesRuntime::Start :
+                  screen == flappy::MarioCartridge::Screen::Playing ? uint8_t(flappy::NesRuntime::Right |
+                  flappy::NesRuntime::B | (phase >= 32 && phase < 52 ? flappy::NesRuntime::A : 0)) : 0;
+              --marioBenchmarkFrames;
+            }
+#endif
+            marioViewport.trackPlayer(marioCartridge.sample(nes));
+            nes.setVideoRows(16, 31, marioViewport.worldTop(), marioViewport.worldTop() + 118);
+          } else if (frameTetris || frameZero) {
+            prepareTetrisView(frameZero);
+            nes.setVideoRows(frameZero && zeroOptions.players == 2 ? 8 : 24,
+                frameZero && zeroOptions.players == 2 ? 223 : 215);
+          }
+          const uint8_t videoInterval = frameZero && zeroOptions.players == 2 ? 3 : 2;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+          nes.setVideoDivisor(benchmarkVideoDivisor ? benchmarkVideoDivisor : videoInterval);
+#else
+          nes.setVideoDivisor(videoInterval);
+#endif
           stepped = nes.step(input1, input2);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+          if (stepped && timingProbe) {
+            const uint32_t stamp = micros();
+            if (!timingStart) timingStart = stamp;
+            else {
+              const uint32_t interval = stamp - timingPrevious;
+              if (interval < timingMin) timingMin = interval;
+              if (interval > timingMax) timingMax = interval;
+              if (++timingIntervals == 500) {
+                timingProbe = false;
+                Serial.printf("TIMING game=%u hz=%u intervals=500 elapsed_us=%lu min_us=%lu max_us=%lu\n",
+                    unsigned(app.currentGame), unsigned(nes.frameRate()),
+                    (unsigned long)(stamp - timingStart), (unsigned long)timingMin, (unsigned long)timingMax);
+              }
+            }
+            timingPrevious = stamp;
+          }
+#endif
           if (stepped) {
             updateNesSound(input1, input2, millis());
             if (hardDropCue) playCue(flappy::PiezoCue::Drop, millis());

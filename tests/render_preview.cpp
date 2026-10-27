@@ -25,7 +25,17 @@ int main(int argc, char** argv) {
   }
   std::vector<uint16_t> pixels(flappy::PixelWidth * flappy::PixelHeight);
   flappy::Renderer render(pixels.data());
-  render.draw(game);
+  if (state >= 3) {
+    flappy::AppModel app(2);
+    std::vector<const char*> names;
+    for (uint8_t index = 0; index < flappy::Renderer::skinCount(); ++index) names.push_back(flappy::Renderer::skinName(index));
+    app.setSkinNames(names.data(), uint8_t(names.size()));
+    app.openMenu(flappy::MenuPage::Skins);
+    app.menu.selection = state == 3 ? 0 : state == 4 ? 10 : app.skinCount();
+    flappy::RenderOptions options;
+    options.nowMs = state == 4 ? 120 : 0;
+    render.draw(app, options);
+  } else render.draw(game);
   const int width = std::atoi(argv[1]);
   const int height = std::atoi(argv[2]);
   flappy::Viewport view;

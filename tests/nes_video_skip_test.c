@@ -20,8 +20,11 @@ static uint32_t next_random(void) {
     return random_state;
 }
 static unsigned fetch_count;
+static uint16_t fetch_addresses[64];
 static void mapper_fetch(nes_t* nes, uint16_t address) {
-    (void)nes; (void)address; ++fetch_count;
+    (void)nes;
+    assert(fetch_count < sizeof(fetch_addresses) / sizeof(fetch_addresses[0]));
+    fetch_addresses[fetch_count++] = address;
 }
 
 static void invalidate_selection(nes_t* nes) {
@@ -187,11 +190,14 @@ int main(void) {
     fetch_count = 0;
     nes_render_background_line(nes, 33, output);
     const unsigned expected_fetches = fetch_count;
+    uint16_t expected_addresses[64];
+    memcpy(expected_addresses, fetch_addresses, fetch_count * sizeof(fetch_addresses[0]));
     memcpy(reference, nes->nes_ppu.bg_opaque, sizeof(reference));
     fetch_count = 0;
     memset(nes->nes_ppu.bg_opaque, 0xA5, 256);
     nes_render_background_opacity_line(nes, 33);
     assert(fetch_count == expected_fetches && fetch_count >= 32);
+    assert(memcmp(expected_addresses, fetch_addresses, fetch_count * sizeof(fetch_addresses[0])) == 0);
     for (unsigned p = 0; p < 256; ++p)
         assert((nes->nes_ppu.bg_opaque[p] != 0) == (reference[p] != 0));
     nes->nes_mapper.mapper_ppu = NULL;

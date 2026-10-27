@@ -22,6 +22,7 @@ struct Settings {
   uint8_t tetrisPlayers = 1;
   bool tetrisTilt = true;
   bool tetrisPal = false;
+  bool tetrisLarge = true;
   uint8_t tetrisZeroLevel = 0;
   uint8_t tetrisZeroGameType = 0;
   uint8_t tetrisZeroPlayers = 2;
@@ -267,6 +268,11 @@ class AppModel {
     settings.tetrisTilt = enabled;
   }
 
+  void setTetrisLarge(bool enabled) {
+    if (settings.tetrisLarge != enabled) settingsDirty = true;
+    settings.tetrisLarge = enabled;
+  }
+
   void setTetrisPal(bool enabled) {
     if (settings.tetrisPal != enabled) settingsDirty = true;
     settings.tetrisPal = enabled;
@@ -398,7 +404,7 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return VisibleGameCount + 1;
       case MenuPage::GameSettings:
-        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 8 : currentGame == GameTitle::TetrisZero ? 7 : 2;
+        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : 2;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 4;
       case MenuPage::TetrisLevel: return currentGame == GameTitle::TetrisZero ? 11 : 31;
@@ -432,11 +438,11 @@ class AppModel {
           return labels[index];
         }
         if (currentGame == GameTitle::Tetris) {
-          constexpr const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Speed", "Link", "Start / restart"};
+          constexpr const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Speed", "Link", "Board size", "Start / restart"};
           return labels[index];
         }
         if (currentGame == GameTitle::TetrisZero) {
-          constexpr const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Link", "Start / restart"};
+          constexpr const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Link", "Board size", "Start / restart"};
           return labels[index];
         }
         return "Restart game";
@@ -518,6 +524,7 @@ class AppModel {
           if (index == 3) return settings.tetrisControls == 1 ? "Tilt rotate" : "Tilt move";
           if (index == 4) return settings.tetrisPal ? "PAL 50 Hz" : "NTSC 60 Hz";
           if (index == 5) return tetrisLinkRole == 1 ? "Host" : tetrisLinkRole == 2 ? "Join" : "Off";
+          if (index == 6) return settings.tetrisLarge ? "Large 11px" : "Native 8px";
         } else if (currentGame == GameTitle::TetrisZero) {
           if (index == 0) return settings.tetrisPlayers == 2 ? "2 players" : "Solo";
           if (index == 1) return settings.tetrisZeroGameType ? "B-Type" : "A-Type";
@@ -527,6 +534,7 @@ class AppModel {
           }
           if (index == 3) return settings.tetrisControls == 1 ? "Tilt rotate" : "Tilt move";
           if (index == 4) return tetrisLinkRole == 1 ? "Host" : tetrisLinkRole == 2 ? "Join" : "Off";
+          if (index == 5) return settings.tetrisPlayers == 2 ? "6px (2P)" : settings.tetrisLarge ? "Large 11px" : "Native 8px";
         }
         break;
       case MenuPage::TetrisLevel: return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroLevel : settings.tetrisLevel) ? "*" : "";
@@ -759,6 +767,7 @@ class AppModel {
           else if (menu.selection == 3) openMenu(MenuPage::TetrisControls);
           else if (menu.selection == 4) setTetrisPal(!settings.tetrisPal);
           else if (menu.selection == 5) openMenu(MenuPage::TetrisLink);
+          else if (menu.selection == 6) setTetrisLarge(!settings.tetrisLarge);
           else { ++tetrisRequest; closeMenu(); }
         } else if (currentGame == GameTitle::TetrisZero) {
           if (menu.selection == 0) openMenu(MenuPage::TetrisZeroPlayers);
@@ -766,6 +775,7 @@ class AppModel {
           else if (menu.selection == 2) openMenu(MenuPage::TetrisLevel);
           else if (menu.selection == 3) openMenu(MenuPage::TetrisControls);
           else if (menu.selection == 4) openMenu(MenuPage::TetrisLink);
+          else if (menu.selection == 5) { if (settings.tetrisPlayers == 1) setTetrisLarge(!settings.tetrisLarge); }
           else { ++tetrisZeroRequest; closeMenu(); }
         } else requestGameRestart();
         break;

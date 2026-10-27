@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <string.h>
 #include "generated_assets.h"
 #include "generated_collision.h"
 #include "generated_skins.h"
@@ -34,6 +35,40 @@ class Skins {
     return index < count() ? FlappySkins::packs[index - BuiltinCount].name : names[0];
   }
 
+  // A picker card needs component tables, with no collision or scene buffers.
+  struct BirdPreview {
+    void capture(const Skins& skins) {
+      selected_ = skins.selected;
+      memcpy(red_, skins.red_, sizeof(red_));
+      memcpy(green_, skins.green_, sizeof(green_));
+      memcpy(blue_, skins.blue_, sizeof(blue_));
+    }
+
+    uint16_t color(uint16_t source) const {
+      if (!selected_ || selected_ >= 10 || source == FlappyAssets::kTransparent) return source;
+      const unsigned r = red_[source >> 11], g = green_[(source >> 5) & 63], b = blue_[source & 31];
+      if (selected_ == 6 || selected_ == 9) {
+        const unsigned luminance = (r + g + b) >> 8;
+        if (selected_ == 6) return rgb(luminance, luminance, luminance);
+        const unsigned q = luminance / 64;
+        return rgb(20 + q * 46, 36 + q * 51, 12 + q * 31);
+      }
+      return uint16_t(r | g | b);
+    }
+
+    uint16_t pixel(int frame, int x, int y) const { return color(rawBirdPixel(selected_, frame, x, y)); }
+    uint8_t alpha(int frame, int x, int y) const {
+      if (x < 0 || x >= 17 || y < 0 || y >= 12) return 0;
+      if (selected_ == 10 || selected_ == 11) return 255;
+      const auto& asset = birdAsset(selected_, frame);
+      return asset.alpha ? asset.alpha[y * asset.width + x] : 255;
+    }
+
+   private:
+    uint16_t red_[32] = {}, green_[64] = {}, blue_[32] = {};
+    uint8_t selected_ = 0;
+  };
+
   void select(uint8_t index) {
     selected = index < count() ? index : 0;
     buildPalette();
@@ -64,13 +99,7 @@ class Skins {
   const FlappyAssets::Sprite& background() const { return world(0); }
   const FlappyAssets::Sprite& ground() const { return world(1); }
   const FlappyAssets::Sprite& pipe(bool top) const { return world(top ? 3 : 2); }
-  const FlappyAssets::Sprite& bird(int frame) const {
-    static const FlappyAssets::Sprite* const birds[] = {&FlappyAssets::birdUp, &FlappyAssets::birdMid, &FlappyAssets::birdDown};
-    frame = frame >= 0 && frame < 3 ? frame : 1;
-    if (selected < BuiltinCount) return *birds[frame];
-    const auto& p = FlappySkins::packs[selected - BuiltinCount];
-    return *(frame == 0 ? p.birdUp : frame == 1 ? p.birdMid : p.birdDown);
-  }
+  const FlappyAssets::Sprite& bird(int frame) const { return birdAsset(selected, frame); }
 
   uint16_t palette(uint16_t c) const {
     if (!selected || selected >= 10 || c == FlappyAssets::kTransparent) return c;
@@ -78,9 +107,23 @@ class Skins {
     return selected == 6 || selected == 9 ? luminance_[(r + g + b) >> 8] : uint16_t(r | g | b);
   }
 
-  uint16_t birdPixel(int frame, int x, int y) const {
+  uint16_t birdPixel(int frame, int x, int y) const { return palette(rawBirdPixel(selected, frame, x, y)); }
+
+ private:
+  uint64_t masks_[3][24] = {};
+  uint16_t red_[32] = {}, green_[64] = {}, blue_[32] = {}, luminance_[256] = {};
+
+  static const FlappyAssets::Sprite& birdAsset(uint8_t index, int frame) {
+    static const FlappyAssets::Sprite* const birds[] = {&FlappyAssets::birdUp, &FlappyAssets::birdMid, &FlappyAssets::birdDown};
+    frame = frame >= 0 && frame < 3 ? frame : 1;
+    if (index < BuiltinCount) return *birds[frame];
+    const auto& pack = FlappySkins::packs[index - BuiltinCount];
+    return *(frame == 0 ? pack.birdUp : frame == 1 ? pack.birdMid : pack.birdDown);
+  }
+
+  static uint16_t rawBirdPixel(uint8_t index, int frame, int x, int y) {
     if (x < 0 || x >= 17 || y < 0 || y >= 12) return FlappyAssets::kTransparent;
-    if (selected == 10) {
+    if (index == 10) {
       if (x >= 3 && x <= 13 && y >= 1 && y <= 10) {
         if (y == 1 && (x == 3 || x == 13)) return FlappyAssets::kTransparent;
         if (x == 3 || x == 13 || y == 1 || y == 10) return rgb(119, 57, 20);
@@ -90,7 +133,7 @@ class Skins {
         return rgb(249, 203, 135);
       }
       if ((x == 1 || x == 2 || x == 14 || x == 15) && y == 4 + frame * 2) return rgb(195, 123, 51);
-    } else if (selected == 11) {
+    } else if (index == 11) {
       if (x >= 4 && x <= 12 && y >= 1 && y <= 10) {
         if (x >= 10 && y <= 3) return rgb(167, 206, 216);
         if (x == 4 || x == 12 || y == 1 || y == 10) return rgb(38, 54, 75);
@@ -100,15 +143,11 @@ class Skins {
       }
       if (y == 4 + frame * 2 && ((x >= 1 && x <= 3) || (x >= 13 && x <= 15))) return rgb(247, 245, 223);
     } else {
-      const auto& asset = bird(frame);
-      return palette(asset.pixels[y * asset.width + x]);
+      const auto& asset = birdAsset(index, frame);
+      return asset.pixels[y * asset.width + x];
     }
     return FlappyAssets::kTransparent;
   }
-
- private:
-  uint64_t masks_[3][24] = {};
-  uint16_t red_[32] = {}, green_[64] = {}, blue_[32] = {}, luminance_[256] = {};
 
   void buildPalette() {
     if (!selected || selected >= 10) return;

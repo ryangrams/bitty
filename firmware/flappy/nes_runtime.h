@@ -2,7 +2,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <new>
 #include <nes.h>
+#include "rom_fingerprint.h"
 #if defined(NES_TEST_PROFILE) && NES_TEST_PROFILE == 1
 #include <nes_test.h>
 #ifdef ARDUINO
@@ -92,6 +94,8 @@ class NesRuntime {
 #endif
     frameCount_ = 0;
     dcQ8_ = 0;
+    tetrisImage_ = RomFingerprint::tetris(rom, bytes, false) ? 1 :
+        RomFingerprint::tetris(rom, bytes, true) ? 2 : 0;
     return true;
   }
 
@@ -106,6 +110,7 @@ class NesRuntime {
       core_ = nullptr;
     }
     frameCount_ = 0;
+    tetrisImage_ = 0;
   }
 
   bool step(uint8_t pad1, uint8_t pad2 = 0) {
@@ -134,14 +139,91 @@ class NesRuntime {
   static size_t coreBytes() { return sizeof(nes_t); }
   const nes_t* core() const { return core_; }
 
+  // Execute the pinned cartridge's selector without advancing video or audio.
+  bool runTetrisRandomizer(bool zero, uint8_t& orientation) {
+    if (!core_ || tetrisImage_ != (zero ? 2 : 1) || readRam(0xc0) != 4 ||
+        readRam(0xa7) != 2 || core_->nes_mapper.mapper_cpu_clock ||
+        core_->nes_mapper.mapper_read_prg) return false;
+    if (zero ? (readRam(0xbe) < 1 || readRam(0xbe) > 2) :
+        (readRam(0xbd) != 3 || (readRam(0x600) != 0 && readRam(0x600) != 2 && readRam(0x600) != 6))) return false;
+    const uint16_t entry = zero ? 0x9907 : 0xae7d;
+    const size_t offset = zero ? 0x9907 : 0x2e7d;
+    if (core_->nes_cpu.prg_banks[(entry >> 13) - 4] + (entry & 0x1fff) !=
+        core_->nes_rom.prg_rom + offset) return false;
+    nes_cpu_t* saved = new (std::nothrow) nes_cpu_t;
+    if (!saved) return false;
+    *saved = core_->nes_cpu;
+    auto& cpu = core_->nes_cpu;
+    cpu.PC = entry;
+    cpu.I = 1;
+    cpu.irq_pending = cpu.irq_nmi = cpu.irq_nmi_delay = 0;
+    cpu.cpu_ram[0x100 + cpu.SP--] = 0x7f;
+    cpu.cpu_ram[0x100 + cpu.SP--] = 0xfd;
+    unsigned instructions = 0;
+    while (cpu.PC != 0x7ffe && instructions < 2048 && randomizerInstructionSafe()) {
+      cpu.cycles = 0;
+      nes_opcode(core_, 1);
+      ++instructions;
+    }
+    const uint8_t result = cpu.A;
+    const uint8_t fields[] = {0x14, 0x17, 0x18, 0x19, 0x1a, 0x34, 0x35, 0x36};
+    uint8_t values[sizeof(fields)];
+    for (size_t i = 0; i < sizeof(fields); ++i) values[i] = cpu.cpu_ram[fields[i]];
+    const uint8_t countAddress = !zero && readRam(0x600) == 2 ? 0x36 : 0x1a;
+    const bool canonical = result == 2 || result == 7 || result == 8 || result == 10 ||
+        result == 11 || result == 14 || result == 18;
+    const bool success = cpu.PC == 0x7ffe && canonical && result == cpu.cpu_ram[0x19] &&
+        cpu.cpu_ram[countAddress] == uint8_t(saved->cpu_ram[countAddress] + 1);
+    cpu = *saved;
+    delete saved;
+    if (!success) return false;
+    for (size_t i = 0; i < sizeof(fields); ++i) cpu.cpu_ram[fields[i]] = values[i];
+    orientation = result;
+    return true;
+  }
+
+  bool setVideoDivisor(uint8_t divisor) {
+    if (!core_ || !divisor) return false;
+    if (core_->host_video_divisor != divisor) {
+      core_->host_video_divisor = divisor;
+      core_->nes_frame_skip_count = 0;
+    }
+    return true;
+  }
+
+  uint8_t videoDivisor() const { return core_ ? core_->host_video_divisor : NES_VIDEO_DIVISOR; }
+
+  // Only pixels within these inclusive row windows are valid in video callbacks.
+  // Every strip callback, including the first and last, retains its usual shape.
+  // CPU/APU timing, mapper fetches and sprite status run for all source rows.
+  bool setVideoRows(int first, int last, int secondFirst = -1, int secondLast = -1) {
+    if (!core_ || first < 0 || first > last || last >= NES_HEIGHT) return false;
+    const bool second = secondFirst != -1 || secondLast != -1;
+    if (second && (secondFirst < 0 || secondFirst > secondLast || secondLast >= NES_HEIGHT)) return false;
+    core_->host_video_first[0] = uint8_t(first);
+    core_->host_video_last[0] = uint8_t(last);
+    core_->host_video_first[1] = second ? uint8_t(secondFirst) : 1;
+    core_->host_video_last[1] = second ? uint8_t(secondLast) : 0;
+    core_->host_video_window_enabled = 1;
+    return true;
+  }
+
+  void resetVideoRows() { if (core_) core_->host_video_window_enabled = 0; }
+
+  bool setPrgCache(uint8_t bankMask) {
+    return core_ && nes_host_prg_cache(core_, bankMask) == NES_OK;
+  }
+  uint8_t prgCacheMask() const { return core_ ? core_->host_prg_cache_mask : 0; }
+
+  void setPcmEnabled(bool enabled) { if (core_) core_->host_pcm_enabled = enabled; }
+  bool pcmEnabled() const { return core_ && core_->host_pcm_enabled; }
+
   bool softReset() {
     if (!core_) return false;
     core_->nes_cpu.irq_nmi = core_->nes_cpu.irq_nmi_delay = core_->nes_cpu.irq_pending = 0;
     core_->nes_quit = 0;
     core_->host_dot_remainder = 0;
-#if NES_FRAME_SKIP != 0
     core_->nes_frame_skip_count = 0;
-#endif
     nes_cpu_reset(core_);
     frameCount_ = 0;
     dcQ8_ = 0;
@@ -208,8 +290,36 @@ class NesRuntime {
   void* context_ = nullptr;
   const char* error_ = nullptr;
   uint32_t frameCount_ = 0;
+  uint8_t tetrisImage_ = 0;
   int32_t dcQ8_ = 0;
   int16_t audioBuffer_[NES_APU_SAMPLE_PER_SYNC_MAX] = {};
+
+  static bool randomizerWrite(uint16_t address) {
+    return address == 0 || address == 2 || address == 0x14 || (address >= 0x17 && address <= 0x1a) ||
+        (address >= 0x34 && address <= 0x36);
+  }
+  uint8_t randomizerRead(uint16_t address) const {
+    return core_->nes_cpu.prg_banks[(address >> 13) - 4][address & 0x1fff];
+  }
+  bool randomizerInstructionSafe() const {
+    const auto& cpu = core_->nes_cpu;
+    if (cpu.PC < 0x8000 || cpu.PC > 0xfffc) return false;
+    const uint8_t op = randomizerRead(cpu.PC);
+    const uint8_t low = randomizerRead(uint16_t(cpu.PC + 1));
+    const uint16_t absolute = uint16_t(low | (uint16_t(randomizerRead(uint16_t(cpu.PC + 2))) << 8));
+    switch (op) {
+      case 0x18: case 0x38: case 0xaa: case 0x4a: case 0x6a: case 0x60: case 0xe8: case 0x88:
+      case 0xa9: case 0xa2: case 0xa0: case 0x29: case 0xc9: case 0xe9: case 0x69:
+      case 0xa5: case 0x65: case 0xc5: case 0x45: case 0xb5: case 0x55:
+      case 0xf0: case 0xd0: case 0x90: case 0xb0: case 0x10: case 0x30: return true;
+      case 0x85: case 0xe6: case 0xc6: return randomizerWrite(low);
+      case 0x76: return randomizerWrite(uint8_t(low + cpu.X));
+      case 0xad: return absolute < 0x800 || absolute >= 0x8000;
+      case 0xbd: return uint16_t(absolute + cpu.X) >= 0x8000;
+      case 0x20: case 0x4c: return absolute >= 0x8000;
+      default: return false;
+    }
+  }
 
   bool fail(const char* error) { error_ = error; return false; }
   static NesRuntime*& active() { static NesRuntime* current = nullptr; return current; }

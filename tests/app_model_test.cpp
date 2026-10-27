@@ -280,9 +280,9 @@ static void perGameSettingsAndTetrisRequests() {
   assert(d.app.gameRestartRequest == 1 && !d.app.menuOpen() && d.app.currentGame == GameTitle::Nes);
   d.app.setTetrisAvailable(true); d.app.setCurrentGame(GameTitle::Tetris);
   d.app.openMenu(MenuPage::GameSettings);
-  assert(d.app.menuItemCount() == 8);
-  const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Speed", "Link", "Start / restart", "Back"};
-  for (uint8_t i = 0; i < 8; ++i) assert(std::string(d.app.menuLabel(i)) == labels[i]);
+  assert(d.app.menuItemCount() == 9);
+  const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Speed", "Link", "Board size", "Start / restart", "Back"};
+  for (uint8_t i = 0; i < 9; ++i) assert(std::string(d.app.menuLabel(i)) == labels[i]);
   d.app.menu.selection = 2;
   d.tick(true);
   assert(d.app.menu.page == MenuPage::TetrisLevel && d.app.menuItemCount() == 31);
@@ -318,7 +318,11 @@ static void perGameSettingsAndTetrisRequests() {
     assert(d.app.tetrisLinkRole == role && d.app.tetrisLinkRequest == uint32_t(role + 1));
     assert(d.app.currentGame == GameTitle::Tetris && d.app.settings.mode == before);
   }
-  d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = 6; d.tick(true);
+  d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = 6;
+  assert(std::string(d.app.menuValue(6)) == "Large 11px");
+  d.tick(true); assert(!d.app.settings.tetrisLarge && d.app.settingsDirty && d.app.menuOpen());
+  assert(std::string(d.app.menuValue(6)) == "Native 8px");
+  d.app.menu.selection = 7; d.tick(true);
   assert(d.app.tetrisRequest == 1 && !d.app.menuOpen() && d.app.currentGame == GameTitle::Tetris);
 }
 
@@ -333,10 +337,10 @@ static void perGameSettingsAndZeroRequests() {
   assert(d.app.setCurrentGame(GameTitle::TetrisZero));
   assert(d.app.settings.tetrisZeroPlayers == 2);
   d.app.openMenu(MenuPage::GameSettings);
-  const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Link", "Start / restart", "Back"};
-  assert(d.app.menuItemCount() == 7);
-  for (uint8_t i = 0; i < 7; ++i) assert(std::string(d.app.menuLabel(i)) == labels[i]);
-  assert(std::string(d.app.menuLabel(7)).empty());
+  const char* labels[] = {"Players", "Game type", "Starting level", "Controls", "Link", "Board size", "Start / restart", "Back"};
+  assert(d.app.menuItemCount() == 8);
+  for (uint8_t i = 0; i < 8; ++i) assert(std::string(d.app.menuLabel(i)) == labels[i]);
+  assert(std::string(d.app.menuLabel(8)).empty());
   d.app.menu.selection = 1; d.tick(true);
   assert(d.app.menu.page == MenuPage::TetrisType);
   assert(std::string(d.app.menuLabel(0)) == "A-Type");
@@ -384,9 +388,11 @@ static void perGameSettingsAndZeroRequests() {
   }
   d.app.menu.selection = 3; d.tick(true);
   assert(d.app.menu.page == MenuPage::GameSettings && d.app.tetrisLinkRequest == 3);
-  d.app.menu.selection = 6; d.tick(true);
+  d.app.menu.selection = 7; d.tick(true);
   assert(d.app.menu.page == MenuPage::Home && d.app.tetrisLinkRequest == 3);
   d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = 5; d.tick(true);
+  assert(d.app.settings.tetrisLarge && !d.app.settingsDirty && d.app.menuOpen());
+  d.app.menu.selection = 6; d.tick(true);
   assert(d.app.tetrisZeroRequest == 1 && d.app.tetrisRequest == 0 && !d.app.menuOpen());
   assert(d.app.currentGame == GameTitle::TetrisZero && d.app.settings.mode == Mode::Arcade);
   assert(d.app.tetrisLinkRole == 2 && d.app.tetrisLinkRequest == 3 && !d.app.settingsDirty);
@@ -427,13 +433,13 @@ static void unifiedTetrisLauncherAndPlayers() {
   assert(d.app.settings.tetrisLevel == 24 && d.app.settings.tetrisGameType == 6);
   assert(d.app.settings.tetrisZeroLevel == 7 && d.app.settings.tetrisZeroGameType == 1);
   d.app.openTetrisSettings();
-  assert(d.app.menuItemCount() == 8 && std::string(d.app.menuValue(0)) == "Solo");
+  assert(d.app.menuItemCount() == 9 && std::string(d.app.menuValue(0)) == "Solo");
   assert(std::string(d.app.menuValue(1)) == "B-Type" && std::string(d.app.menuValue(2)) == "24");
   d.app.openMenu(MenuPage::TetrisLevel); assert(d.app.menuItemCount() == 31);
   d.app.openMenu(MenuPage::TetrisZeroPlayers); d.app.menu.selection = 1; d.tick(true);
   assert(d.app.currentGame == GameTitle::TetrisZero && d.app.gameRequest == before + 2);
   d.app.openTetrisSettings();
-  assert(d.app.menuItemCount() == 7 && std::string(d.app.menuValue(2)) == "7");
+  assert(d.app.menuItemCount() == 8 && std::string(d.app.menuValue(2)) == "7");
   assert(std::string(d.app.menuLabel(4)) == "Link");
   d.app.openMenu(MenuPage::TetrisLevel); assert(d.app.menuItemCount() == 11);
   d.app.openMenu(MenuPage::TetrisZeroPlayers); d.app.menu.selection = 1;

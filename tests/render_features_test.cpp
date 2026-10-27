@@ -232,6 +232,104 @@ static void activeSkinMasksFollowPixels() {
   assert(skins.selected == 0);
 }
 
+static void compactPreviewsMatchSkinColorsAndAlpha() {
+  static_assert(sizeof(flappy::Skins::BirdPreview) <= 260, "Keep each picker preview below 260 bytes");
+  static_assert(sizeof(flappy::Renderer) <= 3000, "Keep the renderer below 3 KiB");
+  flappy::Skins skins;
+  flappy::Skins::BirdPreview preview;
+  assert(preview.alpha(0, -1, 0) == 0 && preview.alpha(0, 0, 12) == 0);
+  bool sawPartialAlpha = false;
+  for (uint8_t index = 0; index < flappy::Skins::count(); ++index) {
+    skins.select(index);
+    preview.capture(skins);
+    for (unsigned color = 0; color <= 0xffff; ++color)
+      assert(preview.color(uint16_t(color)) == skins.palette(uint16_t(color)));
+    for (int animation = 0; animation < 3; ++animation) {
+      const auto& asset = skins.bird(animation);
+      for (int y = 0; y < 12; ++y) for (int x = 0; x < 17; ++x) {
+        assert(preview.pixel(animation, x, y) == skins.birdPixel(animation, x, y));
+        const uint8_t alpha = index == 10 || index == 11 || !asset.alpha ? 255 : asset.alpha[y * asset.width + x];
+        assert(preview.alpha(animation, x, y) == alpha);
+        sawPartialAlpha |= alpha > 0 && alpha < 255;
+      }
+    }
+    const uint16_t retained = preview.pixel(1, 8, 6);
+    skins.select(uint8_t((index + 1) % flappy::Skins::count()));
+    assert(preview.pixel(1, 8, 6) == retained);
+  }
+  assert(sawPartialAlpha);
+}
+
+static void skinPickerGridAnimationPagingAndBack() {
+  const uint16_t gold = flappy::rgb(255, 220, 116), outline = flappy::rgb(77, 104, 121);
+  const uint16_t previewBackground = flappy::rgb(142, 195, 204), card = flappy::rgb(26, 35, 49);
+  std::vector<const char*> names;
+  for (uint8_t index = 0; index < flappy::Skins::count(); ++index) names.push_back(flappy::Skins::name(index));
+  flappy::AppModel app(35);
+  preparePlaying(app, flappy::Mode::Original, 0);
+  app.setSkinNames(names.data(), uint8_t(names.size()));
+  app.openMenu(flappy::MenuPage::Skins);
+  GuardedPixels pixels(FramePixels);
+  flappy::Renderer renderer(pixels.data());
+  const auto* activeMasks = renderer.birdMasks();
+  flappy::RenderOptions options;
+  const uint8_t sequence[] = {0, 1, 2, 1, 0};
+  flappy::Skins expected;
+  for (uint8_t selected = 0; selected <= app.skinCount(); ++selected) {
+    app.menu.selection = selected;
+    const int first = (std::min(unsigned(selected), unsigned(app.skinCount() - 1)) / 6) * 6;
+    for (uint8_t phase = 0; phase < 5; ++phase) {
+      options.nowMs = phase * 120;
+      renderer.draw(app, options);
+      pixels.check();
+      assert(renderer.birdMasks() == activeMasks && app.settings.skinIndex == 0);
+      for (int slot = 0; slot < 6 && first + slot < app.skinCount(); ++slot) {
+        const uint8_t index = uint8_t(first + slot);
+        const int left = 6 + (slot % 2) * 68, top = 42 + (slot / 2) * 62;
+        assert(pixels.data()[top * flappy::PixelWidth + left] == (selected == index ? gold : outline));
+        expected.select(index);
+        const uint8_t animation = sequence[phase];
+        const auto& asset = expected.bird(animation);
+        for (int y = 0; y < 12; ++y) for (int x = 0; x < 17; ++x) {
+          uint16_t color = expected.birdPixel(animation, x, y);
+          if (color == FlappyAssets::kTransparent) color = previewBackground;
+          else {
+            const uint8_t alpha = index == 10 || index == 11 || !asset.alpha ? 255 : asset.alpha[y * asset.width + x];
+            color = composite(color, previewBackground, alpha);
+          }
+          for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
+            assert(pixels.data()[(top + 5 + y * 2 + dy) * flappy::PixelWidth + left + 15 + x * 2 + dx] == color);
+        }
+      }
+      assert(pixels.data()[230 * flappy::PixelWidth + 6] == (selected == app.skinCount() ? gold : card));
+      assert(pixels.data()[245 * flappy::PixelWidth + 137] == (selected == app.skinCount() ? gold : card));
+    }
+  }
+  app.menu.selection = 1;
+  options.nowMs = 120;
+  renderer.draw(app, options);
+  const auto opaquePage = pixels.image();
+  app.game.state = flappy::State::GameOver;
+  app.game.birdY = 400;
+  app.game.score = UINT16_MAX;
+  app.settings.mode = flappy::Mode::Arcade;
+  renderer.draw(app, options);
+  assert(pixels.image() == opaquePage);
+  app.closeMenu();
+  renderer.draw(app, options);
+  assert(pixels.image() == frame(app, options));
+  app.setSkinCount(1);
+  app.openMenu(flappy::MenuPage::Skins);
+  app.menu.selection = 0;
+  renderer.draw(app, options);
+  assert(pixels.data()[42 * flappy::PixelWidth + 6] == gold);
+  assert(pixels.data()[42 * flappy::PixelWidth + 74] == flappy::rgb(10, 17, 26));
+  app.menu.selection = 1;
+  renderer.draw(app, options);
+  assert(pixels.data()[230 * flappy::PixelWidth + 6] == gold);
+  pixels.check();
+}
+
 static void axisAlignedBirdPixelsMatchSource() {
   bool partialAlphaCovered = false;
   for (flappy::Mode mode : {flappy::Mode::Original, flappy::Mode::Big}) {
@@ -556,13 +654,15 @@ static void gameSettingsReflectEachSelectedGame() {
   preparePlaying(app, flappy::Mode::Original, 10);
   app.setNesAvailable(true);
   app.setTetrisAvailable(true);
+  app.setTetrisZeroAvailable(true);
   std::vector<uint16_t> previous;
   for (flappy::GameTitle game : {flappy::GameTitle::FlappyBird, flappy::GameTitle::Nes,
-                                flappy::GameTitle::Tetris}) {
+                                flappy::GameTitle::Tetris, flappy::GameTitle::TetrisZero}) {
     assert(app.setCurrentGame(game));
     app.openMenu(flappy::MenuPage::GameSettings);
     const uint8_t count = app.menuItemCount();
-    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Nes ? 2 : 8));
+    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Nes ? 2 :
+                     game == flappy::GameTitle::Tetris ? 9 : 8));
     const auto current = frame(app);
     if (!previous.empty()) assert(differentPixels(previous, current) > 0);
     previous = current;
@@ -627,6 +727,128 @@ static void clockDigitsFollowHourMinuteAndFormat() {
   assert(differentPixels(morning, frame(app, options)) > 0);
 }
 
+static void scrollingGroundMatchesSourceAndAlphaAtBothScales() {
+  for (uint8_t skin = 0; skin < flappy::Skins::count(); ++skin) {
+    if (skin == 10 || skin == 11) continue;
+    flappy::Skins colors;
+    colors.select(skin);
+    const auto& ground = colors.ground();
+    const auto& bg = colors.background();
+    const auto& base = FlappyAssets::background;
+    for (flappy::Mode mode : {flappy::Mode::Original, flappy::Mode::Big}) {
+      flappy::AppModel app(211);
+      preparePlaying(app, mode, skin);
+      app.game.birdY = -1000;
+      const int scale = app.game.rules().spriteScale;
+      const int groundY = app.game.groundY() / 2;
+      for (int offset : {0, 1, 47, 255}) {
+        app.game.groundOffset = uint8_t(offset);
+        const auto image = frame(app);
+        for (int y = groundY; y < flappy::PixelHeight && y < groundY + ground.height * scale; ++y) {
+          const int bgY = scale == 1 ? y : y / scale + 60;
+          const int bgRow = (bgY < bg.height ? bgY : bg.height - 1) * bg.width;
+          const int baseRow = (bgY < base.height ? bgY : base.height - 1) * base.width;
+          for (int x = 0; x < flappy::PixelWidth; ++x) {
+            const int bgSource = bgRow + x / scale;
+            uint16_t expected = bg.pixels[bgSource];
+            if (expected == FlappyAssets::kTransparent || bg.alpha) {
+              const uint8_t alpha = expected == FlappyAssets::kTransparent ? 0 : bg.alpha[bgSource];
+              if (alpha != 255) expected = composite(expected, base.pixels[baseRow + x / scale], alpha);
+            }
+            expected = colors.palette(expected);
+            const int source = (y - groundY) / scale * ground.width +
+                ((x + offset / 2) % (ground.width * scale)) / scale;
+            const uint16_t color = ground.pixels[source];
+            if (color != FlappyAssets::kTransparent) expected = composite(colors.palette(color), expected,
+                ground.alpha ? ground.alpha[source] : 255);
+            assert(image[size_t(y) * flappy::PixelWidth + x] == expected);
+          }
+        }
+      }
+    }
+  }
+}
+
+static void backgroundCachePreservesPixelsAndReleasesMemory() {
+  GuardedPixels cachedPixels(FramePixels), plainPixels(FramePixels);
+  flappy::Renderer cached(cachedPixels.data()), plain(plainPixels.data());
+  plain.setBackgroundCacheEnabled(false);
+  flappy::AppModel app(193);
+  flappy::RenderOptions options;
+  options.remoteVisible = true;
+  options.remoteY = 210;
+  options.remoteRotation = -35;
+  for (uint8_t skin = 0; skin < flappy::Skins::count(); ++skin) {
+    for (flappy::Mode mode : {flappy::Mode::Original, flappy::Mode::Big}) {
+      preparePlaying(app, mode, skin);
+      for (int frameIndex = 0; frameIndex < 4; ++frameIndex) {
+        app.game.state = frameIndex == 0 ? flappy::State::Ready :
+            frameIndex == 3 ? flappy::State::GameOver : flappy::State::Playing;
+        app.game.rotation = float(frameIndex * 31 - 65);
+        app.game.groundOffset = float(frameIndex * 13);
+        app.game.birdFrame = uint8_t(frameIndex % 3);
+        app.game.score = uint16_t(frameIndex * 57);
+        for (int index = 0; index < flappy::PipeCount; ++index) {
+          app.game.pipes[index].x = float(30 + index * 144 - frameIndex * 8);
+          app.game.pipes[index].gapY = 90 + index * 33;
+        }
+        cached.draw(app, options);
+        plain.draw(app, options);
+        assert(cachedPixels.image() == plainPixels.image());
+        assert(cached.backgroundCacheBytes() <= flappy::Renderer::BackgroundCacheLimit);
+        assert(plain.backgroundCacheBytes() == 0);
+        if (skin == 10 || skin == 11) assert(cached.backgroundCacheBytes() == 0);
+        cachedPixels.check();
+        plainPixels.check();
+      }
+    }
+  }
+
+  preparePlaying(app, flappy::Mode::Original, 1);
+  cached.draw(app);
+  const size_t warmBytes = cached.backgroundCacheBytes();
+  assert(warmBytes > 0);
+  cached.setBackgroundCacheEnabled(true);
+  assert(cached.backgroundCacheBytes() == warmBytes);
+  cached.draw(app);
+  assert(cached.backgroundCacheBytes() == warmBytes);
+  cached.setBackgroundCacheEnabled(false);
+  assert(cached.backgroundCacheBytes() == 0);
+  plain.draw(app);
+  cached.draw(app);
+  assert(cachedPixels.image() == plainPixels.image());
+
+  for (size_t limit : {size_t(0), size_t(1), size_t(543), size_t(544),
+                      size_t(1024), size_t(4096), size_t(65536)}) {
+    cached.setBackgroundCacheEnabled(true, limit);
+    assert(cached.backgroundCacheBytes() == 0);
+    cached.draw(app);
+    assert(cachedPixels.image() == plainPixels.image());
+    assert(cached.backgroundCacheBytes() <= std::min(limit, size_t(flappy::Renderer::BackgroundCacheLimit)));
+    if (limit < 544) assert(cached.backgroundCacheBytes() == 0);
+    const size_t bytes = cached.backgroundCacheBytes();
+    cached.draw(app);
+    assert(cached.backgroundCacheBytes() == bytes);
+    cachedPixels.check();
+  }
+
+  cached.setSkin(10);
+  assert(cached.backgroundCacheBytes() == 0);
+  cached.setBackgroundCacheEnabled(true);
+  app.setSkin(0);
+  app.openMenu(flappy::MenuPage::Skins);
+  cached.draw(app);
+  assert(cached.backgroundCacheBytes() == 0);
+  app.closeMenu();
+  cached.draw(app);
+  assert(cached.backgroundCacheBytes() > 0);
+  cached.setSkin(UINT8_MAX);
+  cached.draw(app);
+  assert(cached.backgroundCacheBytes() > 0);
+  cached.setBackgroundCacheEnabled(false);
+  assert(cached.backgroundCacheBytes() == 0);
+}
+
 static void viewportCopiesStayInsideBuffers() {
   GuardedPixels source(FramePixels);
   for (size_t i = 0; i < FramePixels; ++i) source.data()[i] = uint16_t(i * 23 + 7);
@@ -667,6 +889,8 @@ int main() {
   messageScreensClearArtAndKeepTextInsideNativeCrop();
   landscapeMessageUsesNativeFontAndStaysInsideCanvas();
   activeSkinMasksFollowPixels();
+  compactPreviewsMatchSkinColorsAndAlpha();
+  skinPickerGridAnimationPagingAndBack();
   axisAlignedBirdPixelsMatchSource();
   bigModeDoublesEachBirdPixel();
   allModesAndSkinsRespectBufferBounds();
@@ -678,6 +902,8 @@ int main() {
   gameSettingsReflectEachSelectedGame();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
+  scrollingGroundMatchesSourceAndAlphaAtBothScales();
+  backgroundCachePreservesPixelsAndReleasesMemory();
   viewportCopiesStayInsideBuffers();
   std::cout << "Render feature checks passed.\n";
 }
