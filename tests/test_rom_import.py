@@ -234,6 +234,76 @@ class RomImportTests(unittest.TestCase):
             self.assertTrue((target / 'preserve.txt').exists())
 
 
+    def test_display_profile_defaults_persists_and_explicit_auto_resets(self):
+        project = self.directory / 'project'
+        profile = project / '.local' / 'display-profile.json'
+        assets = self.directory / 'display-assets'
+        assets.mkdir()
+        for header in build.HEADERS:
+            (assets / header).write_text('// synthetic header\n')
+        firmware = project / 'firmware' / 'flappy'
+        firmware.mkdir(parents=True)
+        (firmware / 'flappy.ino').write_text('// synthetic sketch\n')
+        with mock.patch.object(build, 'ROOT', project):
+            target = build.prepare_sketch(assets)
+            self.assertEqual((target / 'build_display.h').read_text(),
+                             '#pragma once\n#define M5FLAP_DISPLAY_PROFILE 0\n')
+            self.assertFalse(profile.exists())
+            for choice, number in (('stickc', 1), ('stickc-plus', 2), ('auto', 0)):
+                target = build.prepare_sketch(assets, None, None, choice)
+                self.assertEqual(json.loads(profile.read_text()), choice)
+                self.assertIn(f'M5FLAP_DISPLAY_PROFILE {number}', (target / 'build_display.h').read_text())
+                target = build.prepare_sketch(assets)
+                self.assertIn(f'M5FLAP_DISPLAY_PROFILE {number}', (target / 'build_display.h').read_text())
+            self.assertEqual(build.resolve_display_profile(), 'auto')
+
+    def test_display_profile_rejects_invalid_or_oversized_cache_and_can_recover(self):
+        project = self.directory / 'project'
+        profile = project / '.local' / 'display-profile.json'
+        profile.parent.mkdir(parents=True)
+        invalid = (b'{', b'null', b'2', b'[]', b'{"display":"stickc"}', b'"unknown"',
+                   b'"stickc" "auto"', b'"stickc"' + b' ' * 129, b'\xff')
+        with mock.patch.object(build, 'ROOT', project):
+            for data in invalid:
+                profile.write_bytes(data)
+                with self.assertRaisesRegex(SystemExit, 'Invalid private display profile'):
+                    build.resolve_display_profile()
+                self.assertEqual(profile.read_bytes(), data)
+            for choice in ('bad', '', 2, []):
+                with self.assertRaisesRegex(SystemExit, 'Display profile must be'):
+                    build.resolve_display_profile(choice)
+            self.assertEqual(build.resolve_display_profile('stickc-plus'), 'stickc-plus')
+            self.assertEqual(build.resolve_display_profile(), 'stickc-plus')
+
+    def test_invalid_display_profile_does_not_clear_existing_sketch(self):
+        project = self.directory / 'project'
+        assets = self.directory / 'display-assets'
+        assets.mkdir()
+        for header in build.HEADERS:
+            (assets / header).write_text('// synthetic header\n')
+        target = project / '.local' / 'sketch' / 'flappy'
+        target.mkdir(parents=True)
+        (target / 'preserve.txt').write_text('existing sketch')
+        (project / '.local' / 'display-profile.json').write_text('"invalid"')
+        with mock.patch.object(build, 'ROOT', project), self.assertRaises(SystemExit):
+            build.prepare_sketch(assets)
+        self.assertEqual((target / 'preserve.txt').read_text(), 'existing sketch')
+
+    def test_build_cli_forwards_explicit_display_and_rejects_invalid_choice(self):
+        sketch = self.directory / 'sketch'
+        with mock.patch.object(build, 'prepare_sketch', return_value=sketch) as stage, \
+                mock.patch.object(sys, 'argv', ['build.py', '--check-only', '--display', 'stickc-plus']), \
+                contextlib.redirect_stdout(io.StringIO()):
+            build.main()
+        self.assertEqual(stage.call_args.args[3], 'stickc-plus')
+        with mock.patch.object(build, 'prepare_sketch') as stage, \
+                mock.patch.object(sys, 'argv', ['build.py', '--display', 'unknown']), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                build.main()
+        self.assertEqual(raised.exception.code, 2)
+        stage.assert_not_called()
+
     def test_build_cli_includes_core_library_and_check_only_avoids_setup(self):
         import setup_nes
         sketch = self.directory / 'sketch'
@@ -247,7 +317,7 @@ class RomImportTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             build.main()
         prepare.assert_called_once_with()
-        stage.assert_called_once_with(self.directory.resolve(), None, None)
+        stage.assert_called_once_with(self.directory.resolve(), None, None, None)
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index('--library') + 1], str(library))
         self.assertEqual(command[-1], str(sketch))

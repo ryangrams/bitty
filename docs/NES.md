@@ -36,7 +36,9 @@ PAL cartridges select a 50-frame-per-second timing target. NTSC and multi-region
 
 NES play rotates the display to landscape and fits the image into a 4:3 rectangle with side bars. The M5 menus return to portrait. Cartridge pixels are scaled to fit the small display.
 
-Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. On the IINE Gamebrick Mini, Up+A sends Start, Down+B sends Select, and Down+A+B opens the M5 menu. A+B remains available for gameplay. The front M5 button sends Start, and the right side button opens the menu. See [pairing and the complete control table](CONTROLLERS.md).
+Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. All D-pad and A/B combinations pass through to the game. Dedicated controller Start, Select and Menu buttons keep their assignments.
+
+Release the front M5 button before 700 ms (0.7 seconds) to send Start. Hold it for at least 700 ms to send Select once. Use the right side button for the M5 menu. These physical buttons supply Start, Select and menu access for controllers such as the IINE Gamebrick Mini. See [pairing and the complete control table](CONTROLLERS.md).
 
 ## Emulator dependency and port
 

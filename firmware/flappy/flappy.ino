@@ -9,6 +9,9 @@
 #include "nes_viewport.h"
 #include "generated_rom.h"
 #include "build_clock.h"
+#include "build_display.h"
+#include "stick_display.h"
+#include "nes_system_button.h"
 #include "render.h"
 #include "generated_sounds.h"
 #include "stick_power.h"
@@ -17,6 +20,7 @@ flappy::AppModel app;
 flappy::coop::BleLink coopLink;
 flappy::controller::BleController* bluetoothPad = nullptr;
 flappy::NesRuntime nes;
+flappy::NesSystemButton nesSystemButton;
 flappy::NesViewport nesViewport;
 flappy::Viewport viewport;
 Preferences preferences;
@@ -287,9 +291,6 @@ void nesAudio(void*, const int16_t* samples, size_t count, uint32_t rate) {
 
 uint8_t nesButtons(uint16_t buttons) {
   using namespace flappy::controller;
-  if ((buttons & (Down | A | B)) == (Down | A | B)) return 0;
-  if ((buttons & (Up | A)) == (Up | A)) return flappy::NesRuntime::Start;
-  if ((buttons & (Down | B)) == (Down | B)) return flappy::NesRuntime::Select;
   uint8_t result = 0;
   if (buttons & A) result |= flappy::NesRuntime::A;
   if (buttons & B) result |= flappy::NesRuntime::B;
@@ -306,7 +307,7 @@ bool controllerMenuDown() {
   using namespace flappy::controller;
   if (padButtons & Menu) return true;
   if (app.menuOpen()) return (padButtons & B) != 0;
-  if (app.currentGame == flappy::GameTitle::Nes) return (padButtons & (Down | A | B)) == (Down | A | B);
+  if (app.currentGame == flappy::GameTitle::Nes) return false;
   return (padButtons & B) != 0;
 }
 
@@ -359,6 +360,7 @@ void handleGameRequest() {
   handledGameRequest = app.gameRequest;
   M5.Speaker.stop();
   pendingNesButtons = 0;
+  nesSystemButton.reset(M5.BtnA.isPressed());
   pendingPadAction = pendingAction = false;
   runtimeNotice = "";
   if (app.currentGame == flappy::GameTitle::Nes) {
@@ -439,6 +441,10 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
     }
   }
   const uint8_t events = app.step(actionForApp, menuDown, nowMs);
+  if (!menuWasOpen && app.menuOpen()) {
+    pendingNesButtons = 0;
+    nesSystemButton.reset(M5.BtnA.isPressed());
+  }
   if (liveCoop && app.game.state != flappy::State::Playing) app.game.syncWorldTick(sharedTick);
   playEvents(events);
   if (previousHour != app.settings.clockHour || previousMinute != app.settings.clockMinute) writeClock(nowMs);
@@ -452,10 +458,34 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   saveSettings();
 }
 
+void startupFailure(const char* message) {
+  Serial.begin(115200);
+  Serial.printf("STARTUP ERROR: %s\n", message);
+  if (M5.Display.width() > 0 && M5.Display.height() > 0) {
+    M5.Display.setBrightness(140);
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setCursor(4, 8);
+    M5.Display.println(message);
+  }
+}
+
 void setup() {
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  Serial.begin(115200);
+  Serial.printf("BOOT display profile=%u\n", unsigned(M5FLAP_DISPLAY_PROFILE));Serial.flush();
+#endif
   prepareStickDisplayPower();
+  if (!configureStickDisplay(M5FLAP_DISPLAY_PROFILE)) {
+    startupFailure("Display initialization failed");
+    return;
+  }
   auto cfg = M5.config();
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  cfg.serial_baudrate = 115200;
+#else
   cfg.serial_baudrate = 0;
+#endif
   cfg.internal_imu = false;
   cfg.internal_rtc = true;
   cfg.internal_mic = false;
@@ -463,14 +493,21 @@ void setup() {
   cfg.external_display_value = 0;
   cfg.output_power = false;
   M5.begin(cfg);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  Serial.printf("BOOT board=%u display=%ux%u heap=%u\n", unsigned(M5.getBoard()), M5.Display.width(), M5.Display.height(), ESP.getFreeHeap());Serial.flush();
+#endif
   rtc_gpio_pullup_dis(GPIO_NUM_2);
   rtc_gpio_pulldown_en(GPIO_NUM_2);
   M5.Display.setRotation(0);
   M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setSwapBytes(true);
   viewport.configure(M5.Display.width(), M5.Display.height());
-  if (viewport.width <= 0 || viewport.height <= 0) return;
-  renderer = new flappy::Renderer(canvasStorage);
+  if (viewport.width <= 0 || viewport.height <= 0) {
+    startupFailure("LCD not detected. Select a display profile when building.");
+    return;
+  }
+  renderer = new (std::nothrow) flappy::Renderer(canvasStorage);
+  if (!renderer) { startupFailure("Display memory unavailable"); return; }
   uint8_t count = renderer->skinCount();
   if (count > MaxSkins) count = MaxSkins;
   for (uint8_t i = 0; i < count; ++i) skinNames[i] = renderer->skinName(i);
@@ -483,6 +520,9 @@ void setup() {
   initializeClock(millis());
   applyOutputSettings();
   showFrame(millis());
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  Serial.println("BOOT first frame ready");Serial.flush();
+#endif
   nextTick = micros() + TickMicros;
 }
 
@@ -491,6 +531,8 @@ void loop() {
   if (!renderer) { delay(10); return; }
   pendingAction |= M5.BtnA.wasPressed();
   const uint32_t nowMs = millis();
+  pendingNesButtons |= nesSystemButton.update(M5.BtnA.isPressed(),
+      app.currentGame == flappy::GameTitle::Nes && !app.menuOpen(), nowMs);
   readClock(nowMs);
   updateController(nowMs);
   updateCoop(nowMs);
@@ -500,7 +542,6 @@ void loop() {
     do {
       bool action = pendingAction || pendingPadAction;
       if (app.currentGame == flappy::GameTitle::Nes && !app.menuOpen()) {
-        if (pendingAction) pendingNesButtons |= flappy::NesRuntime::Start;
         action = false;
       }
       const bool menuDown = M5.BtnB.isPressed() || controllerMenuDown() || controllerMenuPulse == 2;

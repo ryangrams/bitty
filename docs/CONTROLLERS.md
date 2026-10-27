@@ -28,13 +28,15 @@ The manufacturer's C mode, identified by a red light, advertises **Xbox Wireless
 | Menus | Up or Left | Previous item. |
 | NES | D-pad | NES directions. |
 | NES | A and B | NES A and B. In Super Mario Bros., these are jump and run. |
-| NES | Up + A | Start combination for the IINE. |
-| NES | Down + B | Select combination for the IINE. |
-| NES | Down + A + B | Open the M5 menu. |
-| NES | Front M5 button | Start. |
-| Any game | Right side M5 button | Open the M5 menu. |
+| NES | Controller Start and Select | NES Start and Select. |
+| NES | Front M5 button, short release | Start. |
+| NES | Front M5 button, hold at least 700 ms | Send Select once. |
+| Any game | Controller Menu | Open the M5 menu. |
+| Any game | Right side M5 button | Tap to open or advance the menu; hold to exit. |
 
-The three-button menu combination leaves A+B available during ordinary NES play. Controllers whose report descriptors map Start and Select can use those buttons directly. The generic gamepad mapping uses HID button usages 1 and 2 for A and B, and 9 and 10 for Select and Start. Different physical layouts may need a mapping change.
+All D-pad and A/B combinations pass through to the NES game. The front M5 button supplies Start and Select for controllers such as the IINE Gamebrick Mini that lack those buttons. Release it before 700 ms (0.7 seconds) for Start, or hold it for Select. A long hold sends Select once.
+
+Dedicated controller Start, Select and Menu buttons keep their assignments. The generic gamepad mapping uses HID button usages 1 and 2 for A and B, and 9 and 10 for Select and Start. Different physical layouts may need a mapping change.
 
 Keyboard reports map A, B, arrow keys, Enter to Start, Backspace to Select, and Escape to Menu. Other keys have no assigned game action.
 

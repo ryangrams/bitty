@@ -3,14 +3,41 @@
 import argparse
 from datetime import datetime
 from pathlib import Path
+import json
 import shutil
 import subprocess
 from setup import ROOT, FQBN, arduino_cli, ensure_config
 
 HEADERS = ("generated_assets.h", "generated_sounds.h", "generated_collision.h")
+DISPLAY_PROFILES = {"auto": 0, "stickc": 1, "stickc-plus": 2}
+MAX_DISPLAY_PROFILE_BYTES = 128
 
 
-def prepare_sketch(assets, skins=None, rom=None):
+def resolve_display_profile(display=None):
+    profile = ROOT / ".local" / "display-profile.json"
+    if display is not None:
+        if not isinstance(display, str) or display not in DISPLAY_PROFILES:
+            raise SystemExit("Display profile must be auto, stickc, or stickc-plus")
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text(json.dumps(display) + "\n", encoding="utf-8")
+        return display
+    if not profile.exists():
+        return "auto"
+    try:
+        with profile.open("rb") as source:
+            data = source.read(MAX_DISPLAY_PROFILE_BYTES + 1)
+        if len(data) > MAX_DISPLAY_PROFILE_BYTES:
+            raise ValueError("file exceeds the size limit")
+        saved = json.loads(data.decode("utf-8"))
+        if not isinstance(saved, str) or saved not in DISPLAY_PROFILES:
+            raise ValueError("expected auto, stickc, or stickc-plus")
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise SystemExit("Invalid private display profile. Choose --display auto, --display stickc, "
+                         "or --display stickc-plus to replace it: " + str(exc)) from exc
+    return saved
+
+
+def prepare_sketch(assets, skins=None, rom=None, display=None):
     missing = [name for name in HEADERS if not (assets / name).is_file()]
     if missing:
         raise SystemExit("Import your local assets first. Missing: " + ", ".join(missing) +
@@ -23,6 +50,7 @@ def prepare_sketch(assets, skins=None, rom=None):
             rom = default_rom
     if rom is not None and not (rom / "generated_rom.h").is_file():
         raise SystemExit("Import your local ROM first. Missing: generated_rom.h in " + str(rom))
+    selected_display = resolve_display_profile(display)
     target = ROOT / ".local" / "sketch" / "flappy"
     target.mkdir(parents=True, exist_ok=True)
     for existing in target.iterdir():
@@ -43,6 +71,9 @@ def prepare_sketch(assets, skins=None, rom=None):
         (target / "generated_rom.h").write_text(rom_header(None), encoding="utf-8")
     else:
         shutil.copy2(rom / "generated_rom.h", target / "generated_rom.h")
+    (target / "build_display.h").write_text(
+        "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n",
+        encoding="utf-8")
     now = datetime.now()
     clock = ["// Generated from the build host's local clock.", "#pragma once", "namespace FlappyBuild {"]
     clock.extend(f"static constexpr int {name} = {getattr(now, name)};"
@@ -57,10 +88,12 @@ def main():
     parser.add_argument("--assets-dir", type=Path, default=ROOT / ".local" / "assets")
     parser.add_argument("--skins-dir", type=Path, help="Private folder containing generated_skins.h")
     parser.add_argument("--rom-dir", type=Path, help="Private folder containing generated_rom.h (default: .local/nes-rom when present)")
+    parser.add_argument("--display", choices=tuple(DISPLAY_PROFILES),
+                        help="LCD profile, saved privately for later builds (default: saved profile or auto)")
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
     args = parser.parse_args()
     sketch = prepare_sketch(args.assets_dir.resolve(), args.skins_dir.resolve() if args.skins_dir else None,
-                            args.rom_dir.resolve() if args.rom_dir else None)
+                            args.rom_dir.resolve() if args.rom_dir else None, args.display)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return

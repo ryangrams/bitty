@@ -14,6 +14,8 @@ The AXP192 rail initialization in `firmware/flappy/stick_power.h` follows [m5sta
 
 Copyright (c) 2020 M5Stack. The upstream [MIT license](LICENSES/M5StickC-MIT.txt) is retained verbatim.
 
+`firmware/flappy/stick_display.h` adapts the StickC and StickC Plus panel profiles and AXP192 backlight behavior from [M5GFX 0.2.28](https://github.com/m5stack/M5GFX/blob/0.2.28/src/M5GFX.cpp). Copyright (c) 2021 M5Stack. Its MIT notice is included in the header. The manual profiles bypass LCD identification reads when automatic detection fails.
+
 ## Build dependencies
 
 The public source distribution excludes installed libraries, toolchains and compiled firmware. The setup process obtains dependencies separately.

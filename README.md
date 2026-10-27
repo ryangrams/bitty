@@ -57,17 +57,25 @@ Use Python 3.11 or newer, [Arduino CLI](https://arduino.github.io/arduino-cli/la
 
    Windows serial ports use names such as `COM3`. Building leaves the serial port closed. Close serial monitors before playing.
 
+   If automatic LCD detection leaves a StickC Plus screen black, choose its display profile when building:
+
+   ```sh
+   python tools/build.py --display stickc-plus
+   ```
+
+   Use `--display stickc` for the original StickC and `--display auto` for automatic detection on other boards. An explicit choice is saved in private `.local/display-profile.json` and reused by later builds. `--display auto` also resets a saved manual choice. Build and flash again after changing the profile.
+
 Imported files, generated headers, staged sketches, firmware, and release output stay under ignored `.local/`. Dependencies use the existing Arduino data directory and a private sketchbook. The build prepares the pinned NES core in `.local/nes-deps/` and includes `.local/nes-rom/` when present. [Custom skin imports](assets/README.md#custom-skin-folders) can add up to ten local packs to a build.
 
 ## Buttons and menus
 
-In Flappy Bird, the front M5 button is **Action**: flap, start a round, or select the highlighted menu item. After a crash, wait for replay, press to return to Ready, then press again to start. In NES play, the front button sends Start.
+In Flappy Bird, the front M5 button is **Action**: flap, start a round, or select the highlighted menu item. After a crash, wait for replay, press to return to Ready, then press again to start. In NES play, a short release of the front button sends Start. Hold it for at least 700 ms (0.7 seconds) to send Select once.
 
 Tap the right side button once to open the menu. Tap it again to move through options. Press Action to select. Hold the right button for at least 0.7 seconds to exit from any menu page. Every page ends with Back. The menu pauses single-player play.
 
 The first two menu choices are **Game at Boot**, which saves your startup choice, and **Change Game**, which switches immediately. The initial startup choice is Flappy Bird. A build with a local ROM shows its title as the NES choice. A build without one shows **NES: no ROM** and keeps that choice unavailable. Menus use portrait orientation; NES play uses landscape with a 4:3 picture and side bars.
 
-A connected controller's A button selects or flaps. Its D-pad moves through menus, and B provides the menu button in Flappy Bird. NES uses the controller's A, B, D-pad, Start and Select inputs. The IINE's missing buttons have combinations described in [controller controls](docs/CONTROLLERS.md#controls).
+A connected controller's A button selects or flaps. Its D-pad moves through menus, and B provides the menu button in Flappy Bird. NES uses the controller's A, B and D-pad inputs, including simultaneous presses. Dedicated Start, Select and Menu buttons keep their assignments. Use the front M5 button for Start and Select when your controller lacks those buttons. See [controller controls](docs/CONTROLLERS.md#controls).
 
 On the M5StickC Plus, the other side button controls power. Software can read its short presses through the power-management chip, while a long hold can switch the device off. It has no extra gameplay assignment in this build. [Official board documentation](https://docs.m5stack.com/en/core/m5stickc_plus) describes the two GPIO buttons and power key.
 

@@ -26,9 +26,11 @@ firmware/flappy/flappy.ino
 firmware/flappy/game_core.h
 firmware/flappy/nes_runtime.h
 firmware/flappy/nes_viewport.h
+firmware/flappy/nes_system_button.h
 firmware/flappy/render.h
 firmware/flappy/skins.h
 firmware/flappy/stick_power.h
+firmware/flappy/stick_display.h
 requirements.txt
 tests/app_model_test.cpp
 tests/coop_protocol_test.cpp
@@ -36,6 +38,7 @@ tests/controller_input_test.cpp
 tests/game_core_test.cpp
 tests/nes_runtime_test.cpp
 tests/nes_viewport_test.cpp
+tests/nes_system_button_test.cpp
 tests/render_features_test.cpp
 tests/render_preview.cpp
 tests/test_asset_import.py
