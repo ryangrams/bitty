@@ -90,6 +90,113 @@ static void colorTransforms() {
   assert(std::abs(int(source & 31) - int(twice & 31)) <= 1);
 }
 
+static void messageScreensClearArtAndKeepTextInsideNativeCrop() {
+  GuardedPixels pixels(FramePixels);
+  flappy::Renderer renderer(pixels.data());
+  renderer.drawMessage("TETRIS", "STARTING GAME");
+  const auto baseline = pixels.image();
+  for (uint8_t skin = 0; skin < flappy::Skins::BuiltinCount; ++skin) {
+    flappy::AppModel app(53);
+    preparePlaying(app, flappy::Mode::Original, skin);
+    renderer.draw(app);
+    renderer.drawMessage("TETRIS", "STARTING GAME");
+    assert(pixels.image() == baseline);
+    pixels.check();
+  }
+
+  const uint16_t gold = flappy::rgb(255, 220, 116);
+  const uint16_t panel = flappy::rgb(26, 35, 49);
+  const auto checkPlainPanel = [&]() {
+    for (int y = 0; y < flappy::PixelHeight; ++y) for (int x = 0; x < flappy::PixelWidth; ++x) {
+      const uint16_t color = pixels.data()[size_t(y) * flappy::PixelWidth + x];
+      if (x < 6 || x >= 138 || y < 92 || y >= 164) assert(color == 0);
+      else assert(color == panel || color == gold || color == 0xffff);
+    }
+    pixels.check();
+  };
+  flappy::Viewport crop;
+  crop.configure(135, 240);
+  GuardedPixels output(size_t(crop.width) * crop.height);
+  const auto checkText = [&](const char* label, int y, uint16_t color) {
+    const int width = flappy::MenuFont::textWidth(label);
+    assert(width <= 128);
+    const int x = (flappy::PixelWidth - width) / 2;
+    assert(x >= crop.sourceX && x + width <= crop.sourceX + crop.width);
+    assert(y >= crop.sourceY && y + flappy::MenuFont::Height <= crop.sourceY + crop.height);
+    for (size_t index = 0; label[index]; ++index) {
+      unsigned ink = 0;
+      for (int row = 0; row < flappy::MenuFont::Height; ++row) {
+        const uint8_t bits = flappy::MenuFont::glyph(label[index])[row];
+        for (int col = 0; col < flappy::MenuFont::Width; ++col) {
+          const bool filled = (bits & (1 << (flappy::MenuFont::Width - 1 - col))) != 0;
+          const int sourceX = x + int(index) * flappy::MenuFont::Advance + col;
+          const uint16_t expected = filled ? color : panel;
+          assert(pixels.data()[size_t(y + row) * flappy::PixelWidth + sourceX] == expected);
+          assert(output.data()[size_t(y + row - crop.sourceY) * crop.width + sourceX - crop.sourceX] == expected);
+          ink += filled;
+        }
+      }
+      assert(label[index] == ' ' || ink > 0);
+    }
+  };
+  for (const char* title : {"TETRIS", "MARIO", "TETRIS ZERO"}) {
+    for (const char* detail : {"STARTING GAME", "GAME OVER"}) {
+      renderer.drawMessage(title, detail);
+      checkPlainPanel();
+      crop.copy(pixels.data(), output.data());
+      checkText(title, 108, gold);
+      checkText(detail, 133, 0xffff);
+      output.check();
+    }
+  }
+
+  renderer.drawMessage(nullptr, nullptr);
+  checkPlainPanel();
+  for (int y = 93; y < 163; ++y) for (int x = 6; x < 138; ++x)
+    assert(pixels.data()[size_t(y) * flappy::PixelWidth + x] == panel);
+  const std::string longText(400, 'W');
+  for (const char* title : {static_cast<const char*>(nullptr), "", longText.c_str()}) {
+    for (const char* detail : {static_cast<const char*>(nullptr), "", longText.c_str()}) {
+      std::fill(pixels.data(), pixels.data() + FramePixels, uint16_t(0xf81f));
+      renderer.drawMessage(title, detail);
+      checkPlainPanel();
+    }
+  }
+}
+
+static void landscapeMessageUsesNativeFontAndStaysInsideCanvas() {
+  const int width = 240, height = 135;
+  GuardedPixels pixels(size_t(width) * height);
+  flappy::Renderer renderer(pixels.data());
+  const uint16_t panel = flappy::rgb(26, 35, 49), gold = flappy::rgb(255, 220, 116);
+  const char* title = "MARIO";
+  const char* detail = "Starting game";
+  renderer.drawMessageLandscape(title, detail);
+  for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+    uint16_t expected = x >= 8 && x < 232 && y >= 40 && y < 96 ? panel : 0;
+    for (int line = 0; line < 2; ++line) {
+      const char* text = line ? detail : title;
+      const int left = (width - flappy::MenuFont::textWidth(text)) / 2;
+      const int row = y - (line ? 73 : 49), col = x - left;
+      if (row >= 0 && row < flappy::MenuFont::Height && col >= 0 &&
+          col < flappy::MenuFont::textWidth(text)) {
+        const uint8_t bits = flappy::MenuFont::glyph(text[col / flappy::MenuFont::Advance])[row];
+        if (bits & (1u << (flappy::MenuFont::Width - 1 - col % flappy::MenuFont::Advance)))
+          expected = line ? 0xffff : gold;
+      }
+    }
+    assert(pixels.data()[y * width + x] == expected);
+  }
+  pixels.check();
+  const std::string longText(400, 'W');
+  for (const char* first : {static_cast<const char*>(nullptr), "", longText.c_str()}) {
+    for (const char* second : {static_cast<const char*>(nullptr), "", longText.c_str()}) {
+      renderer.drawMessageLandscape(first, second);
+      pixels.check();
+    }
+  }
+}
+
 static void activeSkinMasksFollowPixels() {
   assert(flappy::Skins::count() >= 12);
   flappy::Skins skins;
@@ -254,10 +361,10 @@ static void menusScrollAndRenderEverySelection() {
   const char* names[flappy::Skins::BuiltinCount];
   for (uint8_t i = 0; i < flappy::Skins::BuiltinCount; ++i) names[i] = flappy::Skins::name(i);
   flappy::AppModel app(18);
-  preparePlaying(app, flappy::Mode::Clock, 10);
+  preparePlaying(app, flappy::Mode::Original, 10);
   app.setSkinNames(names, flappy::Skins::BuiltinCount);
   const auto noMenu = frame(app);
-  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::Coop); ++page) {
+  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::TetrisZeroPlayers); ++page) {
     app.openMenu(flappy::MenuPage(page));
     const uint8_t count = app.menuItemCount();
     assert(count > 1);
@@ -281,8 +388,71 @@ static void menusScrollAndRenderEverySelection() {
   options.uiScale = 3;
   const auto titleStart = frame(app, options);
   options.nowMs = 2000;
-  assert(differentPixels(titleStart, frame(app, options)) > 0);
+  assert(differentPixels(titleStart, frame(app, options)) == 0);
+  names[10] = "A deliberately long custom skin name";
+  options.nowMs = 0;
+  const auto customStart = frame(app, options);
+  options.nowMs = 2000;
+  assert(differentPixels(customStart, frame(app, options)) > 0);
   app.closeMenu();
+}
+
+static void actualMenuLabelsFitAndSurviveNativeCrop() {
+  const char* names[flappy::Skins::BuiltinCount];
+  for (uint8_t i = 0; i < flappy::Skins::BuiltinCount; ++i) names[i] = flappy::Skins::name(i);
+  flappy::AppModel app(41);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  app.setSkinNames(names, flappy::Skins::BuiltinCount);
+  app.setNesAvailable(true);
+  app.setTetrisAvailable(true);
+  app.setTetrisZeroAvailable(true);
+  for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
+    assert(app.setCurrentGame(flappy::GameTitle(game)));
+    for (uint8_t page = uint8_t(flappy::MenuPage::Home);
+         page <= uint8_t(flappy::MenuPage::TetrisZeroPlayers); ++page) {
+      app.openMenu(flappy::MenuPage(page));
+      assert(flappy::MenuFont::textWidth(app.menuTitle()) <= 128);
+      for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
+        assert(flappy::MenuFont::textWidth(app.menuLabel(index)) <= 128);
+        assert(flappy::MenuFont::textWidth(app.menuValue(index)) <= 128);
+      }
+    }
+  }
+  assert(flappy::MenuFont::textWidth("MENU NEXT  A SELECT", 1) <= 128);
+  assert(flappy::MenuFont::textWidth("HOLD MENU TO EXIT", 1) <= 128);
+
+  app.setCurrentGame(flappy::GameTitle::FlappyBird);
+  app.openMenu(flappy::MenuPage::Skins);
+  app.menu.selection = 10;
+  const auto withLastLetter = frame(app);
+  names[10] = "Toast on the Ru ";
+  const auto withoutLastLetter = frame(app);
+  flappy::Viewport crop;
+  crop.configure(135, 240);
+  std::vector<uint16_t> first(size_t(crop.width) * crop.height), second(first.size());
+  crop.copy(withLastLetter.data(), first.data());
+  crop.copy(withoutLastLetter.data(), second.data());
+  const size_t glyphPixels = differentPixels(withLastLetter, withoutLastLetter);
+  assert(glyphPixels > 0);
+  assert(differentPixels(first, second) == glyphPixels);
+
+  // Cartridge titles and controller status come from runtime sources and may scroll.
+  const char* longRuntimeText = "A runtime title or status longer than sixteen characters";
+  app.setNesTitle(longRuntimeText);
+  app.setTetrisTitle(longRuntimeText);
+  app.setTetrisZeroTitle(longRuntimeText);
+  app.setControllerStatus(longRuntimeText);
+  assert(flappy::MenuFont::textWidth(app.gameLabel(flappy::GameTitle::Nes)) > 128);
+  assert(flappy::MenuFont::textWidth(app.tetrisTitle()) > 128);
+  assert(flappy::MenuFont::textWidth(app.tetrisZeroTitle()) > 128);
+  for (flappy::MenuPage page : {flappy::MenuPage::BootGame, flappy::MenuPage::ChangeGame,
+                               flappy::MenuPage::Controller}) {
+    app.openMenu(page);
+    for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
+      app.menu.selection = index;
+      assert(frame(app).size() == FramePixels);
+    }
+  }
 }
 
 static void volumeMenuShowsLevelsAndCurrentValue() {
@@ -333,13 +503,24 @@ static void launcherMenusShowAvailabilityAndTitles() {
     app.setNesAvailable(false);
     app.setNesTitle(nullptr);
   }
+  for (flappy::MenuPage page : {flappy::MenuPage::BootGame, flappy::MenuPage::ChangeGame}) {
+    app.openMenu(page);
+    app.menu.selection = 2;
+    const auto missing = frame(app);
+    app.setTetrisAvailable(true);
+    assert(differentPixels(missing, frame(app)) > 0);
+    app.setTetrisTitle("TetrisGYM");
+    assert(differentPixels(missing, frame(app)) > 0);
+    app.setTetrisAvailable(false);
+    app.setTetrisTitle(nullptr);
+  }
   app.setNesAvailable(true);
   const std::string longTitle(200, 'N');
   app.setNesTitle(longTitle.c_str());
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
   app.openMenu();
-  assert(app.menuItemCount() == 10);
-  for (uint8_t selected : {uint8_t(0), uint8_t(1), uint8_t(8), uint8_t(9)}) {
+  assert(app.menuItemCount() == 7);
+  for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
     app.menu.selection = selected;
     flappy::RenderOptions options;
     options.uiScale = 3;
@@ -354,7 +535,7 @@ static void controllerMenuShowsStatusAndActions() {
   flappy::AppModel app(29);
   preparePlaying(app, flappy::Mode::Original, 10);
   app.openMenu();
-  app.menu.selection = 8;
+  app.menu.selection = 5;
   const auto off = frame(app);
   app.setControllerStatus("Searching");
   assert(differentPixels(off, frame(app)) > 0);
@@ -367,6 +548,33 @@ static void controllerMenuShowsStatusAndActions() {
       options.nowMs = 72000;
       assert(frame(app, options).size() == FramePixels);
     }
+  }
+}
+
+static void gameSettingsReflectEachSelectedGame() {
+  flappy::AppModel app(31);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  app.setNesAvailable(true);
+  app.setTetrisAvailable(true);
+  std::vector<uint16_t> previous;
+  for (flappy::GameTitle game : {flappy::GameTitle::FlappyBird, flappy::GameTitle::Nes,
+                                flappy::GameTitle::Tetris}) {
+    assert(app.setCurrentGame(game));
+    app.openMenu(flappy::MenuPage::GameSettings);
+    const uint8_t count = app.menuItemCount();
+    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Nes ? 2 : 8));
+    const auto current = frame(app);
+    if (!previous.empty()) assert(differentPixels(previous, current) > 0);
+    previous = current;
+    for (uint8_t selected = 0; selected < count; ++selected) {
+      app.menu.selection = selected;
+      for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+        flappy::RenderOptions options;
+        options.uiScale = uiScale;
+        assert(frame(app, options).size() == FramePixels);
+      }
+    }
+    assert(std::strcmp(app.menuLabel(count - 1), "Back") == 0);
   }
 }
 
@@ -456,14 +664,18 @@ static void viewportCopiesStayInsideBuffers() {
 
 int main() {
   colorTransforms();
+  messageScreensClearArtAndKeepTextInsideNativeCrop();
+  landscapeMessageUsesNativeFontAndStaysInsideCanvas();
   activeSkinMasksFollowPixels();
   axisAlignedBirdPixelsMatchSource();
   bigModeDoublesEachBirdPixel();
   allModesAndSkinsRespectBufferBounds();
   menusScrollAndRenderEverySelection();
+  actualMenuLabelsFitAndSurviveNativeCrop();
   volumeMenuShowsLevelsAndCurrentValue();
   launcherMenusShowAvailabilityAndTitles();
   controllerMenuShowsStatusAndActions();
+  gameSettingsReflectEachSelectedGame();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   viewportCopiesStayInsideBuffers();

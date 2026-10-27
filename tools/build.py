@@ -37,7 +37,7 @@ def resolve_display_profile(display=None):
     return saved
 
 
-def prepare_sketch(assets, skins=None, rom=None, display=None):
+def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None):
     missing = [name for name in HEADERS if not (assets / name).is_file()]
     if missing:
         raise SystemExit("Import your local assets first. Missing: " + ", ".join(missing) +
@@ -50,6 +50,18 @@ def prepare_sketch(assets, skins=None, rom=None, display=None):
             rom = default_rom
     if rom is not None and not (rom / "generated_rom.h").is_file():
         raise SystemExit("Import your local ROM first. Missing: generated_rom.h in " + str(rom))
+    if tetris is None:
+        default_tetris = ROOT / ".local" / "tetris-rom"
+        if (default_tetris / "generated_rom.h").is_file():
+            tetris = default_tetris
+    if tetris is not None and not (tetris / "generated_rom.h").is_file():
+        raise SystemExit("Import your patched Tetris ROM first. Missing: generated_rom.h")
+    if zero is None:
+        default_zero = ROOT / ".local" / "tetris-zero-rom"
+        if (default_zero / "generated_rom.h").is_file():
+            zero = default_zero
+    if zero is not None and not (zero / "generated_rom.h").is_file():
+        raise SystemExit("Import your Tetris Zero ROM first. Missing: generated_rom.h")
     selected_display = resolve_display_profile(display)
     target = ROOT / ".local" / "sketch" / "flappy"
     target.mkdir(parents=True, exist_ok=True)
@@ -71,6 +83,11 @@ def prepare_sketch(assets, skins=None, rom=None, display=None):
         (target / "generated_rom.h").write_text(rom_header(None), encoding="utf-8")
     else:
         shutil.copy2(rom / "generated_rom.h", target / "generated_rom.h")
+    from import_rom import rom_header
+    tetris_header = (tetris / "generated_rom.h").read_text(encoding="utf-8") if tetris else rom_header(None, "Tetris")
+    (target / "generated_tetris_rom.h").write_text(tetris_header.replace("namespace FlappyRom", "namespace TetrisRom"), encoding="utf-8")
+    zero_header = (zero / "generated_rom.h").read_text(encoding="utf-8") if zero else rom_header(None, "Tetris Zero")
+    (target / "generated_zero_rom.h").write_text(zero_header.replace("namespace FlappyRom", "namespace TetrisZeroRom"), encoding="utf-8")
     (target / "build_display.h").write_text(
         "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n",
         encoding="utf-8")
@@ -88,12 +105,16 @@ def main():
     parser.add_argument("--assets-dir", type=Path, default=ROOT / ".local" / "assets")
     parser.add_argument("--skins-dir", type=Path, help="Private folder containing generated_skins.h")
     parser.add_argument("--rom-dir", type=Path, help="Private folder containing generated_rom.h (default: .local/nes-rom when present)")
+    parser.add_argument("--tetris-dir", type=Path, help="Private patched Tetris import folder (default: .local/tetris-rom when present)")
+    parser.add_argument("--zero-dir", type=Path, help="Private Tetris Zero import folder (default: .local/tetris-zero-rom when present)")
     parser.add_argument("--display", choices=tuple(DISPLAY_PROFILES),
                         help="LCD profile, saved privately for later builds (default: saved profile or auto)")
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
     args = parser.parse_args()
     sketch = prepare_sketch(args.assets_dir.resolve(), args.skins_dir.resolve() if args.skins_dir else None,
-                            args.rom_dir.resolve() if args.rom_dir else None, args.display)
+                            args.rom_dir.resolve() if args.rom_dir else None, args.display,
+                            args.tetris_dir.resolve() if args.tetris_dir else None,
+                            args.zero_dir.resolve() if args.zero_dir else None)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return
@@ -101,6 +122,7 @@ def main():
     library = prepare()
     build = ROOT / ".local" / "build"
     subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", FQBN,
+                    "--build-property", "compiler.optimization_flags=-O2 -mno-fix-esp32-psram-cache-issue",
                     "--build-path", str(build), "--library", str(library), str(sketch)], check=True)
     print("Firmware is in .local/build. Keep asset-bearing firmware private.")
 

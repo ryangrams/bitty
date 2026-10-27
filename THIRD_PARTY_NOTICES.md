@@ -16,6 +16,14 @@ Copyright (c) 2020 M5Stack. The upstream [MIT license](LICENSES/M5StickC-MIT.txt
 
 `firmware/flappy/stick_display.h` adapts the StickC and StickC Plus panel profiles and AXP192 backlight behavior from [M5GFX 0.2.28](https://github.com/m5stack/M5GFX/blob/0.2.28/src/M5GFX.cpp). Copyright (c) 2021 M5Stack. Its MIT notice is included in the header. The manual profiles bypass LCD identification reads when automatic detection fails.
 
+## Menu bitmap font
+
+`firmware/flappy/menu_font.h` embeds M5 Menu Pixel, a printable ASCII subset of the 6x12 normal bitmap in [Terminus Font 4.49.1](https://terminus-font.sourceforge.net/). Copyright (C) 2020 Dimitar Toshkov Zhekov. The font remains under the [SIL Open Font License 1.1](LICENSES/Terminus-OFL-1.1.txt), copied verbatim from the official release. The subset uses its own name to respect the reserved name "Terminus Font".
+
+The conversion retains all 95 printable ASCII glyphs, their complete 6x12 cells and six-pixel advance. It shifts BDF byte padding into six-bit row storage without changing any glyph pixel. Menus and message screens draw these pixels at native size. The optional integer 2x renderer repeats each complete pixel in a 2x2 block.
+
+The [official source archive](https://sourceforge.net/projects/terminus-font/files/terminus-font-4.49/terminus-font-4.49.1.tar.gz/download) has SHA-256 `d961c1b781627bf417f9b340693d64fc219e0113ad3a3af1a3424c7aa373ef79`. Its `ter-u12n.bdf` has SHA-256 `9e942cad8173fddf34fc8a784e9ec6d2d4cfb8b82363faf65f43b236fe2f5a99`. The font test checks every stored glyph through a checksum and verifies direct native and integer 2x drawing.
+
 ## Build dependencies
 
 The public source distribution excludes installed libraries, toolchains and compiled firmware. The setup process obtains dependencies separately.
@@ -34,9 +42,19 @@ Firmware distribution also carries the obligations of its linked libraries, incl
 
 ## NES core modifications
 
-`tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/4/37 registry, RGB565 half-frame buffers, 24 kHz audio, and a filesystem guard around the trainer helper. Modified files receive a change notice. Upstream source notices, the license and a generated modification notice remain with the prepared dependency.
+`tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/1/4/37/118 registry, 8-row RGB565 strip buffers, 24 kHz audio, and a filesystem guard around the trainer helper. Its video divisor skips composition and display callbacks while retaining CPU, APU, sprite status and mapper timing. The opacity shortcut retains full mapper fetches when they have side effects. A scanline sprite cache preserves OAM ordering, overflow and pattern fetches, with invalidation on frame start, OAM writes, DMA and sprite-height changes. Modified files receive a change notice. Upstream source notices, the license and a generated modification notice remain with the prepared dependency.
 
 The emulator's software license grants no rights to NES cartridge images, game artwork, music, names or other imported content. Local ROMs and firmware containing them are excluded from the public source distribution.
+
+## TetrisGYM compatibility references
+
+The RAM addresses, stage values and screen regions in `firmware/flappy/tetris_gym.h` and `firmware/flappy/tetris_viewport.h` refer to [TetrisGYM 6.0.0](https://github.com/kirjavascript/TetrisGYM/releases/tag/6.0.0), commit [`f487037746c9ff3d6e679fb7e4381e9264364bac`](https://github.com/kirjavascript/TetrisGYM/tree/f487037746c9ff3d6e679fb7e4381e9264364bac). The C++ wrappers use these compatibility facts to configure a privately loaded cartridge and arrange the cartridge's rendered pixels on the M5 screen.
+
+The public source package excludes the original game, TetrisGYM cartridge code and disassembly, patch files, graphics, audio and generated ROM headers. The project license covers its own wrappers and local BPS and IPS tools. It grants no rights to the base game, TetrisGYM patch or their content. See the [private Tetris patch workflow](docs/TETRIS.md) for the local input boundary.
+
+## Tetris Zero compatibility references
+
+`firmware/flappy/tetris_zero.h` and `firmware/flappy/tetris_zero_viewport.h` describe menu stages, player state addresses and screen regions used by the mapper 118 v2 version of Tetris Zero. The [author's project entry](https://www.romhacking.net/hacks/1013/) identifies the hack. The wrappers use those compatibility facts with a privately supplied cartridge. The public package contains no patch, cartridge code, disassembly, save file, graphics or audio from that project. Obtain and review the patch author's terms separately.
 
 ## Names and affiliation
 

@@ -36,6 +36,7 @@ class Skins {
 
   void select(uint8_t index) {
     selected = index < count() ? index : 0;
+    buildPalette();
     unsigned gray = 0, total = 0;
     for (int f = 0; f < 3; ++f) for (int y = 0; y < 12; ++y) for (int x = 0; x < 17; ++x) {
       const uint16_t c = birdPixel(f, x, y);
@@ -73,20 +74,8 @@ class Skins {
 
   uint16_t palette(uint16_t c) const {
     if (!selected || selected >= 10 || c == FlappyAssets::kTransparent) return c;
-    unsigned r = ((c >> 11) & 31) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31;
-    const unsigned l = (r * 77 + g * 150 + b * 29) >> 8;
-    switch (selected) {
-      case 1: return rgb(r / 3, g / 3, b / 2 + 40);
-      case 2: return rgb(r / 2 + 80, g / 2 + 100, b / 2 + 120);
-      case 3: return rgb(r / 2 + 120, g * 3 / 4 + 30, b / 3);
-      case 4: return rgb(b / 2 + 100, r / 2 + 40, g / 2 + 100);
-      case 5: return rgb(r > 128 ? 255 : 20, g > 128 ? 255 : 10, b > 128 ? 255 : 40);
-      case 6: return rgb(l, l, l);
-      case 7: return rgb(r / 4, g * 3 / 4, b / 2 + 80);
-      case 8: return rgb(g, g / 2, b / 5);
-      case 9: { const unsigned q = l / 64; return rgb(20 + q * 46, 36 + q * 51, 12 + q * 31); }
-      default: return c;
-    }
+    const unsigned r = red_[c >> 11], g = green_[(c >> 5) & 63], b = blue_[c & 31];
+    return selected == 6 || selected == 9 ? luminance_[(r + g + b) >> 8] : uint16_t(r | g | b);
   }
 
   uint16_t birdPixel(int frame, int x, int y) const {
@@ -119,6 +108,43 @@ class Skins {
 
  private:
   uint64_t masks_[3][24] = {};
+  uint16_t red_[32] = {}, green_[64] = {}, blue_[32] = {}, luminance_[256] = {};
+
+  void buildPalette() {
+    if (!selected || selected >= 10) return;
+    // Component tables preserve RGB565 rounding and avoid color math while drawing.
+    for (unsigned i = 0; i < 32; ++i) {
+      const unsigned v = i * 255 / 31;
+      switch (selected) {
+        case 1: red_[i] = rgb(v / 3, 0, 0); blue_[i] = rgb(0, 0, v / 2 + 40); break;
+        case 2: red_[i] = rgb(v / 2 + 80, 0, 0); blue_[i] = rgb(0, 0, v / 2 + 120); break;
+        case 3: red_[i] = rgb(v / 2 + 120, 0, 0); blue_[i] = rgb(0, 0, v / 3); break;
+        case 4: red_[i] = rgb(0, v / 2 + 40, 0); blue_[i] = rgb(v / 2 + 100, 0, 0); break;
+        case 5: red_[i] = rgb(v > 128 ? 255 : 20, 0, 0); blue_[i] = rgb(0, 0, v > 128 ? 255 : 40); break;
+        case 6: case 9: red_[i] = uint16_t(v * 77); blue_[i] = uint16_t(v * 29); break;
+        case 7: red_[i] = rgb(v / 4, 0, 0); blue_[i] = rgb(0, 0, v / 2 + 80); break;
+        case 8: red_[i] = 0; blue_[i] = rgb(0, 0, v / 5); break;
+      }
+    }
+    for (unsigned i = 0; i < 64; ++i) {
+      const unsigned v = i * 255 / 63;
+      switch (selected) {
+        case 1: green_[i] = rgb(0, v / 3, 0); break;
+        case 2: green_[i] = rgb(0, v / 2 + 100, 0); break;
+        case 3: green_[i] = rgb(0, v * 3 / 4 + 30, 0); break;
+        case 4: green_[i] = rgb(0, 0, v / 2 + 100); break;
+        case 5: green_[i] = rgb(0, v > 128 ? 255 : 10, 0); break;
+        case 6: case 9: green_[i] = uint16_t(v * 150); break;
+        case 7: green_[i] = rgb(0, v * 3 / 4, 0); break;
+        case 8: green_[i] = rgb(v, v / 2, 0); break;
+      }
+    }
+    if (selected == 6 || selected == 9) for (unsigned i = 0; i < 256; ++i) {
+      const unsigned q = i / 64;
+      luminance_[i] = selected == 6 ? rgb(i, i, i) : rgb(20 + q * 46, 36 + q * 51, 12 + q * 31);
+    }
+  }
+
   const FlappyAssets::Sprite& world(int index) const {
     static const FlappyAssets::Sprite* const base[] = {&FlappyAssets::background, &FlappyAssets::ground,
       &FlappyAssets::pipe, &FlappyAssets::pipeTop};

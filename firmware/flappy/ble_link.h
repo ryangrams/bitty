@@ -1,10 +1,10 @@
 #pragma once
 
 #include "coop_protocol.h"
+#include "ble_radio.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
-#include <NimBLEDevice.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <stdio.h>
@@ -12,11 +12,6 @@
 
 namespace flappy {
 namespace coop {
-
-// Application-specific UUIDs keep scans separate from unrelated BLE devices.
-constexpr const char* ServiceUuid = "a8ed0200-3fec-4f60-a066-83ae580bbed0";
-constexpr const char* HostTxUuid = "a8ed0201-3fec-4f60-a066-83ae580bbed0";
-constexpr const char* GuestTxUuid = "a8ed0202-3fec-4f60-a066-83ae580bbed0";
 
 // Call beginHost/beginJoin only after the user selects a co-op role.
 // The application owns this single instance for the lifetime of the sketch.
@@ -27,26 +22,35 @@ class BleLink {
   BleLink(const BleLink&) = delete;
   BleLink& operator=(const BleLink&) = delete;
 
+  bool setGameProfile(GameProfile profile) {
+    if (!validGameProfile(profile)) return false;
+    if (profile != gameProfile()) stop();
+    if (initialized_ && fault_) return false;
+    return session_.setGameProfile(profile);
+  }
+  GameProfile gameProfile() const { return session_.gameProfile(); }
+
   bool beginHost(uint32_t now, uint32_t session, uint32_t seed, uint16_t hue) {
     stop();
+    if (initialized_) return false;
     if (!initialize()) return false;
     session_.beginHost(now, session, seed, hue);
     server_ = NimBLEDevice::createServer();
     if (!server_) return fail();
     server_->setCallbacks(&serverCallbacks_, false);
     server_->advertiseOnDisconnect(false);
-    NimBLEService* service = server_->createService(ServiceUuid);
+    NimBLEService* service = server_->createService(serviceUuid(gameProfile()));
     if (!service) return fail();
-    hostTx_ = service->createCharacteristic(HostTxUuid, NIMBLE_PROPERTY::NOTIFY, MaxPacketBytes);
+    hostTx_ = service->createCharacteristic(hostTxUuid(gameProfile()), NIMBLE_PROPERTY::NOTIFY, MaxPacketBytes);
     NimBLECharacteristic* guestTx = service->createCharacteristic(
-        GuestTxUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR, MaxPacketBytes);
+        guestTxUuid(gameProfile()), NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR, MaxPacketBytes);
     if (!hostTx_ || !guestTx) return fail();
     guestTx->setCallbacks(&characteristicCallbacks_);
     if (!service->start()) return fail();
     server_->start();
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     advertising->enableScanResponse(true);
-    if (!advertising->addServiceUUID(ServiceUuid) || !advertising->setName(deviceName_) ||
+    if (!advertising->addServiceUUID(serviceUuid(gameProfile())) || !advertising->setName(deviceName_) ||
         !advertising->start()) return fail();
     return true;
   }
@@ -55,6 +59,7 @@ class BleLink {
   // role-selection call symmetric without creating different colors per screen.
   bool beginJoin(uint32_t now, uint16_t = 0) {
     stop();
+    if (initialized_) return false;
     if (!initialize()) return false;
     session_.beginGuest(now);
     scanning_ = true;
@@ -80,23 +85,31 @@ class BleLink {
       Packet packet;
       if (encode(bye, packet)) send(packet);
     }
-    releaseRadio();
+    const bool released = releaseRadio();
     session_.stop();
+    if (!released) { fault_ = true; return; }
     fault_ = false;
     peerName_[0] = '\0';
+    detail_[0] = '\0';
   }
 
   void setLocal(const PlayerSnapshot& snapshot) { session_.setLocal(snapshot); }
+  void setLocalTetris(const TetrisStats& stats) { session_.setLocalTetris(stats); }
   void requestReady(uint32_t now) { session_.requestReady(now); }
   bool consumeStart(StartInfo& start) { return session_.consumeStart(start); }
   uint32_t worldTick(uint32_t now) const { return session_.worldTick(now); }
   RemoteView ghost(uint32_t now) const { return session_.ghost(now); }
+  RemoteTetris remoteTetris(uint32_t now) const { return session_.remoteTetris(now); }
+  bool submitZeroInput(uint32_t frame, uint8_t pad) { return session_.submitZeroInput(frame, pad); }
+  bool zeroInputs(uint32_t frame, uint8_t& local, uint8_t& remote) { return session_.zeroInputs(frame, local, remote); }
+  uint32_t zeroFrame() const { return session_.zeroFrame(); }
   const Session& session() const { return session_; }
   const char* deviceName() const { return deviceName_; }
   const char* peerName() const { return peerName_; }
   bool multipleHostsFound() const { return multipleHosts_; }
   bool scanning() const { return scanning_; }
   bool fault() const { return fault_; }
+  const char* detailText() const { return detail_; }
 
   const char* statusText() const {
     if (fault_) return "Bluetooth error";
@@ -107,7 +120,8 @@ class BleLink {
       case Phase::Waiting: return session_.role() == Role::Host ? "Waiting for player" : "No host found";
       case Phase::Lobby: return session_.localReady() ? "Waiting for other player" : "Action: ready";
       case Phase::Countdown: return "Get ready";
-      case Phase::Playing: return "Same course race";
+      case Phase::Playing: return gameProfile() == GameProfile::TetrisZero ? "Tetris Zero linked" :
+          gameProfile() == GameProfile::Tetris ? "Tetris competition" : "Same course race";
       case Phase::Disconnected: return "Connection lost";
     }
     return "Bluetooth error";
@@ -117,7 +131,7 @@ class BleLink {
   // in the lobby. Gameplay packets and scan callbacks never run game logic.
   void update(uint32_t now, uint32_t authoritativeHostWorldTick = 0) {
     (void)authoritativeHostWorldTick;
-    if (!initialized_) return;
+    if (!initialized_ || fault_) return;
     Event event;
     for (uint8_t count = 0; count < QueueDepth && xQueueReceive(queue_, &event, 0) == pdTRUE; ++count) {
       now = millis();
@@ -126,7 +140,7 @@ class BleLink {
         case EventKind::Disconnected: session_.transportDisconnected(); break;
         case EventKind::Data: session_.receive(event.bytes, event.length, now); break;
         case EventKind::ScanResult: {
-          const NimBLEAddress address(event.address, event.addressType);
+          const NimBLEAddress address(event.address);
           if (foundHost_ && address != bestAddress_) multipleHosts_ = true;
           if (!foundHost_ || event.rssi > bestRssi_) {
             foundHost_ = true;
@@ -167,8 +181,7 @@ class BleLink {
     EventKind kind = EventKind::Data;
     uint8_t length = 0;
     uint8_t bytes[MaxPacketBytes] = {};
-    uint8_t address[6] = {};
-    uint8_t addressType = 0;
+    ble_addr_t address = {};
     int8_t rssi = -128;
     char name[32] = {};
   };
@@ -221,15 +234,16 @@ class BleLink {
    public:
     explicit ScanCallbacks(BleLink* owner) : owner_(owner) {}
     void onResult(const NimBLEAdvertisedDevice* device) override {
-      if (!device->isAdvertisingService(NimBLEUUID(ServiceUuid))) return;
+      if (!device->isAdvertisingService(NimBLEUUID(serviceUuid(owner_->gameProfile())))) return;
       const NimBLEAddress address = device->getAddress();
       Event event;
       event.kind = EventKind::ScanResult;
-      memcpy(event.address, address.getVal(), sizeof(event.address));
-      event.addressType = address.getType();
+      event.address = *address.getBase();
       event.rssi = int8_t(device->getRSSI());
       const std::string name = device->getName();
-      snprintf(event.name, sizeof(event.name), "%s", name.empty() ? "M5Flap host" : name.c_str());
+      snprintf(event.name, sizeof(event.name), "%s", name.empty() ?
+          (owner_->gameProfile() == GameProfile::TetrisZero ? "M5Zero host" :
+           owner_->gameProfile() == GameProfile::Tetris ? "M5Tetris host" : "M5Flap host") : name.c_str());
       if (owner_->queue_) xQueueSend(owner_->queue_, &event, 0);
     }
     void onScanEnd(const NimBLEScanResults&, int) override { owner_->enqueue(EventKind::ScanDone); }
@@ -258,6 +272,7 @@ class BleLink {
   NimBLEAddress bestAddress_;
   char deviceName_[20] = {};
   char peerName_[32] = {};
+  char detail_[112] = {};
 
   static BleLink*& activeInstance() {
     static BleLink* active = nullptr;
@@ -265,11 +280,24 @@ class BleLink {
   }
 
   bool initialize() {
+    if (NimBLEDevice::isInitialized()) {
+      snprintf(detail_, sizeof(detail_), "Bluetooth is busy");
+      fault_ = true; return false;
+    }
     queue_ = xQueueCreate(QueueDepth, sizeof(Event));
-    if (!queue_) { fault_ = true; return false; }
-    snprintf(deviceName_, sizeof(deviceName_), "M5Flap-%06lX",
+    if (!queue_) {
+      snprintf(detail_, sizeof(detail_), "Link queue unavailable");
+      fault_ = true; return false;
+    }
+    snprintf(deviceName_, sizeof(deviceName_), gameProfile() == GameProfile::TetrisZero ? "M5Zero-%06lX" :
+             gameProfile() == GameProfile::Tetris ? "M5Tetris-%06lX" : "M5Flap-%06lX",
              static_cast<unsigned long>((ESP.getEfuseMac() >> 24) & 0xffffff));
-    if (!NimBLEDevice::init(deviceName_)) {
+    radio::EspBackend backend;
+    radio::Diagnostic result;
+    if (!radio::start(backend, deviceName_, result)) {
+      initialized_ = result.failure == radio::Failure::Init &&
+                     (backend.hostInitialized() || backend.state() != 0);
+      radio::describe(result, detail_, sizeof(detail_));
       vQueueDelete(queue_);
       queue_ = nullptr;
       fault_ = true;
@@ -287,9 +315,17 @@ class BleLink {
     return false;
   }
 
-  void releaseRadio() {
+  bool releaseRadio() {
+    if (initialized_) {
+      radio::EspBackend backend;
+      radio::Diagnostic result;
+      if (!radio::stop(backend, result)) {
+        radio::describe(result, detail_, sizeof(detail_));
+        fault_ = true;
+        return false;
+      }
+    }
     if (activeInstance() == this) activeInstance() = nullptr;
-    if (initialized_) NimBLEDevice::deinit(true);
     initialized_ = false;
     scanning_ = connecting_ = false;
     server_ = nullptr;
@@ -299,6 +335,7 @@ class BleLink {
     connectionHandle_ = BLE_HS_CONN_HANDLE_NONE;
     if (queue_) vQueueDelete(queue_);
     queue_ = nullptr;
+    return true;
   }
 
   void enqueue(EventKind kind) {
@@ -330,9 +367,9 @@ class BleLink {
     client_->setConnectionParams(12, 24, 0, 200);
     bool good = client_->connect(bestAddress_);
     if (good) {
-      NimBLERemoteService* service = client_->getService(ServiceUuid);
-      NimBLERemoteCharacteristic* hostTx = service ? service->getCharacteristic(HostTxUuid) : nullptr;
-      guestTx_ = service ? service->getCharacteristic(GuestTxUuid) : nullptr;
+      NimBLERemoteService* service = client_->getService(serviceUuid(gameProfile()));
+      NimBLERemoteCharacteristic* hostTx = service ? service->getCharacteristic(hostTxUuid(gameProfile())) : nullptr;
+      guestTx_ = service ? service->getCharacteristic(guestTxUuid(gameProfile())) : nullptr;
       good = hostTx && hostTx->canNotify() && guestTx_ && guestTx_->canWriteNoResponse();
       if (good) {
         good = hostTx->subscribe(true, [](NimBLERemoteCharacteristic*, uint8_t* data, size_t length, bool) {

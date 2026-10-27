@@ -76,6 +76,16 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(archive.read(name), metadata)
             self.assertEqual(set(archive.namelist()), {"PUBLIC_FILES.txt", "README.md", name})
 
+    def test_c_source_is_allowed_and_keeps_content_checks(self):
+        name = "tests/synthetic.c"
+        source = b"int synthetic_fixture(void) { return 0; }\n"
+        self.write(name, source)
+        self.manifest(["PUBLIC_FILES.txt", "README.md", name])
+        self.assertEqual(audit(self.root)[name], source)
+        self.write(name, bytes.fromhex("7f454c46") + b"synthetic binary")
+        with self.assertRaisesRegex(DistributionError, "executable"):
+            audit(self.root)
+
     def test_rejects_listed_json_atlas_manifests(self):
         for name in ["atlas.json", "assets/atlas.json", "assets/ATLAS.JSON"]:
             with self.subTest(name=name):

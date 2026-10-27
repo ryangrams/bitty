@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "app_model.h"
+#include "menu_font.h"
 #include "skins.h"
 
 namespace flappy {
@@ -32,6 +33,28 @@ class Renderer {
   static const char* skinName(uint8_t index) { return Skins::name(index); }
   const uint64_t (*birdMasks() const)[24] { return skins_.masks(); }
   const uint16_t* pixels() const { return pixels_; }
+
+  void drawMessage(const char* title, const char* detail) {
+    rect(0, 0, PixelWidth, PixelHeight, 0);
+    panel(6, 92, 132, 72);
+    menuCentered(title, 108, 1, rgb(255, 220, 116));
+    menuCentered(detail, 133, 1);
+  }
+
+  void drawMessageLandscape(const char* title, const char* detail) {
+    const int width = 240, height = 135;
+    for (int i = 0; i < width * height; ++i) pixels_[i] = 0;
+    for (int y = 40; y < 96; ++y) {
+      for (int x = 8; x < 232; ++x) pixels_[y * width + x] = rgb(26, 35, 49);
+    }
+    const int maxChars = 216 / MenuFont::Advance;
+    MenuFont::draw(pixels_, width, height, title,
+        (width - MenuFont::textWidth(title, 1, maxChars)) / 2, 49,
+        rgb(255, 220, 116), 1, maxChars);
+    MenuFont::draw(pixels_, width, height, detail,
+        (width - MenuFont::textWidth(detail, 1, maxChars)) / 2, 73,
+        0xffff, 1, maxChars);
+  }
 
   void draw(const Game& game) { drawGame(game, Mode::Original, nullptr, RenderOptions()); }
   void draw(const AppModel& app, const RenderOptions& options = RenderOptions()) {
@@ -160,6 +183,15 @@ class Renderer {
   void centered(const char* str, int y, int scale, uint16_t color = 0xffff) {
     text(str, (PixelWidth - (int(strlen(str)) * 4 - 1) * scale) / 2, y, scale, color);
   }
+  void menuText(const char* str, int x, int y, int scale, uint16_t color, int maxChars = 99) {
+    MenuFont::draw(pixels_, PixelWidth, PixelHeight, str, x, y, color, scale, maxChars);
+  }
+  void menuCentered(const char* str, int y, int scale, uint16_t color = 0xffff) {
+    if (scale != 2 || MenuFont::textWidth(str, 2) > 128) scale = 1;
+    const int maxChars = 128 / (MenuFont::Advance * scale);
+    const int width = MenuFont::textWidth(str, scale, maxChars);
+    menuText(str, (PixelWidth - width) / 2, y, scale, color, maxChars);
+  }
   void ownBackground(int scale) {
     const bool toast = skins_.selected == 10;
     rect(0, 0, PixelWidth, PixelHeight, toast ? rgb(178, 218, 213) : rgb(189, 206, 217));
@@ -204,16 +236,26 @@ class Renderer {
     else if (scale == 1 && skins_.selected == 0) memcpy(pixels_, background.pixels, PixelWidth * PixelHeight * sizeof(uint16_t));
     else {
       const auto& bg = skins_.background();
-      for (int y = 0; y < PixelHeight; ++y) for (int x = 0; x < PixelWidth; ++x) {
+      const bool repeatRows = &bg == &background && !bg.alpha;
+      const uint16_t* previous = nullptr;
+      for (int y = 0; y < PixelHeight; ++y) {
         const int sy = scale == 1 ? y : y / scale + 60;
-        const int source = (sy < bg.height ? sy : bg.height - 1) * bg.width + x / scale;
-        uint16_t color = bg.pixels[source];
-        if (color == kTransparent || bg.alpha) {
-          const int baseY = sy < background.height ? sy : background.height - 1;
-          const uint16_t base = background.pixels[baseY * background.width + x / scale];
-          color = color == kTransparent ? base : blend(color, base, bg.alpha[source]);
+        const int sourceRow = (sy < bg.height ? sy : bg.height - 1) * bg.width;
+        const uint16_t* row = bg.pixels + sourceRow;
+        if (repeatRows && previous && (row == previous ||
+            memcmp(row, previous, ((PixelWidth + scale - 1) / scale) * sizeof(uint16_t)) == 0)) {
+          memcpy(pixels_ + y * PixelWidth, pixels_ + (y - 1) * PixelWidth, PixelWidth * sizeof(uint16_t));
+        } else for (int x = 0; x < PixelWidth; ++x) {
+          const int source = sourceRow + x / scale;
+          uint16_t color = bg.pixels[source];
+          if (color == kTransparent || bg.alpha) {
+            const int baseY = sy < background.height ? sy : background.height - 1;
+            const uint16_t base = background.pixels[baseY * background.width + x / scale];
+            color = color == kTransparent ? base : blend(color, base, bg.alpha[source]);
+          }
+          pixels_[y * PixelWidth + x] = skins_.palette(color);
         }
-        pixels_[y * PixelWidth + x] = skins_.palette(color);
+        previous = row;
       }
     }
     if (game.state != State::Ready) {
@@ -333,18 +375,27 @@ class Renderer {
     centered("HOST / JOIN IN MENU", 188, 1);
   }
   void drawMenu(const AppModel& app, const RenderOptions& opt) {
-    for (int i = 0; i < PixelWidth * PixelHeight; ++i) pixels_[i] = blend(0, pixels_[i], 170);
+    // The opaque panel covers its interior, so dim only the exposed border.
+    for (int y = 0; y < PixelHeight; ++y) {
+      uint16_t* row = pixels_ + y * PixelWidth;
+      if (y < 10 || y >= 243) {
+        for (int x = 0; x < PixelWidth; ++x) row[x] = blend(0, row[x], 170);
+      } else for (int x = 0; x < 2; ++x) {
+        row[x] = blend(0, row[x], 170);
+        row[PixelWidth - 1 - x] = blend(0, row[PixelWidth - 1 - x], 170);
+      }
+    }
     panel(2, 10, 140, 233);
-    const int scale = opt.uiScale >= 3 ? 3 : 2;
-    centered(app.menuTitle(), 20, 2, rgb(255, 224, 103));
+    const int scale = 1;
+    menuCentered(app.menuTitle(), 20, 1, rgb(255, 224, 103));
     const char* val = app.menuValue(app.menu.selection);
-    if (val && *val) centered(val, 40, 1, rgb(166, 224, 232));
-    const int visible = scale == 3 ? 5 : 6;
-    const int rowHeight = scale == 3 ? 29 : 25;
+    if (val && *val) menuCentered(val, 40, 1, rgb(166, 224, 232));
+    const int visible = opt.uiScale >= 3 ? 5 : 7;
+    const int rowHeight = opt.uiScale >= 3 ? 29 : 22;
     const int count = app.menuItemCount();
     int first = int(app.menu.selection) - visible + 1;
     if (first < 0) first = 0;
-    const int maxChars = 128 / (4 * scale);
+    const int maxChars = 128 / MenuFont::Advance;
     for (int row = 0; row < visible && first + row < count; ++row) {
       const int index = first + row, y = 61 + row * rowHeight;
       const bool selected = index == app.menu.selection;
@@ -357,10 +408,16 @@ class Renderer {
         if (offset > unsigned(length - maxChars)) offset = unsigned(length - maxChars);
         label += offset;
       }
-      text(label, 9, y, scale, selected ? rgb(30, 36, 46) : 0xffff, maxChars);
+      const uint16_t color = selected ? rgb(30, 36, 46) : 0xffff;
+      menuText(label, 9, y, scale, color, maxChars);
+      if (!selected && length > maxChars) {
+        rect(9 + (maxChars - 2) * MenuFont::Advance, y,
+             2 * MenuFont::Advance, MenuFont::Height, rgb(26, 35, 49));
+        menuText("..", 9 + (maxChars - 2) * MenuFont::Advance, y, scale, color, 2);
+      }
     }
-    centered("MENU: NEXT  ACTION: SELECT", 220, 1);
-    centered("HOLD MENU: EXIT", 231, 1);
+    menuCentered("MENU NEXT  A SELECT", 217, 1);
+    menuCentered("HOLD MENU TO EXIT", 231, 1);
   }
 };
 

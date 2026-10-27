@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 namespace flappy {
 namespace coop {
@@ -14,11 +15,65 @@ constexpr uint32_t MaxInterpolationMs = 100;
 constexpr uint32_t GhostStaleMs = 500;
 constexpr uint32_t DisconnectMs = 3000;
 constexpr uint16_t CountdownMs = 2500;
+constexpr uint8_t ZeroInputDelay = 6;
+constexpr uint8_t ZeroWindowPads = 4;
+constexpr uint8_t ZeroBufferFrames = 64;
+constexpr uint32_t ZeroInputIntervalMs = 16;
+constexpr uint32_t ZeroProgressIntervalMs = 32;
+constexpr uint32_t ZeroStatsIntervalMs = 200;
+
+enum class GameProfile : uint8_t { Flappy, Tetris, TetrisZero };
+constexpr const char* ServiceUuid = "a8ed0200-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* HostTxUuid = "a8ed0201-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* GuestTxUuid = "a8ed0202-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* TetrisServiceUuid = "a8ed0300-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* TetrisHostTxUuid = "a8ed0301-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* TetrisGuestTxUuid = "a8ed0302-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* ZeroServiceUuid = "a8ed0400-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* ZeroHostTxUuid = "a8ed0401-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* ZeroGuestTxUuid = "a8ed0402-3fec-4f60-a066-83ae580bbed0";
+
+inline bool validGameProfile(GameProfile profile) {
+  return profile == GameProfile::Flappy || profile == GameProfile::Tetris || profile == GameProfile::TetrisZero;
+}
+inline const char* serviceUuid(GameProfile profile) {
+  return profile == GameProfile::TetrisZero ? ZeroServiceUuid : profile == GameProfile::Tetris ? TetrisServiceUuid : ServiceUuid;
+}
+inline const char* hostTxUuid(GameProfile profile) {
+  return profile == GameProfile::TetrisZero ? ZeroHostTxUuid : profile == GameProfile::Tetris ? TetrisHostTxUuid : HostTxUuid;
+}
+inline const char* guestTxUuid(GameProfile profile) {
+  return profile == GameProfile::TetrisZero ? ZeroGuestTxUuid : profile == GameProfile::Tetris ? TetrisGuestTxUuid : GuestTxUuid;
+}
+
+inline bool matchesGameService(GameProfile profile, const char* uuid) {
+  return validGameProfile(profile) && uuid && !strcmp(serviceUuid(profile), uuid);
+}
 
 enum class Role : uint8_t { Off, Host, Guest };
 enum class Phase : uint8_t { Off, Waiting, Lobby, Countdown, Playing, Disconnected };
 enum class Life : uint8_t { Ready, Alive, Dying, GameOver };
-enum class MessageType : uint8_t { Hello = 1, Offer, Ready, Start, StartAck, Snapshot, Bye };
+enum class MessageType : uint8_t { Hello = 1, Offer, Ready, Start, StartAck, Snapshot, Bye, TetrisStats, ZeroInputWindow, ZeroProgress };
+
+struct ZeroInputWindow {
+  uint32_t frame = 0;
+  uint8_t count = 0;
+  uint8_t pads[ZeroWindowPads] = {};
+};
+
+struct TetrisStats {
+  uint32_t score = 0;
+  uint16_t lines = 0;
+  uint8_t level = 0;
+  bool toppedOut = false;
+};
+
+struct RemoteTetris {
+  TetrisStats stats;
+  bool received = false;
+  bool fresh = false;
+  uint32_t ageMs = 0;
+};
 
 struct PlayerSnapshot {
   uint32_t tick = 0;
@@ -54,6 +109,10 @@ struct Message {
   uint16_t remainingMs = 0;
   bool ready = false;
   PlayerSnapshot player;
+  TetrisStats tetris;
+  uint16_t tetrisSequence = 0;
+  ZeroInputWindow zero;
+  uint32_t zeroProgress = 0;
 };
 
 // Unsigned subtraction keeps ordering valid across tick and millis() wrap.
@@ -74,6 +133,14 @@ inline uint32_t nextSeed(uint32_t seed) {
   seed ^= seed >> 17;
   seed ^= seed << 5;
   return seed ? seed : 0x8f6e37a1U;
+}
+
+inline uint32_t nextGameSeed(GameProfile profile, uint32_t seed) {
+  if (profile == GameProfile::TetrisZero) return seed;
+  if (profile != GameProfile::Tetris) return nextSeed(seed);
+  uint32_t pieces = nextSeed(seed & 0x00ffffffU) & 0x00ffffffU;
+  if (!pieces) pieces = 1;
+  return (seed & 0xff000000U) | pieces;
 }
 
 inline void put16(uint8_t* bytes, uint16_t value) {
@@ -111,6 +178,9 @@ inline uint8_t wireLength(MessageType type) {
     case MessageType::StartAck: return 9;
     case MessageType::Snapshot: return 19;
     case MessageType::Bye: return 9;
+    case MessageType::TetrisStats: return 19;
+    case MessageType::ZeroInputWindow: return 18;
+    case MessageType::ZeroProgress: return 13;
   }
   return 0;
 }
@@ -128,6 +198,7 @@ inline bool encode(const Message& message, Packet& packet) {
       (!message.seed || message.hue >= 360)) return false;
   if (message.type == MessageType::Start && message.remainingMs > CountdownMs) return false;
   if (message.type == MessageType::Snapshot && !validPlayer(message.player)) return false;
+  if (message.type == MessageType::ZeroInputWindow && (!message.zero.count || message.zero.count > ZeroWindowPads)) return false;
   packet.length = length;
   packet.bytes[0] = 'M';
   packet.bytes[1] = 'F';
@@ -158,6 +229,21 @@ inline bool encode(const Message& message, Packet& packet) {
       put16(packet.bytes + 17, message.player.score);
       break;
     }
+    case MessageType::TetrisStats:
+      put16(packet.bytes + 9, message.tetrisSequence);
+      put32(packet.bytes + 11, message.tetris.score);
+      put16(packet.bytes + 15, message.tetris.lines);
+      packet.bytes[17] = message.tetris.level;
+      packet.bytes[18] = message.tetris.toppedOut ? 1 : 0;
+      break;
+    case MessageType::ZeroInputWindow:
+      put32(packet.bytes + 9, message.zero.frame);
+      packet.bytes[13] = message.zero.count;
+      memcpy(packet.bytes + 14, message.zero.pads, message.zero.count);
+      break;
+    case MessageType::ZeroProgress:
+      put32(packet.bytes + 9, message.zeroProgress);
+      break;
     case MessageType::Hello:
     case MessageType::StartAck:
     case MessageType::Bye: break;
@@ -207,6 +293,24 @@ inline bool decode(const uint8_t* bytes, size_t length, Message& message) {
       if (!validPlayer(decoded.player)) return false;
       break;
     }
+    case MessageType::TetrisStats:
+      decoded.tetrisSequence = get16(bytes + 9);
+      decoded.tetris.score = get32(bytes + 11);
+      decoded.tetris.lines = get16(bytes + 15);
+      decoded.tetris.level = bytes[17];
+      if (bytes[18] > 1) return false;
+      decoded.tetris.toppedOut = bytes[18] != 0;
+      break;
+    case MessageType::ZeroInputWindow:
+      decoded.zero.frame = get32(bytes + 9);
+      decoded.zero.count = bytes[13];
+      if (!decoded.zero.count || decoded.zero.count > ZeroWindowPads) return false;
+      memcpy(decoded.zero.pads, bytes + 14, decoded.zero.count);
+      for (uint8_t i = decoded.zero.count; i < ZeroWindowPads; ++i) if (bytes[14 + i]) return false;
+      break;
+    case MessageType::ZeroProgress:
+      decoded.zeroProgress = get32(bytes + 9);
+      break;
     case MessageType::Hello:
     case MessageType::StartAck:
     case MessageType::Bye: break;
@@ -215,28 +319,127 @@ inline bool decode(const uint8_t* bytes, size_t length, Message& message) {
   return true;
 }
 
+// Frames remain immutable until both players have consumed them. Progress
+// acknowledgements keep lost inputs eligible for retransmission after a stall.
+class ZeroInputBuffer {
+ public:
+  void clear() { *this = ZeroInputBuffer(); }
+  void reset(uint32_t firstFrame = 0) {
+    clear();
+    next_ = peerNext_ = retained_ = firstFrame;
+    for (uint8_t i = 0; i < ZeroInputDelay; ++i) {
+      const uint64_t mask = frameBit(firstFrame + i);
+      localValid_ |= mask;
+      remoteValid_ |= mask;
+    }
+  }
+  uint32_t nextFrame() const { return next_; }
+
+  bool submit(uint32_t frame, uint8_t pad) {
+    if (tickDelta(frame, next_) < 0 || !within(frame, retained_)) return false;
+    const uint64_t mask = frameBit(frame);
+    if (localValid_ & mask) return local_[frame % ZeroBufferFrames] == pad;
+    local_[frame % ZeroBufferFrames] = pad;
+    localValid_ |= mask;
+    return true;
+  }
+
+  bool receive(const ZeroInputWindow& window) {
+    if (!window.count || window.count > ZeroWindowPads) return false;
+    bool useful = false;
+    for (uint8_t i = 0; i < window.count; ++i) {
+      const uint32_t frame = window.frame + i;
+      if (tickDelta(frame, next_) < 0) continue;
+      if (!within(frame, next_)) return false;
+      useful = true;
+      if ((remoteValid_ & frameBit(frame)) && remote_[frame % ZeroBufferFrames] != window.pads[i]) return false;
+    }
+    if (!useful) return false;
+    for (uint8_t i = 0; i < window.count; ++i) {
+      const uint32_t frame = window.frame + i;
+      if (tickDelta(frame, next_) < 0) continue;
+      remote_[frame % ZeroBufferFrames] = window.pads[i];
+      remoteValid_ |= frameBit(frame);
+    }
+    return true;
+  }
+
+  bool acknowledge(uint32_t peerNext) {
+    const int32_t distance = tickDelta(peerNext, peerNext_);
+    if (distance < 0 || distance > ZeroBufferFrames) return false;
+    for (uint32_t frame = peerNext_; frame != peerNext; ++frame) if (!knownLocal(frame)) return false;
+    peerNext_ = peerNext;
+    releaseConsumed();
+    return true;
+  }
+
+  bool window(ZeroInputWindow& result) const {
+    result = ZeroInputWindow();
+    result.frame = peerNext_;
+    while (result.count < ZeroWindowPads && knownLocal(result.frame + result.count)) {
+      result.pads[result.count] = local_[(result.frame + result.count) % ZeroBufferFrames];
+      ++result.count;
+    }
+    return result.count != 0;
+  }
+
+  bool consume(uint32_t frame, uint8_t& local, uint8_t& remote) {
+    if (frame != next_ || !knownLocal(frame) || !(remoteValid_ & frameBit(frame))) return false;
+    local = local_[frame % ZeroBufferFrames];
+    remote = remote_[frame % ZeroBufferFrames];
+    remoteValid_ &= ~frameBit(frame);
+    ++next_;
+    releaseConsumed();
+    return true;
+  }
+
+ private:
+  uint8_t local_[ZeroBufferFrames] = {};
+  uint8_t remote_[ZeroBufferFrames] = {};
+  uint64_t localValid_ = 0, remoteValid_ = 0;
+  uint32_t next_ = 0, peerNext_ = 0, retained_ = 0;
+  static uint64_t frameBit(uint32_t frame) { return uint64_t(1) << (frame % ZeroBufferFrames); }
+  static bool within(uint32_t frame, uint32_t start) {
+    const int32_t distance = tickDelta(frame, start);
+    return distance >= 0 && distance < ZeroBufferFrames;
+  }
+  bool knownLocal(uint32_t frame) const { return within(frame, retained_) && (localValid_ & frameBit(frame)); }
+  void releaseConsumed() {
+    while (retained_ != next_ && tickDelta(peerNext_, retained_) > 0) {
+      localValid_ &= ~frameBit(retained_);
+      ++retained_;
+    }
+  }
+};
+
 // All state changes happen on the game task. BLE callbacks only queue bytes.
 class Session {
  public:
+  bool setGameProfile(GameProfile profile) {
+    if (!validGameProfile(profile)) return false;
+    if (profile_ != profile) { stop(); profile_ = profile; }
+    return true;
+  }
+
   void beginHost(uint32_t now, uint32_t session, uint32_t seed, uint16_t hue) {
-    *this = Session();
+    resetState();
     role_ = Role::Host;
     phase_ = Phase::Waiting;
     session_ = session ? session : 1;
-    seed_ = seed ? seed : 0x8f6e37a1U;
-    hue_ = hue % 360;
+    seed_ = seed ? seed : (profile_ == GameProfile::Tetris ? 0x006e37a1U : 0x8f6e37a1U);
+    hue_ = profile_ == GameProfile::Tetris ? uint16_t(hue != 0) : hue % 360;
     round_ = 1;
     resetTimers(now);
   }
 
   void beginGuest(uint32_t now) {
-    *this = Session();
+    resetState();
     role_ = Role::Guest;
     phase_ = Phase::Waiting;
     resetTimers(now);
   }
 
-  void stop() { *this = Session(); }
+  void stop() { resetState(); }
 
   void transportConnected(uint32_t now) {
     if (role_ == Role::Off) return;
@@ -252,6 +455,8 @@ class Session {
     phase_ = Phase::Disconnected;
     pendingStart_ = false;
     remoteCount_ = 0;
+    clearRemoteTetris();
+    zero_.clear();
     localReady_ = remoteReady_ = false;
   }
 
@@ -259,9 +464,24 @@ class Session {
     if (validPlayer(player)) local_ = player;
   }
 
+  void setLocalTetris(const TetrisStats& stats) { localTetris_ = stats; }
+
+  bool submitZeroInput(uint32_t frame, uint8_t pad) {
+    return profile_ == GameProfile::TetrisZero && connected_ &&
+           (phase_ == Phase::Playing || phase_ == Phase::Countdown) && zero_.submit(frame, pad);
+  }
+
+  // A successful call consumes exactly this frame. Step the NES once using
+  // host-local as player 1 and guest-local as player 2; a false result must wait.
+  bool zeroInputs(uint32_t frame, uint8_t& local, uint8_t& remote) {
+    return profile_ == GameProfile::TetrisZero && connected_ && phase_ == Phase::Playing &&
+           zero_.consume(frame, local, remote);
+  }
+  uint32_t zeroFrame() const { return zero_.nextFrame(); }
+
   void requestReady(uint32_t now) {
     if (!connected_ || !session_ || !round_) return;
-    if (phase_ == Phase::Lobby || (phase_ == Phase::Playing && local_.life == Life::GameOver)) {
+    if (phase_ == Phase::Lobby || (phase_ == Phase::Playing && localFinished())) {
       localReady_ = true;
       readySentMs_ = now - 200;
       advance(now);
@@ -274,12 +494,11 @@ class Session {
       transportDisconnected();
       return;
     }
-    const bool finished = phase_ == Phase::Playing && local_.life == Life::GameOver &&
-                          remoteCount_ && current_.player.life == Life::GameOver;
+    const bool finished = phase_ == Phase::Playing && localFinished() && remoteFinished();
     if (role_ == Role::Host && localReady_ && remoteReady_ && (phase_ == Phase::Lobby || finished)) {
       if (finished) {
         round_ = nextRound(round_);
-        seed_ = nextSeed(seed_);
+        seed_ = nextGameSeed(profile_, seed_);
       }
       startMs_ = now + CountdownMs;
       phase_ = Phase::Countdown;
@@ -288,16 +507,34 @@ class Session {
       startAck_ = false;
       anchorValid_ = false;
       remoteCount_ = 0;
+      clearRemoteTetris();
+      localTetris_ = TetrisStats();
+      tetrisSequence_ = 0;
+      zero_.reset();
       controlSentMs_ = now - 50;
     }
     if (phase_ == Phase::Countdown && reached(now, startMs_)) {
       if (role_ == Role::Host && !startAck_) {
         phase_ = Phase::Lobby;
         pendingStart_ = false;
+        zero_.clear();
         controlSentMs_ = now - 250;
       } else {
         phase_ = Phase::Playing;
         snapshotSentMs_ = now - SnapshotIntervalMs;
+        zeroInputSentMs_ = now - ZeroInputIntervalMs;
+        zeroProgressSentMs_ = now - ZeroProgressIntervalMs;
+        zeroPacketTurn_ = 0;
+        zeroProgressMs_ = now;
+        observedZeroFrame_ = zero_.nextFrame();
+      }
+    }
+    if (profile_ == GameProfile::TetrisZero && phase_ == Phase::Playing && !localFinished()) {
+      if (zero_.nextFrame() != observedZeroFrame_) {
+        observedZeroFrame_ = zero_.nextFrame();
+        zeroProgressMs_ = now;
+      } else if (uint32_t(now - zeroProgressMs_) >= DisconnectMs) {
+        transportDisconnected();
       }
     }
   }
@@ -313,6 +550,7 @@ class Session {
       return true;
     }
     if (message.type == MessageType::Offer) {
+      if (profile_ == GameProfile::Tetris && message.hue > 1) return false;
       if (role_ != Role::Guest || (phase_ != Phase::Waiting && phase_ != Phase::Lobby &&
           !(phase_ == Phase::Countdown && message.round == round_))) return false;
       if (session_ && message.session != session_) return false;
@@ -332,9 +570,10 @@ class Session {
     if (message.session != session_ || !session_) return false;
     if (message.type == MessageType::Start) {
       if (role_ != Role::Guest) return false;
+      if (profile_ == GameProfile::Tetris && message.hue > 1) return false;
       const bool initial = phase_ == Phase::Lobby && message.round == round_ && localReady_;
       const bool restart = phase_ == Phase::Playing && message.round == nextRound(round_) &&
-                           localReady_ && local_.life == Life::GameOver;
+                           localReady_ && localFinished();
       const bool repeat = (phase_ == Phase::Countdown || phase_ == Phase::Playing) && message.round == round_;
       if (!initial && !restart && !repeat) return false;
       if (repeat && (message.seed != seed_ || message.hue != hue_)) return false;
@@ -348,6 +587,10 @@ class Session {
         pendingStart_ = true;
         anchorValid_ = false;
         remoteCount_ = 0;
+        clearRemoteTetris();
+        localTetris_ = TetrisStats();
+        tetrisSequence_ = 0;
+        zero_.reset();
       } else if (phase_ == Phase::Countdown) {
         const uint32_t corrected = now + message.remainingMs;
         // Choose the earliest observed deadline so late packets cannot delay play.
@@ -368,6 +611,7 @@ class Session {
         startAck_ = true;
         break;
       case MessageType::Snapshot:
+        if (profile_ != GameProfile::Flappy) return false;
         if (phase_ != Phase::Playing && phase_ != Phase::Countdown) return false;
         if (remoteCount_ && !newerTick(message.player.tick, current_.player.tick)) return false;
         if (remoteCount_ && tickDelta(message.player.tick, current_.player.tick) > 600) return false;
@@ -384,6 +628,24 @@ class Session {
           anchorMs_ = now;
           anchorValid_ = true;
         }
+        break;
+      case MessageType::TetrisStats: {
+        if (profile_ == GameProfile::Flappy || (phase_ != Phase::Playing && phase_ != Phase::Countdown)) return false;
+        const uint16_t difference = uint16_t(message.tetrisSequence - remoteTetrisSequence_);
+        if (remoteTetrisReceived_ && (!difference || difference >= 0x8000)) return false;
+        remoteTetrisStats_ = message.tetris;
+        remoteTetrisSequence_ = message.tetrisSequence;
+        remoteTetrisReceivedMs_ = now;
+        remoteTetrisReceived_ = true;
+        break;
+      }
+      case MessageType::ZeroInputWindow:
+        if (profile_ != GameProfile::TetrisZero || (phase_ != Phase::Playing && phase_ != Phase::Countdown) ||
+            !zero_.receive(message.zero)) return false;
+        break;
+      case MessageType::ZeroProgress:
+        if (profile_ != GameProfile::TetrisZero || (phase_ != Phase::Playing && phase_ != Phase::Countdown) ||
+            !zero_.acknowledge(message.zeroProgress)) return false;
         break;
       case MessageType::Bye:
         transportDisconnected();
@@ -426,9 +688,18 @@ class Session {
       message.type = MessageType::Ready;
       message.ready = localReady_;
       readySentMs_ = now;
-    } else if (phase_ == Phase::Playing && uint32_t(now - snapshotSentMs_) >= SnapshotIntervalMs) {
-      message.type = MessageType::Snapshot;
-      message.player = local_;
+    } else if (profile_ == GameProfile::TetrisZero && phase_ == Phase::Playing) {
+      if (!nextZeroPacket(now, message)) return false;
+    } else if (profile_ != GameProfile::TetrisZero && phase_ == Phase::Playing &&
+               uint32_t(now - snapshotSentMs_) >= SnapshotIntervalMs) {
+      if (profile_ != GameProfile::Flappy) {
+        message.type = MessageType::TetrisStats;
+        message.tetris = localTetris_;
+        message.tetrisSequence = ++tetrisSequence_;
+      } else {
+        message.type = MessageType::Snapshot;
+        message.player = local_;
+      }
       snapshotSentMs_ = now;
     } else {
       return false;
@@ -458,7 +729,7 @@ class Session {
 
   RemoteView ghost(uint32_t now) const {
     RemoteView view;
-    if (!connected_ || phase_ != Phase::Playing || !remoteCount_ ||
+    if (profile_ != GameProfile::Flappy || !connected_ || phase_ != Phase::Playing || !remoteCount_ ||
         uint32_t(now - current_.receivedMs) >= GhostStaleMs) return view;
     static_cast<PlayerSnapshot&>(view) = current_.player;
     view.visible = true;
@@ -477,7 +748,18 @@ class Session {
     return view;
   }
 
+  RemoteTetris remoteTetris(uint32_t now) const {
+    RemoteTetris view;
+    if (profile_ == GameProfile::Flappy || !connected_ || !remoteTetrisReceived_) return view;
+    view.stats = remoteTetrisStats_;
+    view.received = true;
+    view.ageMs = uint32_t(now - remoteTetrisReceivedMs_);
+    view.fresh = phase_ == Phase::Playing && view.ageMs < GhostStaleMs;
+    return view;
+  }
+
   Role role() const { return role_; }
+  GameProfile gameProfile() const { return profile_; }
   Phase phase() const { return phase_; }
   bool connected() const { return connected_; }
   bool localReady() const { return localReady_; }
@@ -490,6 +772,7 @@ class Session {
 
  private:
   struct Sample { PlayerSnapshot player; uint32_t receivedMs = 0; };
+  GameProfile profile_ = GameProfile::Flappy;
   Role role_ = Role::Off;
   Phase phase_ = Phase::Off;
   uint32_t session_ = 0;
@@ -514,6 +797,57 @@ class Session {
   PlayerSnapshot local_;
   Sample previous_;
   Sample current_;
+  TetrisStats localTetris_;
+  TetrisStats remoteTetrisStats_;
+  uint32_t remoteTetrisReceivedMs_ = 0;
+  uint16_t tetrisSequence_ = 0;
+  uint16_t remoteTetrisSequence_ = 0;
+  bool remoteTetrisReceived_ = false;
+  ZeroInputBuffer zero_;
+  uint32_t zeroInputSentMs_ = 0, zeroProgressSentMs_ = 0;
+  uint32_t zeroProgressMs_ = 0, observedZeroFrame_ = 0;
+  uint8_t zeroPacketTurn_ = 0;
+
+  bool nextZeroPacket(uint32_t now, Message& message) {
+    // A slow rendering loop must still alternate inputs and acknowledgements.
+    // Strict timer priority would let overdue acknowledgements starve inputs.
+    for (uint8_t offset = 0; offset < 3; ++offset) {
+      const uint8_t turn = uint8_t((zeroPacketTurn_ + offset) % 3);
+      if (turn == 0 && uint32_t(now - zeroInputSentMs_) >= ZeroInputIntervalMs && zero_.window(message.zero)) {
+        message.type = MessageType::ZeroInputWindow;
+        zeroInputSentMs_ = now;
+      } else if (turn == 1 && uint32_t(now - zeroProgressSentMs_) >= ZeroProgressIntervalMs) {
+        message.type = MessageType::ZeroProgress;
+        message.zeroProgress = zero_.nextFrame();
+        zeroProgressSentMs_ = now;
+      } else if (turn == 2 && uint32_t(now - snapshotSentMs_) >= ZeroStatsIntervalMs) {
+        message.type = MessageType::TetrisStats;
+        message.tetris = localTetris_;
+        message.tetrisSequence = ++tetrisSequence_;
+        snapshotSentMs_ = now;
+      } else continue;
+      zeroPacketTurn_ = uint8_t((turn + 1) % 3);
+      return true;
+    }
+    return false;
+  }
+
+  bool localFinished() const { return profile_ != GameProfile::Flappy ? localTetris_.toppedOut : local_.life == Life::GameOver; }
+  bool remoteFinished() const {
+    return profile_ != GameProfile::Flappy ? remoteTetrisReceived_ && remoteTetrisStats_.toppedOut :
+           remoteCount_ && current_.player.life == Life::GameOver;
+  }
+  void clearRemoteTetris() {
+    remoteTetrisStats_ = TetrisStats();
+    remoteTetrisReceived_ = false;
+    remoteTetrisSequence_ = 0;
+    remoteTetrisReceivedMs_ = 0;
+  }
+  void resetState() {
+    const GameProfile profile = profile_;
+    *this = Session();
+    profile_ = profile;
+  }
 
   void resetTimers(uint32_t now) {
     lastReceivedMs_ = now;

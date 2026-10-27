@@ -31,6 +31,32 @@ static void accumulatedEdges() {
   assert(read.connected && read.buttons == 0 && read.pressed == 0);
 }
 
+static void advertisementCompatibility() {
+  assert(classifyControllerName("IINE-keyboard") == ControllerName::IineKeyboard);
+  assert(classifyControllerName("IINE_keyboard") == ControllerName::IineKeyboard);
+  assert(classifyControllerName("iine KEYBOARD") == ControllerName::IineKeyboard);
+  assert(classifyControllerName("Xbox Wireless Controller") == ControllerName::Gamepad);
+  assert(classifyControllerName("wireless_controller") == ControllerName::Gamepad);
+  assert(classifyControllerName("IINE-mouse") == ControllerName::IineOther);
+  assert(classifyControllerName(nullptr) == ControllerName::Unknown);
+  assert(classifyControllerName("") == ControllerName::Unknown);
+  assert(classifyControllerName("Unrelated beacon") == ControllerName::Unknown);
+  assert(!matchControllerAdvertisement("IINE-keyboard", true, false, -30).eligible);
+  assert(!matchControllerAdvertisement("Unrelated beacon", false, true, -20).eligible);
+  const AdvertisementMatch keyboard = matchControllerAdvertisement("IINE_keyboard", false, true, -90);
+  const AdvertisementMatch gamepad = matchControllerAdvertisement("Xbox Wireless Controller", true, true, -20);
+  const AdvertisementMatch generic = matchControllerAdvertisement("Keyboard", true, true, -10);
+  assert(keyboard.eligible && keyboard.preferred && keyboard.score > gamepad.score);
+  assert(gamepad.eligible && gamepad.preferred && gamepad.score > generic.score);
+  assert(generic.eligible && !generic.preferred);
+  assert(matchControllerAdvertisement("IINE-keyboard", false, true, -10000).score ==
+         matchControllerAdvertisement("IINE-keyboard", false, true, -127).score);
+  char excessive[150];
+  memset(excessive, 'a', sizeof(excessive));
+  excessive[sizeof(excessive) - 1] = '\0';
+  assert(classifyControllerName(excessive) == ControllerName::Unknown);
+}
+
 static void keyboardReports() {
   HidReportParser parser;
   assert(parser.configureBootKeyboard());
@@ -211,8 +237,36 @@ static void boundedNoise() {
   }
 }
 
+static void boundedChangedReportTrace() {
+  HidReportTrace trace;
+  uint8_t report[HidReportParser::MaxReportBytes] = {};
+  assert(!trace.accept(0, nullptr, 8));
+  assert(!trace.accept(0, report, 0));
+  assert(!trace.accept(0, report, sizeof(report) + 1));
+  assert(!trace.accept(HidReportTrace::MaxSlots, report, 8));
+  assert(trace.accept(0, report, sizeof(report)));
+  assert(!trace.accept(0, report, sizeof(report)));
+  report[sizeof(report) - 1] = 1;
+  assert(trace.accept(0, report, sizeof(report)));
+  assert(trace.accept(0, report, 8));
+  assert(!trace.accept(0, report, 8));
+  for (unsigned index = 3; index < HidReportTrace::EntriesPerSlot; ++index) {
+    report[0] = uint8_t(index);
+    assert(trace.accept(0, report, 8));
+  }
+  report[0] = 255;
+  assert(!trace.accept(0, report, 8));
+  assert(trace.accept(1, report, 8));
+  assert(trace.accept(HidReportTrace::MaxSlots - 1, report, 8));
+  trace.reset();
+  assert(trace.accept(0, report, 8));
+  assert(trace.accept(1, report, 8));
+  assert(!trace.accept(1, report, 8));
+}
+
 int main() {
   accumulatedEdges();
+  advertisementCompatibility();
   keyboardReports();
   gamepadReports();
   multipleReportsAndNkro();
@@ -220,5 +274,6 @@ int main() {
   buttonArraysAndOffsetUsages();
   malformedAndBounded();
   boundedNoise();
+  boundedChangedReportTrace();
   std::cout << "Controller HID tests passed\n";
 }

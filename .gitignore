@@ -33,6 +33,13 @@ import_receipt.json
 *.FDS
 *.rom
 *.ROM
+*.bps
+*.BPS
+*.ips
+*.IPS
+*.sav
+*.SAV
+*.patch-receipt.json
 *.bin
 *.elf
 *.ppm

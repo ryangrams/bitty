@@ -34,6 +34,50 @@ inline Snapshot takeSnapshot(Snapshot& snapshot) {
   return result;
 }
 
+enum class ControllerName : uint8_t { Unknown, IineKeyboard, Gamepad, IineOther };
+
+// Advertising names can change separators or case between firmware revisions.
+inline ControllerName classifyControllerName(const char* name) {
+  if (!name) return ControllerName::Unknown;
+  char normalized[64] = {};
+  size_t used = 0;
+  for (size_t i = 0; name[i]; ++i) {
+    if (i == 128) return ControllerName::Unknown;
+    char c = name[i];
+    if (c >= 'A' && c <= 'Z') c = char(c + ('a' - 'A'));
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      if (used == sizeof(normalized) - 1) return ControllerName::Unknown;
+      normalized[used++] = c;
+    }
+  }
+  if (!strcmp(normalized, "iinekeyboard")) return ControllerName::IineKeyboard;
+  if (!strcmp(normalized, "xboxwirelesscontroller") || !strcmp(normalized, "wirelesscontroller") ||
+      !strcmp(normalized, "iinegamepad") || !strcmp(normalized, "iinecontroller")) return ControllerName::Gamepad;
+  return used >= 4 && !memcmp(normalized, "iine", 4) ? ControllerName::IineOther : ControllerName::Unknown;
+}
+
+struct AdvertisementMatch {
+  bool eligible = false;
+  bool preferred = false;
+  int16_t score = -1000;
+};
+
+inline AdvertisementMatch matchControllerAdvertisement(const char* name, bool hidService, bool connectable, int rssi) {
+  AdvertisementMatch result;
+  if (!connectable) return result;
+  const ControllerName kind = classifyControllerName(name);
+  result.eligible = hidService || kind != ControllerName::Unknown;
+  if (!result.eligible) return result;
+  result.preferred = kind == ControllerName::IineKeyboard || kind == ControllerName::Gamepad;
+  if (rssi < -127) rssi = -127;
+  if (rssi > 20) rssi = 20;
+  const int priority = kind == ControllerName::IineKeyboard ? 600 :
+                       kind == ControllerName::Gamepad ? 400 :
+                       kind == ControllerName::IineOther ? 200 : 0;
+  result.score = int16_t(priority + rssi);
+  return result;
+}
+
 // All limits apply before accepting a descriptor or extracting report bits.
 // GATT supplies the report ID separately through the Report Reference descriptor.
 class HidReportParser {
@@ -329,6 +373,28 @@ class HidReportParser {
       default: return 0;
     }
   }
+};
+
+class HidReportTrace {
+ public:
+  static constexpr uint8_t MaxSlots = 8;
+  static constexpr uint8_t EntriesPerSlot = 32;
+  void reset() {
+    for (uint8_t index = 0; index < MaxSlots; ++index) counts_[index] = lengths_[index] = 0;
+  }
+  bool accept(uint8_t slot, const uint8_t* bytes, size_t length) {
+    if (slot >= MaxSlots || !bytes || !length || length > HidReportParser::MaxReportBytes ||
+        counts_[slot] >= EntriesPerSlot) return false;
+    if (counts_[slot] && lengths_[slot] == length && !memcmp(previous_[slot], bytes, length)) return false;
+    memcpy(previous_[slot], bytes, length);
+    lengths_[slot] = uint8_t(length);
+    ++counts_[slot];
+    return true;
+  }
+ private:
+  uint8_t previous_[MaxSlots][HidReportParser::MaxReportBytes] = {};
+  uint8_t lengths_[MaxSlots] = {};
+  uint8_t counts_[MaxSlots] = {};
 };
 
 }  // namespace controller

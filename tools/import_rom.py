@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / '.local' / 'nes-rom'
 MAX_ROM_BYTES = 1024 * 1024
 MAX_TITLE_BYTES = 40
-SUPPORTED_MAPPERS = (0, 37)
+SUPPORTED_MAPPERS = (0, 1, 37, 118)
 RIGHTS_CONFIRMATION = ('I confirm I have the rights or permission needed to use and convert '
                        'the ROM I supply for this build.')
 
@@ -95,11 +95,11 @@ def inspect_rom(rom: bytes) -> dict:
             raise RomError('iNES PRG RAM larger than 8 KiB is unsupported')
         timing = header[9] & 1
     if mapper not in SUPPORTED_MAPPERS:
-        raise RomError(f'Unsupported mapper {mapper}; supported mappers are 0 and 37')
+        raise RomError(f'Unsupported mapper {mapper}; supported mappers are 0, 1, 37 and 118')
     if nes2 and header[10]:
         raise RomError('Explicit NES 2.0 PRG RAM and NVRAM declarations are unsupported')
-    if nes2 and header[11] and not (mapper == 0 and chr_units == 0 and header[11] == 7):
-        raise RomError('Only mapper 0 with 8 KiB volatile CHR RAM is supported')
+    if nes2 and header[11] and not (mapper in (0, 1) and chr_units == 0 and header[11] == 7):
+        raise RomError('Only mappers 0 and 1 with 8 KiB volatile CHR RAM are supported')
     prg_bytes, chr_bytes = prg_units * 16384, chr_units * 8192
     expected = 16 + prg_bytes + chr_bytes
     if expected > MAX_ROM_BYTES:
@@ -110,6 +110,12 @@ def inspect_rom(rom: bytes) -> dict:
         raise RomError('Mapper 0 requires 16 or 32 KiB PRG and 0 or 8 KiB CHR')
     if mapper == 37 and (prg_units != 16 or chr_units != 32):
         raise RomError('Mapper 37 requires 256 KiB PRG and 256 KiB CHR')
+    if mapper == 1 and (prg_units not in (1, 2, 4, 8, 16) or chr_units not in (0, 1, 2, 4, 8, 16)):
+        raise RomError('Mapper 1 requires power-of-two PRG banks up to 256 KiB and CHR banks up to 128 KiB')
+    if mapper == 118 and (prg_units not in (2, 4, 8, 16, 32) or chr_units not in (1, 2, 4, 8, 16, 32)):
+        raise RomError('Mapper 118 requires power-of-two PRG banks from 32 to 512 KiB and CHR ROM from 8 to 256 KiB')
+    if mapper == 118 and header[6] & 8:
+        raise RomError('Mapper 118 requires two nametable pages without four-screen mode')
     return {
         'rom_format': 'NES 2.0' if nes2 else 'iNES', 'mapper': mapper, 'submapper': submapper,
         'prg_bytes': prg_bytes, 'chr_bytes': chr_bytes, 'bytes': len(rom),
