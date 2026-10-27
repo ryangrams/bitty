@@ -11,7 +11,7 @@ Controller mode, Flappy Bird co-op and the Tetris competition link share one Blu
 Use the H keyboard profile first:
 
 1. Move the back switch to **H**, identified by a yellow light.
-2. Use its default keyboard profile, **IINE-keyboard**. The manufacturer maps the D-pad to arrow keys and its buttons to A and B.
+2. Use its default keyboard profile, **IINE-keyboard**. The manufacturer lists arrow keys for the D-pad and A and B for the buttons. The firmware also accepts the Space and Enter face-button reports captured from the tested controller.
 3. Hold the controller's **Pairing** button for three seconds until the indicator flashes.
 4. On the M5, open **Controller > Pair controller** and wait for the status.
 
@@ -57,7 +57,7 @@ Tetris defaults to **Tilt move**. **Tilt rotate** swaps the roles of tilt and th
 
 Dedicated controller Start and Select use their NES assignments in Mario and open Game Settings in Tetris. Controller Menu opens the M5 menu. The generic gamepad mapping uses HID button usages 1 and 2 for A and B, and 9 and 10 for Select and Start. Different physical layouts may need a mapping change.
 
-Keyboard reports map A, B, arrow keys, Enter to Start, Backspace to Select, and Escape to Menu. Other keys have no assigned game action.
+Generic keyboard reports map A, B, arrow keys, Enter to Start, Backspace to Select, and Escape to Menu. For **IINE-keyboard** only, Space maps to game A and Enter maps to game B. Letter A and B remain accepted in that profile. This handles the face-button reports captured from the tested IINE unit. Other keys have no assigned game action.
 
 ## Compatibility and status
 
@@ -65,4 +65,4 @@ This build supports the BLE HID service (`0x1812`), reads its Report Map and Rep
 
 Connections request encryption with bonding and no man-in-the-middle requirement. A controller that requires entering or confirming a PIN gets a visible status; this build has no PIN-entry or confirmation screen. Disconnects, invalid reports and receive overflow clear affected held inputs.
 
-The IINE has reached **Controller ready**, and its directions have worked in Tetris. A/B report mapping is still under diagnosis. Reconnect behavior, face-button actions and a complete controller playthrough still need physical verification.
+The IINE has reached **Controller ready**, and its directions have worked in Tetris. Captured A and B presses sent Space and Enter; the profile mapping now handles those reports. Reconnect behavior, on-device face-button actions and a complete controller playthrough still need physical verification.

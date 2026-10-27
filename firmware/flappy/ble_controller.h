@@ -538,6 +538,8 @@ class BleController {
       }
     }
 #endif
+    parser_.setKeyboardProfile(classifyControllerName(name_) == ControllerName::IineKeyboard ?
+        KeyboardProfile::IineGamebrick : KeyboardProfile::Generic);
     state_ = State::Ready;
     status_ = "Controller ready";
     lastError_ = 0;

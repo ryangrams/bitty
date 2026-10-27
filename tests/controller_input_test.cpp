@@ -86,6 +86,72 @@ static void keyboardReports() {
   assert(!parser.decode(0, nullptr, 8, buttons));
 }
 
+static void iineKeyboardProfile() {
+  // A synthetic report-ID keyboard with an eight-byte input report.
+  const uint8_t map[] = {
+    0x05,0x01,0x09,0x06,0xa1,0x01,0x85,0x02,
+    0x05,0x07,0x19,0xe0,0x29,0xe7,0x15,0,0x25,1,0x75,1,0x95,8,0x81,2,
+    0x75,8,0x95,1,0x81,1,0x19,0,0x2a,0xff,0,0x15,0,0x26,0xff,0,
+    0x75,8,0x95,6,0x81,0,0xc0
+  };
+  HidReportParser parser;
+  assert(parser.configure(map, sizeof(map)));
+  assert(parser.supportsReport(2) && parser.expectedLength(2) == 8);
+  uint16_t buttons = 0;
+  const uint8_t capturedA[] = {0,0,0x2c,0,0,0,0,0};
+  const uint8_t capturedB[] = {0,0,0x28,0,0,0,0,0};
+  const uint8_t release[8] = {};
+  assert(parser.decode(2, capturedA, sizeof(capturedA), buttons) && buttons == 0);
+  assert(parser.decode(2, capturedB, sizeof(capturedB), buttons) && buttons == Start);
+  parser.setKeyboardProfile(KeyboardProfile::IineGamebrick);
+  assert(parser.decode(2, capturedA, sizeof(capturedA), buttons) && buttons == A);
+  Snapshot state;
+  updateSnapshot(state, buttons, true);
+  assert(parser.decode(2, release, sizeof(release), buttons) && buttons == 0);
+  updateSnapshot(state, buttons, true);
+  Snapshot read = takeSnapshot(state);
+  assert(read.connected && read.buttons == 0 && read.pressed == A);
+  assert(parser.decode(2, capturedB, sizeof(capturedB), buttons) && buttons == B);
+  updateSnapshot(state, buttons, true);
+  assert(parser.decode(2, release, sizeof(release), buttons) && buttons == 0);
+  updateSnapshot(state, buttons, true);
+  read = takeSnapshot(state);
+  assert(read.buttons == 0 && read.pressed == B);
+  const uint8_t simultaneous[] = {0,0,0x2c,0x28,0x4f,0x52,0,0};
+  assert(parser.decode(2, simultaneous, sizeof(simultaneous), buttons) && buttons == (A | B | Right | Up));
+  updateSnapshot(state, buttons, true);
+  read = takeSnapshot(state);
+  assert(read.buttons == (A | B | Right | Up) && read.pressed == read.buttons);
+  updateSnapshot(state, buttons, true);
+  assert(takeSnapshot(state).pressed == 0);
+  const uint8_t letters[] = {0,0,4,5,0x50,0x51,0,0};
+  assert(parser.decode(2, letters, sizeof(letters), buttons) && buttons == (A | B | Left | Down));
+  parser.setKeyboardProfile(KeyboardProfile::Generic);
+  assert(parser.decode(2, capturedB, sizeof(capturedB), buttons) && buttons == Start);
+  assert(parser.decode(2, capturedA, sizeof(capturedA), buttons) && buttons == 0);
+  assert(parser.configureBootKeyboard());
+  parser.setKeyboardProfile(KeyboardProfile::IineGamebrick);
+  assert(parser.decode(0, capturedA, sizeof(capturedA), buttons) && buttons == A);
+  assert(parser.decode(0, capturedB, sizeof(capturedB), buttons) && buttons == B);
+  assert(parser.configureBootKeyboard());
+  assert(parser.decode(0, capturedB, sizeof(capturedB), buttons) && buttons == Start);
+
+  // Variable-bit keyboard inputs retain profile-specific keys at map parsing.
+  const uint8_t variableMap[] = {
+    0x05,7,0x09,4,0x09,5,0x09,0x2c,0x09,0x28,
+    0x15,0,0x25,1,0x75,1,0x95,4,0x81,2,0x95,4,0x81,1
+  };
+  assert(parser.configure(variableMap, sizeof(variableMap)));
+  uint8_t bits = 0x0c;
+  assert(parser.decode(0, &bits, 1, buttons) && buttons == Start);
+  parser.setKeyboardProfile(KeyboardProfile::IineGamebrick);
+  assert(parser.decode(0, &bits, 1, buttons) && buttons == (A | B));
+  bits = 3;
+  assert(parser.decode(0, &bits, 1, buttons) && buttons == (A | B));
+  bits = 0;
+  assert(parser.decode(0, &bits, 1, buttons) && buttons == 0);
+}
+
 static const uint8_t gamepadMap[] = {
   // Gamepad collection with report ID 3 and ten individual buttons.
   0x05,0x01,0x09,0x05,0xa1,0x01,0x85,0x03,
@@ -268,6 +334,7 @@ int main() {
   accumulatedEdges();
   advertisementCompatibility();
   keyboardReports();
+  iineKeyboardProfile();
   gamepadReports();
   multipleReportsAndNkro();
   packedWideAxesAndPushPop();

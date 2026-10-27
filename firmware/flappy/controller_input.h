@@ -35,6 +35,7 @@ inline Snapshot takeSnapshot(Snapshot& snapshot) {
 }
 
 enum class ControllerName : uint8_t { Unknown, IineKeyboard, Gamepad, IineOther };
+enum class KeyboardProfile : uint8_t { Generic, IineGamebrick };
 
 // Advertising names can change separators or case between firmware revisions.
 inline ControllerName classifyControllerName(const char* name) {
@@ -90,6 +91,7 @@ class HidReportParser {
   void clear() {
     fieldCount_ = reportCount_ = 0;
     valid_ = false;
+    keyboardProfile_ = KeyboardProfile::Generic;
     error_ = "No HID report map";
     for (uint8_t i = 0; i < MaxReports; ++i) reports_[i] = Report();
   }
@@ -223,6 +225,7 @@ class HidReportParser {
   }
 
   bool valid() const { return valid_; }
+  void setKeyboardProfile(KeyboardProfile profile) { keyboardProfile_ = profile; }
   const char* error() const { return error_; }
   uint8_t reportCount() const { return reportCount_; }
   uint8_t reportIdAt(uint8_t index) const { return index < reportCount_ ? reports_[index].id : 0; }
@@ -261,6 +264,7 @@ class HidReportParser {
   Report reports_[MaxReports];
   uint8_t fieldCount_ = 0, reportCount_ = 0;
   bool valid_ = false;
+  KeyboardProfile keyboardProfile_ = KeyboardProfile::Generic;
   const char* error_ = "No HID report map";
 
   bool fail(const char* text) { valid_ = false; error_ = text; return false; }
@@ -315,7 +319,8 @@ class HidReportParser {
       const uint16_t page = uint16_t(fullUsage >> 16);
       const uint16_t code = uint16_t(fullUsage);
       Field field;
-      if (page == 7 && keyboard(code)) field.kind = Kind::Keyboard;
+      // Keep Space fields available for a profile selected after discovery.
+      if (page == 7 && (keyboard(code) || code == 0x2c)) field.kind = Kind::Keyboard;
       else if (page == 9 && gamepadButton(code)) field.kind = Kind::Button;
       else if (page == 1 && direction(code)) field.kind = Kind::Direction;
       else if (page == 1 && code == 0x39) field.kind = Kind::Hat;
@@ -341,7 +346,11 @@ class HidReportParser {
       value |= uint32_t((bytes[(offset + bit) / 8] >> ((offset + bit) & 7)) & 1) << bit;
     return value;
   }
-  static uint16_t keyboard(uint32_t usage) {
+  uint16_t keyboard(uint32_t usage) const {
+    if (keyboardProfile_ == KeyboardProfile::IineGamebrick) {
+      if (usage == 0x2c) return A;
+      if (usage == 0x28) return B;
+    }
     switch (usage) {
       case 0x04: return A;
       case 0x05: return B;
