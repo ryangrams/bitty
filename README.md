@@ -1,8 +1,10 @@
 # M5 Flap
 
-A small flight game for ESP32-based M5StickC devices, with a front action button, a side-button menu, a flying clock, and a two-device Bluetooth race. Original mode uses compatible artwork and optional sound that you supply locally.
+A small game launcher for ESP32-based M5StickC devices. Play Flappy Bird modes, connect a Bluetooth LE controller, or load a local NES cartridge image. Flappy Bird starts by default. Original mode uses compatible artwork and optional sound that you supply locally.
 
-The public package contains MIT-licensed source, two project-created procedural themes, tools, and synthetic test fixtures. Imported artwork, sounds, logos, sprite-derived collision masks, generated headers, screenshots, and asset-bearing firmware stay private. This is an independent project with no affiliation with the original game's creators or M5Stack.
+The public package contains project source, two project-created procedural themes, tools, synthetic test fixtures, and upstream license notices. Imported artwork, sounds, logos, ROMs, generated headers, screenshots, and firmware containing imported material stay private. The NES core is fetched separately at a pinned revision. This is an independent project with no affiliation with the original games' creators or M5Stack.
+
+For the IINE Gamebrick Mini, start with **H mode**, its yellow-light keyboard profile named **IINE-keyboard**. Hold its Pairing button for three seconds, then select **Controller > Pair controller** on the M5. See [controller setup and controls](docs/CONTROLLERS.md). Physical pairing with this controller remains unverified.
 
 ## Build your copy
 
@@ -38,7 +40,15 @@ Use Python 3.11 or newer, [Arduino CLI](https://arduino.github.io/arduino-cli/la
 
    Both paths require this statement: “I confirm I have the rights or permission needed to use and convert the assets I supply for this build.” It records your statement and grants no license. The importer makes no network requests. See [asset input details](assets/README.md) for compatible APKs, optional audio, and custom skins.
 
-4. Build, then choose your device's serial port explicitly:
+4. Optionally import a NES ROM you have the rights or permission to use:
+
+   ```sh
+   python tools/import_rom.py --rom /path/to/game.nes --title "My NES game" --acknowledge-rights
+   ```
+
+   This records your rights statement and grants no license. The ROM importer accepts local files and writes private output under `.local/nes-rom/`. See [NES formats, timing, and build options](docs/NES.md).
+
+5. Build, then choose your device's serial port explicitly:
 
    ```sh
    python tools/build.py
@@ -47,13 +57,17 @@ Use Python 3.11 or newer, [Arduino CLI](https://arduino.github.io/arduino-cli/la
 
    Windows serial ports use names such as `COM3`. Building leaves the serial port closed. Close serial monitors before playing.
 
-Imported files, generated headers, staged sketches, firmware, and release output stay under ignored `.local/`. Dependencies use the existing Arduino data directory and a private sketchbook. [Custom skin imports](assets/README.md#custom-skin-folders) can add up to ten local packs to a build.
+Imported files, generated headers, staged sketches, firmware, and release output stay under ignored `.local/`. Dependencies use the existing Arduino data directory and a private sketchbook. The build prepares the pinned NES core in `.local/nes-deps/` and includes `.local/nes-rom/` when present. [Custom skin imports](assets/README.md#custom-skin-folders) can add up to ten local packs to a build.
 
 ## Buttons and menus
 
-The front M5 button is **Action**: flap, start a round, or select the highlighted menu item. After a crash, wait for replay, press to return to Ready, then press again to start.
+In Flappy Bird, the front M5 button is **Action**: flap, start a round, or select the highlighted menu item. After a crash, wait for replay, press to return to Ready, then press again to start. In NES play, the front button sends Start.
 
 Tap the right side button once to open the menu. Tap it again to move through options. Press Action to select. Hold the right button for at least 0.7 seconds to exit from any menu page. Every page ends with Back. The menu pauses single-player play.
+
+The first two menu choices are **Game at Boot**, which saves your startup choice, and **Change Game**, which switches immediately. The initial startup choice is Flappy Bird. A build with a local ROM shows its title as the NES choice. A build without one shows **NES: no ROM** and keeps that choice unavailable. Menus use portrait orientation; NES play uses landscape with a 4:3 picture and side bars.
+
+A connected controller's A button selects or flaps. Its D-pad moves through menus, and B provides the menu button in Flappy Bird. NES uses the controller's A, B, D-pad, Start and Select inputs. The IINE's missing buttons have combinations described in [controller controls](docs/CONTROLLERS.md#controls).
 
 On the M5StickC Plus, the other side button controls power. Software can read its short presses through the power-management chip, while a long hold can switch the device off. It has no extra gameplay assignment in this build. [Official board documentation](https://docs.m5stack.com/en/core/m5stickc_plus) describes the two GPIO buttons and power key.
 
@@ -80,6 +94,8 @@ Arcade awards one virtual ticket per cleared pipe, plus bonuses of 10, 20, 50, 5
 
 For a race, open **Co-op link**, choose **Host game** on one device and **Join game** on the other, then press Action on both to get ready. The opponent receives a 180-degree hue shift, with inversion for art close to gray. Opening the menu ends the connection. See [pairing, timing, and verification details](docs/COOP.md). A complete two-device radio playthrough still needs a physical test.
 
+Controller pairing and co-op share one Bluetooth radio. Starting either disconnects the other. The controller host supports BLE HID; Bluetooth Classic controller profiles are unsupported by this build. NES compatibility, controls, and current hardware verification limits are documented in [NES](docs/NES.md).
+
 ## Skins and display fit
 
 The Skins menu starts with ten project palette presets: Original, Midnight, Arctic, Desert, Candy, Neon, Mono, Ocean, Pumpkin, and Retro. Two further themes, **Toast on the Run** and **Past Due**, use project-created procedural graphics. Imported custom packs appear after those choices.
@@ -92,15 +108,16 @@ The renderer uses a 144 by 256 pixel canvas. A 135 by 240 display crops 4 pixels
 
 ```sh
 python tools/test.py
+python tools/test.py --nes
 python tools/check_distribution.py --git
 python tools/package_source.py --git
 ```
 
-With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, the co-op protocol, and publication checks. Hardware checks of RTC retention, display brightness, sound and volume, and a complete two-device race remain separate.
+With an extracted source ZIP, omit `--git`. A Git checkout is audited automatically, including reachable history. Tests use independent geometric assets and exercise import, gameplay, application state, rendering, HID reports, the co-op protocol, ROM validation, and publication checks. The optional `--nes` suite prepares the pinned core and runs a synthetic cartridge program through CPU, video, audio, timing and input checks. Physical controller pairing, NES speed and display output, RTC retention, sound and volume, and a complete two-device race require separate hardware checks.
 
 The source exporter writes `.local/releases/m5-flap-source.zip` from the explicit [publication list](PUBLIC_FILES.txt). [Distribution instructions](docs/DISTRIBUTION.md) explain the checks and exclusions. These tools support review and cannot establish ownership or legal clearance.
 
-The code uses the [MIT license](LICENSE) with [upstream notices](THIRD_PARTY_NOTICES.md). Imported assets retain their own rights. Archive.org availability, an uploader's credit, or possession of an APK does not establish permission for your intended use. Read the [rights boundary](docs/RIGHTS.md) before distributing a build.
+Project code uses the [MIT license](LICENSE) with [upstream notices](THIRD_PARTY_NOTICES.md). The NES core uses Apache 2.0. Imported assets and ROMs retain their own rights. Archive.org availability, an uploader's credit, or possession of an APK or cartridge image does not establish permission for your intended use. Read the [rights boundary](docs/RIGHTS.md) before distributing a build.
 
 ## Local storage
 

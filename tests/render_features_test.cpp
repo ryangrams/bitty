@@ -289,7 +289,7 @@ static void volumeMenuShowsLevelsAndCurrentValue() {
   flappy::AppModel app(23);
   preparePlaying(app, flappy::Mode::Original, 10);
   app.openMenu(flappy::MenuPage::Home);
-  app.menu.selection = 2;
+  app.menu.selection = 4;
   app.setVolume(0);
   const auto mutedHome = frame(app);
   app.setVolume(5);
@@ -307,6 +307,65 @@ static void volumeMenuShowsLevelsAndCurrentValue() {
       app.setVolume(uint8_t((index + 1) % 6));
       assert(differentPixels(active, frame(app, options)) > 0);
       app.setVolume(index);
+    }
+  }
+}
+
+static void launcherMenusShowAvailabilityAndTitles() {
+  flappy::AppModel app(27);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  for (flappy::MenuPage page : {flappy::MenuPage::BootGame, flappy::MenuPage::ChangeGame}) {
+    app.openMenu(page);
+    app.menu.selection = 1;
+    const auto missing = frame(app);
+    app.setNesAvailable(true);
+    assert(differentPixels(missing, frame(app)) > 0);
+    app.setNesTitle("Super Mario Bros.");
+    assert(differentPixels(missing, frame(app)) > 0);
+    for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options;
+      options.uiScale = uiScale;
+      for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
+        app.menu.selection = selected;
+        assert(frame(app, options).size() == FramePixels);
+      }
+    }
+    app.setNesAvailable(false);
+    app.setNesTitle(nullptr);
+  }
+  app.setNesAvailable(true);
+  const std::string longTitle(200, 'N');
+  app.setNesTitle(longTitle.c_str());
+  assert(app.setCurrentGame(flappy::GameTitle::Nes));
+  app.openMenu();
+  assert(app.menuItemCount() == 10);
+  for (uint8_t selected : {uint8_t(0), uint8_t(1), uint8_t(8), uint8_t(9)}) {
+    app.menu.selection = selected;
+    flappy::RenderOptions options;
+    options.uiScale = 3;
+    for (uint32_t now : {uint32_t(0), uint32_t(4000), uint32_t(72000)}) {
+      options.nowMs = now;
+      assert(frame(app, options).size() == FramePixels);
+    }
+  }
+}
+
+static void controllerMenuShowsStatusAndActions() {
+  flappy::AppModel app(29);
+  preparePlaying(app, flappy::Mode::Original, 10);
+  app.openMenu();
+  app.menu.selection = 8;
+  const auto off = frame(app);
+  app.setControllerStatus("Searching");
+  assert(differentPixels(off, frame(app)) > 0);
+  app.openMenu(flappy::MenuPage::Controller);
+  for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
+    app.menu.selection = selected;
+    for (uint8_t uiScale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options;
+      options.uiScale = uiScale;
+      options.nowMs = 72000;
+      assert(frame(app, options).size() == FramePixels);
     }
   }
 }
@@ -403,6 +462,8 @@ int main() {
   allModesAndSkinsRespectBufferBounds();
   menusScrollAndRenderEverySelection();
   volumeMenuShowsLevelsAndCurrentValue();
+  launcherMenusShowAvailabilityAndTitles();
+  controllerMenuShowsStatusAndActions();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   viewportCopiesStayInsideBuffers();

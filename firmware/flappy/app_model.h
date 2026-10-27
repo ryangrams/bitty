@@ -6,10 +6,12 @@
 
 namespace flappy {
 
+enum class GameTitle : uint8_t { FlappyBird, Nes };
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
-enum class MenuPage : uint8_t { Closed, Home, Modes, Brightness, Volume, Skins, Clock, Coop };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, Modes, Brightness, Volume, Skins, Clock, Controller, Coop };
 
 struct Settings {
+  GameTitle bootGame = GameTitle::FlappyBird;
   Mode mode = Mode::Original;
   uint8_t brightnessIndex = 3;
   uint8_t volumeIndex = 2;
@@ -71,6 +73,11 @@ class AppModel {
   Game game;
   Settings settings;
   MenuState menu;
+  GameTitle currentGame = GameTitle::FlappyBird;
+  uint32_t gameRequest = 0;
+  uint32_t controllerRequest = 0;
+  uint8_t controllerAction = 0;
+  const char* controllerStatus = "Off";
   bool settingsDirty = false;
   bool highScoresDirty = false;
   uint32_t coopRequest = 0;
@@ -82,10 +89,52 @@ class AppModel {
   }
 
   bool menuOpen() const { return menu.page != MenuPage::Closed; }
-  bool scoreEligible() const { return settings.mode != Mode::Clock && settings.mode != Mode::Demo && settings.mode != Mode::Coop; }
-  bool humanControlling() const { return !automatedMode() || humanOverride_; }
-  bool autoPlaying() const { return automatedMode() && !humanOverride_; }
+  bool scoreEligible() const { return currentGame == GameTitle::FlappyBird && settings.mode != Mode::Clock && settings.mode != Mode::Demo && settings.mode != Mode::Coop; }
+  bool humanControlling() const { return currentGame == GameTitle::FlappyBird && (!automatedMode() || humanOverride_); }
+  bool autoPlaying() const { return currentGame == GameTitle::FlappyBird && automatedMode() && !humanOverride_; }
   uint8_t demoSkill() const { return demoSkill_; }
+
+  void setControllerStatus(const char* status) {
+    controllerStatus = status && *status ? status : "Off";
+  }
+
+  bool nesAvailable() const { return nesAvailable_; }
+
+  void setNesAvailable(bool available) {
+    nesAvailable_ = available;
+    if (!available && currentGame == GameTitle::Nes) setCurrentGame(GameTitle::FlappyBird);
+  }
+
+  void setNesTitle(const char* title) {
+    snprintf(nesTitle_, sizeof(nesTitle_), "%s", title && *title ? title : "NES");
+  }
+
+  const char* nesTitle() const { return nesTitle_; }
+
+  const char* gameLabel(GameTitle title) const {
+    if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
+    return "Flappy Bird";
+  }
+
+  bool setBootGame(GameTitle title) {
+    if (!gameAvailable(title)) return false;
+    if (settings.bootGame != title) settingsDirty = true;
+    settings.bootGame = title;
+    return true;
+  }
+
+  bool setCurrentGame(GameTitle title) {
+    if (!gameAvailable(title)) return false;
+    if (currentGame == title) return true;
+    currentGame = title;
+    ++gameRequest;
+    if (title == GameTitle::FlappyBird) restart();
+    return true;
+  }
+
+  void restoreBootGame() {
+    setCurrentGame(gameAvailable(settings.bootGame) ? settings.bootGame : GameTitle::FlappyBird);
+  }
 
   uint8_t brightness() const {
     constexpr uint8_t levels[] = {4, 20, 65, 140, 255};
@@ -181,11 +230,14 @@ class AppModel {
 
   const char* menuTitle() const {
     switch (menu.page) {
+      case MenuPage::BootGame: return "Game at Boot";
+      case MenuPage::ChangeGame: return "Change Game";
       case MenuPage::Modes: return "Mode";
       case MenuPage::Brightness: return "Brightness";
       case MenuPage::Volume: return "Volume";
       case MenuPage::Skins: return "Skins";
       case MenuPage::Clock: return "Set clock";
+      case MenuPage::Controller: return "Controller";
       case MenuPage::Coop: return "Co-op link";
       default: return "Menu";
     }
@@ -193,12 +245,15 @@ class AppModel {
 
   uint8_t menuItemCount() const {
     switch (menu.page) {
-      case MenuPage::Home: return 7;
+      case MenuPage::Home: return 10;
+      case MenuPage::BootGame:
+      case MenuPage::ChangeGame: return 3;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 6;
       case MenuPage::Volume: return 7;
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
       case MenuPage::Clock: return 4;
+      case MenuPage::Controller: return 4;
       case MenuPage::Coop: return 4;
       default: return 0;
     }
@@ -210,9 +265,11 @@ class AppModel {
     if (index == count - 1) return "Back";
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr const char* labels[] = {"Mode", "Brightness", "Volume", "Skins", "Set clock", "Co-op link"};
+        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Mode", "Brightness", "Volume", "Skins", "Set clock", "Co-op link", "Controller"};
         return labels[index];
       }
+      case MenuPage::BootGame:
+      case MenuPage::ChangeGame: return gameLabel(GameTitle(index));
       case MenuPage::Modes: return modeName(Mode(index));
       case MenuPage::Brightness: {
         constexpr const char* labels[] = {"1: Night", "2: Dim", "3: Medium", "4: Bright", "5: Full"};
@@ -231,6 +288,10 @@ class AppModel {
         constexpr const char* labels[] = {"Hour", "Minute", "24-hour"};
         return labels[index];
       }
+      case MenuPage::Controller: {
+        constexpr const char* labels[] = {"Pair controller", "Disconnect", "Forget pairing"};
+        return labels[index];
+      }
       case MenuPage::Coop: {
         constexpr const char* labels[] = {"Disconnect", "Host game", "Join game"};
         return labels[index];
@@ -242,20 +303,25 @@ class AppModel {
   const char* menuValue(uint8_t index) const {
     switch (menu.page) {
       case MenuPage::Home:
-        if (index == 0) return modeName(settings.mode);
-        if (index == 1) {
+        if (index == 0) return gameLabel(settings.bootGame);
+        if (index == 1) return gameLabel(currentGame);
+        if (index == 2) return modeName(settings.mode);
+        if (index == 3) {
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%u/5", unsigned(settings.brightnessIndex + 1));
           return valueBuffer_;
         }
-        if (index == 2) {
+        if (index == 4) {
           if (!settings.volumeIndex) return "Off";
           if (settings.volumeIndex == 5) return "Full";
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%u%%", unsigned(settings.volumeIndex * 20));
           return valueBuffer_;
         }
-        if (index == 3) return skinNames_ ? skinNames_[settings.skinIndex] : "";
-        if (index == 5) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
+        if (index == 5) return skinNames_ ? skinNames_[settings.skinIndex] : "";
+        if (index == 7) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
+        if (index == 8) return controllerStatus;
         break;
+      case MenuPage::BootGame: return index == uint8_t(settings.bootGame) ? "*" : "";
+      case MenuPage::ChangeGame: return index == uint8_t(currentGame) ? "*" : "";
       case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
       case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
@@ -312,7 +378,7 @@ class AppModel {
       if (actionEdge && !menuHandled) selectMenuItem(nowMs);
       return NoEvent;
     }
-    if (wasOpen || menuHandled) return NoEvent;
+    if (wasOpen || menuHandled || currentGame != GameTitle::FlappyBird) return NoEvent;
 
     if (automatedMode() && actionEdge && !humanOverride_) {
       humanOverride_ = true;
@@ -342,6 +408,8 @@ class AppModel {
   uint16_t bestScores_[unsigned(Mode::Count)];
   const char* const* skinNames_ = nullptr;
   uint8_t skinCount_ = 1;
+  bool nesAvailable_ = false;
+  char nesTitle_[64] = "NES";
   uint32_t randomState_;
   uint32_t menuPressMs_ = 0;
   uint32_t clockBaseMs_ = 0;
@@ -357,6 +425,10 @@ class AppModel {
   bool previousAutoFlap_ = false;
   mutable char labelBuffer_[20] = {};
   mutable char valueBuffer_[12] = {};
+
+  bool gameAvailable(GameTitle title) const {
+    return title == GameTitle::FlappyBird || (title == GameTitle::Nes && nesAvailable_);
+  }
 
   bool automatedMode() const { return settings.mode == Mode::Clock || settings.mode == Mode::Demo; }
 
@@ -435,11 +507,16 @@ class AppModel {
     }
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
-                                             MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
+        constexpr MenuPage destinations[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::Modes,
+                                             MenuPage::Brightness, MenuPage::Volume, MenuPage::Skins,
+                                             MenuPage::Clock, MenuPage::Coop, MenuPage::Controller};
         openMenu(destinations[menu.selection]);
         break;
       }
+      case MenuPage::BootGame: setBootGame(GameTitle(menu.selection)); break;
+      case MenuPage::ChangeGame:
+        if (setCurrentGame(GameTitle(menu.selection))) closeMenu();
+        break;
       case MenuPage::Modes:
         setMode(Mode(menu.selection));
         closeMenu();
@@ -451,6 +528,11 @@ class AppModel {
         if (menu.selection == 0) setClock(uint8_t(clockHour(nowMs) + 1), clockMinute(nowMs), nowMs);
         else if (menu.selection == 1) setClock(clockHour(nowMs), uint8_t(clockMinute(nowMs) + 1), nowMs);
         else { settings.clock24Hour = !settings.clock24Hour; settingsDirty = true; }
+        break;
+      case MenuPage::Controller:
+        controllerAction = uint8_t(menu.selection + 1);
+        ++controllerRequest;
+        closeMenu();
         break;
       case MenuPage::Coop:
         settings.coopRole = menu.selection;

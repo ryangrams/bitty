@@ -1,6 +1,6 @@
 # Third-party notices
 
-The [project MIT license](LICENSE) covers Ryan Grams's contributions to M5 Flap. Adapted code retains the upstream notices below. Third-party dependencies retain their own licenses. Imported game artwork, audio, logos, fonts and generated derivatives receive no license from this project. See [Rights and distribution](docs/RIGHTS.md).
+The [project MIT license](LICENSE) covers Ryan Grams's contributions to M5 Flap. Adapted code retains the upstream notices below. Third-party dependencies retain their own licenses. Imported game artwork, audio, logos, fonts, ROMs and generated derivatives receive no license from this project. See [Rights and distribution](docs/RIGHTS.md).
 
 ## FlapPyBird gameplay reference
 
@@ -22,11 +22,19 @@ The public source distribution excludes installed libraries, toolchains and comp
 | --- | --- | --- |
 | M5Unified | 0.2.21 | [MIT, Copyright (c) 2021 M5Stack](https://github.com/m5stack/M5Unified/blob/0.2.21/LICENSE) |
 | M5GFX | 0.2.28 | [MIT, Copyright (c) 2021 M5Stack](https://github.com/m5stack/M5GFX/blob/0.2.28/LICENSE), with additional notices in bundled components |
+| NimBLE-Arduino | 2.3.6 | [Apache 2.0](https://github.com/h2zero/NimBLE-Arduino/blob/2.3.6/LICENSE), with component and per-file notices |
 | Arduino core for ESP32 | 3.3.11 | [LGPL 2.1 license text](https://github.com/espressif/arduino-esp32/blob/3.3.11/LICENSE.md); [core headers specify LGPL 2.1 or later](https://github.com/espressif/arduino-esp32/blob/3.3.11/cores/esp32/Arduino.h); bundled components retain their own licenses |
+| PeakRacing/nes | `72326d82d642c78717a111629c8e04dbae39e8d0` | [Apache 2.0, Copyright PeakRacing](https://github.com/PeakRacing/nes/blob/72326d82d642c78717a111629c8e04dbae39e8d0/LICENSE) |
 
 M5GFX contains LovyanGFX-derived files and other third-party material with separate notices. Preserve the installed libraries' license files and per-file notices when redistributing them. This table does not replace those terms.
 
-Firmware distribution also carries the obligations of its linked libraries, including applicable LGPL source and relinking requirements. A build containing imported artwork or audio requires separate rights for those assets. The project does not provide such a firmware release.
+Firmware distribution also carries the obligations of its linked libraries, including applicable LGPL source and relinking requirements. A build containing imported artwork, audio or ROMs requires separate rights for those inputs. The project does not provide such a firmware release.
+
+## NES core modifications
+
+`tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/4/37 registry, RGB565 half-frame buffers, 24 kHz audio, and a filesystem guard around the trainer helper. Modified files receive a change notice. Upstream source notices, the license and a generated modification notice remain with the prepared dependency.
+
+The emulator's software license grants no rights to NES cartridge images, game artwork, music, names or other imported content. Local ROMs and firmware containing them are excluded from the public source distribution.
 
 ## Names and affiliation
 

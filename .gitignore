@@ -27,6 +27,12 @@ import_receipt.json
 *.wav
 *.mp3
 *.apk
+*.nes
+*.NES
+*.fds
+*.FDS
+*.rom
+*.ROM
 *.bin
 *.elf
 *.ppm

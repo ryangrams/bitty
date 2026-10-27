@@ -1,8 +1,13 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <driver/rtc_io.h>
+#include <new>
 #include "app_model.h"
 #include "ble_link.h"
+#include "ble_controller.h"
+#include "nes_runtime.h"
+#include "nes_viewport.h"
+#include "generated_rom.h"
 #include "build_clock.h"
 #include "render.h"
 #include "generated_sounds.h"
@@ -10,6 +15,9 @@
 
 flappy::AppModel app;
 flappy::coop::BleLink coopLink;
+flappy::controller::BleController* bluetoothPad = nullptr;
+flappy::NesRuntime nes;
+flappy::NesViewport nesViewport;
 flappy::Viewport viewport;
 Preferences preferences;
 constexpr int StripRows = 16;
@@ -22,6 +30,18 @@ flappy::Renderer* renderer = nullptr;
 uint32_t nextTick = 0;
 uint32_t lastClockReadMs = 0;
 uint32_t handledCoopRequest = 0;
+uint32_t handledControllerRequest = 0;
+uint32_t handledGameRequest = UINT32_MAX;
+uint32_t nextNesTick = 0;
+uint16_t previousPadButtons = 0;
+uint16_t padButtons = 0;
+uint8_t pendingNesButtons = 0;
+uint8_t controllerMenuPulse = 0;
+bool pendingPadAction = false;
+bool nesLandscape = false;
+int16_t (*nesAudioBuffers)[512] = nullptr;
+uint8_t nesAudioIndex = 0;
+const char* runtimeNotice = "";
 bool pendingAction = false;
 bool coopRoundPrepared = false;
 bool coopRoundLaunched = false;
@@ -92,6 +112,8 @@ void loadSettings() {
   app.setVolume(preferences.getUChar("volume", 2));
   app.setSkin(preferences.getUChar("skin", 0));
   app.settings.clock24Hour = preferences.getBool("clock24", true);
+  const uint8_t boot = preferences.getUChar("bootgame", 0);
+  app.settings.bootGame = boot <= uint8_t(flappy::GameTitle::Nes) ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
   app.settings.coopRole = 0;
   app.setBestScore(flappy::Mode::Original, preferences.getUShort("best0", preferences.getUShort("best", 0)));
   app.setBestScore(flappy::Mode::Arcade, preferences.getUShort("best3", 0));
@@ -108,6 +130,7 @@ void saveSettings() {
   preferences.putUChar("volume", app.settings.volumeIndex);
   preferences.putUChar("skin", app.settings.skinIndex);
   preferences.putBool("clock24", app.settings.clock24Hour);
+  preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   app.settingsDirty = false;
 }
 
@@ -145,7 +168,7 @@ void applyOutputSettings() {
 }
 
 void playEvents(uint8_t flags) {
-  if (app.autoPlaying()) return;
+  if (app.currentGame != flappy::GameTitle::FlappyBird || app.autoPlaying()) return;
   if (flags & flappy::Hit) playSound(FlappySounds::hit);
   else if (flags & flappy::Die) playSound(FlappySounds::die);
   else if (flags & flappy::Point) playSound(FlappySounds::point);
@@ -182,6 +205,12 @@ void handleCoopRequest(uint32_t nowMs) {
   handledCoopRequest = app.coopRequest;
   coopRoundPrepared = false;
   coopRoundLaunched = false;
+  if (app.settings.coopRole) {
+    app.setCurrentGame(flappy::GameTitle::FlappyBird);
+    if (bluetoothPad) bluetoothPad->stop();
+    previousPadButtons = padButtons = 0;
+    pendingPadAction = false;
+  }
   if (app.settings.coopRole == 1) {
     coopLink.beginHost(nowMs, nonzeroRandom(), nonzeroRandom(), uint16_t(esp_random() % 360));
   } else if (app.settings.coopRole == 2) {
@@ -219,7 +248,141 @@ void updateCoop(uint32_t nowMs) {
   }
 }
 
+void setNesDisplay(bool landscape) {
+  if (nesLandscape == landscape) return;
+  nesLandscape = landscape;
+  M5.Display.setRotation(landscape ? 1 : 0);
+  M5.Display.fillScreen(TFT_BLACK);
+  if (landscape) nesViewport.configure(M5.Display.width(), M5.Display.height());
+  else viewport.configure(M5.Display.width(), M5.Display.height());
+}
+
+void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
+  if (!nesLandscape || app.menuOpen() || !source || x1 < 0 || y1 < 0 || x2 > 255 || y2 > 239 || x2 < x1 || y2 < y1) return;
+  const int first = nesViewport.firstRow(y1);
+  int end = nesViewport.firstRow(y2 + 1);
+  if (end > nesViewport.height) end = nesViewport.height;
+  const int sourceWidth = x2 - x1 + 1;
+  M5.Display.startWrite();
+  for (int row = first; row < end; row += StripRows) {
+    const int rows = end - row < StripRows ? end - row : StripRows;
+    for (int dy = 0; dy < rows; ++dy) {
+      const int sy = nesViewport.sourceY(row + dy) - y1;
+      for (int x = 0; x < nesViewport.width; ++x) {
+        const int sx = nesViewport.sourceX(x) - x1;
+        canvasStorage[dy * nesViewport.width + x] = sx >= 0 && sx < sourceWidth ? source[sy * sourceWidth + sx] : 0;
+      }
+    }
+    M5.Display.pushImage(nesViewport.x, nesViewport.y + row, nesViewport.width, rows, canvasStorage);
+  }
+  M5.Display.endWrite();
+}
+
+void nesAudio(void*, const int16_t* samples, size_t count, uint32_t rate) {
+  if (!nesAudioBuffers || !app.volume() || app.menuOpen() || !M5.Speaker.isEnabled() || count > 512 || M5.Speaker.isPlaying(1) >= 2) return;
+  int16_t* target = nesAudioBuffers[nesAudioIndex];
+  memcpy(target, samples, count * sizeof(int16_t));
+  if (M5.Speaker.playRaw(target, count, rate, false, 1, 1, false)) nesAudioIndex = uint8_t((nesAudioIndex + 1) % 3);
+}
+
+uint8_t nesButtons(uint16_t buttons) {
+  using namespace flappy::controller;
+  if ((buttons & (Down | A | B)) == (Down | A | B)) return 0;
+  if ((buttons & (Up | A)) == (Up | A)) return flappy::NesRuntime::Start;
+  if ((buttons & (Down | B)) == (Down | B)) return flappy::NesRuntime::Select;
+  uint8_t result = 0;
+  if (buttons & A) result |= flappy::NesRuntime::A;
+  if (buttons & B) result |= flappy::NesRuntime::B;
+  if (buttons & Start) result |= flappy::NesRuntime::Start;
+  if (buttons & Select) result |= flappy::NesRuntime::Select;
+  if (buttons & Up) result |= flappy::NesRuntime::Up;
+  if (buttons & Down) result |= flappy::NesRuntime::Down;
+  if (buttons & Left) result |= flappy::NesRuntime::Left;
+  if (buttons & Right) result |= flappy::NesRuntime::Right;
+  return result;
+}
+
+bool controllerMenuDown() {
+  using namespace flappy::controller;
+  if (padButtons & Menu) return true;
+  if (app.menuOpen()) return (padButtons & B) != 0;
+  if (app.currentGame == flappy::GameTitle::Nes) return (padButtons & (Down | A | B)) == (Down | A | B);
+  return (padButtons & B) != 0;
+}
+
+void updateController(uint32_t nowMs) {
+  using namespace flappy::controller;
+  if (!bluetoothPad) { padButtons = previousPadButtons = 0; return; }
+  bluetoothPad->update(nowMs);
+  const Snapshot snapshot = bluetoothPad->consumeSnapshot();
+  padButtons = snapshot.connected ? snapshot.buttons : 0;
+  const uint16_t pressed = snapshot.pressed | (padButtons & ~previousPadButtons);
+  previousPadButtons = padButtons;
+  app.setControllerStatus(bluetoothPad->statusText());
+  const bool releasedMenuTap = (pressed & Menu) && !(padButtons & Menu);
+  const bool releasedBTap = (pressed & B) && !(padButtons & B) &&
+                            (app.menuOpen() || app.currentGame == flappy::GameTitle::FlappyBird);
+  if (releasedMenuTap || releasedBTap) controllerMenuPulse = 2;
+  if (app.menuOpen()) {
+    if (pressed & (Down | Right)) controllerMenuPulse = 2;
+    if (pressed & (Up | Left)) {
+      const uint8_t count = app.menuItemCount();
+      if (count) app.menu.selection = uint8_t((app.menu.selection + count - 1) % count);
+    }
+    pendingPadAction |= (pressed & (A | Start)) != 0;
+    pendingNesButtons = 0;
+  } else if (app.currentGame == flappy::GameTitle::FlappyBird) {
+    pendingPadAction |= (pressed & (A | Start)) != 0;
+  } else {
+    pendingNesButtons |= nesButtons(padButtons | pressed) & uint8_t(~nesButtons(padButtons & ~pressed));
+  }
+}
+
+void handleControllerRequest(uint32_t nowMs) {
+  if (handledControllerRequest == app.controllerRequest) return;
+  handledControllerRequest = app.controllerRequest;
+  if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+  if (!bluetoothPad) bluetoothPad = new (std::nothrow) flappy::controller::BleController;
+  if (!bluetoothPad) { app.setControllerStatus("Controller memory unavailable"); return; }
+  if (app.controllerAction == 1) bluetoothPad->beginPairing(nowMs);
+  else if (app.controllerAction == 3) bluetoothPad->forget();
+  else if (bluetoothPad) bluetoothPad->stop();
+  padButtons = previousPadButtons = 0;
+  pendingNesButtons = 0;
+  pendingPadAction = false;
+  app.setControllerStatus(bluetoothPad->statusText());
+  nextTick = micros() + TickMicros;
+}
+
+void handleGameRequest() {
+  if (handledGameRequest == app.gameRequest) return;
+  handledGameRequest = app.gameRequest;
+  M5.Speaker.stop();
+  pendingNesButtons = 0;
+  pendingPadAction = pendingAction = false;
+  runtimeNotice = "";
+  if (app.currentGame == flappy::GameTitle::Nes) {
+    if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+    if (!nesAudioBuffers) nesAudioBuffers = new (std::nothrow) int16_t[3][512];
+    nes.setCallbacks(nesVideo, nesAudio, nullptr);
+    if (!nes.ready() && !nes.load(FlappyRom::data, FlappyRom::length)) {
+      runtimeNotice = nes.error();
+      app.setCurrentGame(flappy::GameTitle::FlappyBird);
+      handledGameRequest = app.gameRequest;
+      app.openMenu(flappy::MenuPage::ChangeGame);
+    }
+    nextNesTick = micros();
+  } else {
+    nes.unload();
+    // Keep the three audio buffers alive while the speaker drains its stop marker.
+  }
+  nextTick = micros() + TickMicros;
+}
+
 void showFrame(uint32_t nowMs) {
+  const bool landscape = app.currentGame == flappy::GameTitle::Nes && !app.menuOpen();
+  setNesDisplay(landscape);
+  if (landscape) return;
   flappy::RenderOptions options;
   options.uiScale = viewport.native ? 2 : 3;
   options.nowMs = nowMs;
@@ -240,6 +403,7 @@ void showFrame(uint32_t nowMs) {
   options.remoteRotation = remote.rotation;
   options.remoteFrame = remote.frame;
   options.remoteScore = remote.score;
+  options.notice = runtimeNotice;
   renderer->draw(app, options);
   M5.Display.startWrite();
   for (int y = 0; y < viewport.height; y += StripRows) {
@@ -254,7 +418,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   const bool menuWasOpen = app.menuOpen();
   const uint8_t previousHour = app.settings.clockHour;
   const uint8_t previousMinute = app.settings.clockMinute;
-  const bool inCoop = app.settings.mode == flappy::Mode::Coop;
+  const bool inCoop = app.currentGame == flappy::GameTitle::FlappyBird && app.settings.mode == flappy::Mode::Coop;
   const flappy::coop::Phase phase = coopLink.session().phase();
   bool actionForApp = actionEdge;
   if (inCoop && !menuWasOpen) {
@@ -281,6 +445,8 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   if (!menuWasOpen && app.menuOpen() && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   if (app.settings.mode != flappy::Mode::Coop && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   handleCoopRequest(nowMs);
+  handleControllerRequest(nowMs);
+  handleGameRequest();
   applyOutputSettings();
   if ((events & flappy::GameOver) || app.menuOpen() || app.settingsDirty) saveScores();
   saveSettings();
@@ -309,7 +475,11 @@ void setup() {
   if (count > MaxSkins) count = MaxSkins;
   for (uint8_t i = 0; i < count; ++i) skinNames[i] = renderer->skinName(i);
   app.setSkinNames(skinNames, count);
+  app.setNesAvailable(FlappyRom::length > 0);
+  app.setNesTitle(FlappyRom::title);
   loadSettings();
+  app.restoreBootGame();
+  handleGameRequest();
   initializeClock(millis());
   applyOutputSettings();
   showFrame(millis());
@@ -322,19 +492,37 @@ void loop() {
   pendingAction |= M5.BtnA.wasPressed();
   const uint32_t nowMs = millis();
   readClock(nowMs);
+  updateController(nowMs);
   updateCoop(nowMs);
   const uint32_t now = micros();
   if (int32_t(now - nextTick) >= 0) {
     int catchUp = 0;
     do {
-      stepGame(pendingAction, M5.BtnB.isPressed(), millis());
-      pendingAction = false;
+      bool action = pendingAction || pendingPadAction;
+      if (app.currentGame == flappy::GameTitle::Nes && !app.menuOpen()) {
+        if (pendingAction) pendingNesButtons |= flappy::NesRuntime::Start;
+        action = false;
+      }
+      const bool menuDown = M5.BtnB.isPressed() || controllerMenuDown() || controllerMenuPulse == 2;
+      stepGame(action, menuDown, millis());
+      if (controllerMenuPulse) --controllerMenuPulse;
+      pendingAction = pendingPadAction = false;
       nextTick += TickMicros;
       ++catchUp;
     } while (int32_t(micros() - nextTick) >= 0 && catchUp < 4);
     if (catchUp == 4) nextTick = micros() + TickMicros;
     showFrame(millis());
-  } else {
-    delay(1);
   }
+  if (app.currentGame == flappy::GameTitle::Nes && !app.menuOpen() && nes.ready()) {
+    const uint32_t frameNow = micros();
+    if (int32_t(frameNow - nextNesTick) >= 0) {
+      setNesDisplay(true);
+      nes.step(uint8_t(nesButtons(padButtons) | pendingNesButtons));
+      pendingNesButtons = 0;
+      const uint32_t duration = 1000000U / nes.frameRate();
+      nextNesTick += duration;
+      if (int32_t(micros() - nextNesTick) >= int32_t(duration)) nextNesTick = micros();
+    }
+  }
+  delay(1);
 }

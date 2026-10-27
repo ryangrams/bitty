@@ -36,7 +36,9 @@ static void menuEdgesAndPause() {
   near(d.app.game.pipes[0].x, x);
   assert(d.app.game.stateFrames == frame);
   d.tapMenu();
-  assert(d.app.menu.selection == 1);
+  d.tapMenu();
+  d.tapMenu();
+  assert(d.app.menu.selection == 3);
   d.tick(true);
   assert(d.app.menu.page == MenuPage::Brightness);
   assert(d.app.menu.selection == 0);
@@ -63,8 +65,9 @@ static void everyMenuHasBack() {
   Driver d;
   const char* names[] = {"Original", "Paperwork", "Rubber duck"};
   d.app.setSkinNames(names, 3);
-  const MenuPage pages[] = {MenuPage::Home, MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
-                            MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
+  const MenuPage pages[] = {MenuPage::Home, MenuPage::BootGame, MenuPage::ChangeGame,
+                            MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
+                            MenuPage::Skins, MenuPage::Clock, MenuPage::Controller, MenuPage::Coop};
   for (MenuPage page : pages) {
     d.app.openMenu(page);
     const uint8_t count = d.app.menuItemCount();
@@ -108,24 +111,25 @@ static void volumeSettingsAndMenuNavigation() {
   d.app.setVolume(2);
   assert(!d.app.settingsDirty);
   d.tapMenu();
-  assert(d.app.menuItemCount() == 7);
-  const char* homeLabels[] = {"Mode", "Brightness", "Volume", "Skins", "Set clock", "Co-op link", "Back"};
-  const MenuPage homePages[] = {MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume,
-                               MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
-  for (uint8_t index = 0; index < 7; ++index) {
+  assert(d.app.menuItemCount() == 10);
+  const char* homeLabels[] = {"Game at Boot", "Change Game", "Mode", "Brightness", "Volume",
+                            "Skins", "Set clock", "Co-op link", "Controller", "Back"};
+  const MenuPage homePages[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::Modes,
+                               MenuPage::Brightness, MenuPage::Volume, MenuPage::Skins,
+                               MenuPage::Clock, MenuPage::Coop, MenuPage::Controller};
+  for (uint8_t index = 0; index < 10; ++index) {
     assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
   }
-  assert(std::string(d.app.menuValue(2)) == "40%");
-  for (uint8_t index = 0; index < 6; ++index) {
+  assert(std::string(d.app.menuValue(4)) == "40%");
+  for (uint8_t index = 0; index < 9; ++index) {
     d.app.openMenu();
     d.app.menu.selection = index;
     d.tick(true);
     assert(d.app.menu.page == homePages[index]);
   }
   d.app.openMenu();
-  d.tapMenu();
-  d.tapMenu();
-  assert(d.app.menu.selection == 2);
+  for (unsigned index = 0; index < 4; ++index) d.tapMenu();
+  assert(d.app.menu.selection == 4);
   d.tick(true);
   assert(d.app.menu.page == MenuPage::Volume);
   assert(std::string(d.app.menuTitle()) == "Volume");
@@ -143,7 +147,7 @@ static void volumeSettingsAndMenuNavigation() {
       assert(std::string(d.app.menuValue(marker)) == (marker == index ? "*" : ""));
     }
     d.app.menu.page = MenuPage::Home;
-    assert(std::string(d.app.menuValue(2)) == labels[index]);
+    assert(std::string(d.app.menuValue(4)) == labels[index]);
     d.app.menu.page = MenuPage::Volume;
     d.app.settingsDirty = false;
     d.tick(true);
@@ -154,9 +158,9 @@ static void volumeSettingsAndMenuNavigation() {
   assert(std::string(d.app.menuLabel(6)) == "Back");
   d.tick(true);
   assert(d.app.menu.page == MenuPage::Home);
-  assert(std::string(d.app.menuValue(2)) == "Full");
+  assert(std::string(d.app.menuValue(4)) == "Full");
   d.app.setVolume(0);
-  assert(std::string(d.app.menuValue(2)) == "Off");
+  assert(std::string(d.app.menuValue(4)) == "Off");
   d.app.settingsDirty = false;
   d.app.setVolume(UINT8_MAX);
   assert(d.app.settings.volumeIndex == 5 && d.app.volume() == 255);
@@ -172,6 +176,157 @@ static void volumeSettingsAndMenuNavigation() {
   assert(!d.app.menuOpen());
   d.tick(false, false);
   assert(!d.app.menuOpen());
+}
+
+static void launcherBootAndImmediateChanges() {
+  Driver d;
+  assert(d.app.settings.bootGame == GameTitle::FlappyBird);
+  assert(d.app.currentGame == GameTitle::FlappyBird);
+  assert(d.app.gameRequest == 0 && !d.app.nesAvailable());
+  assert(std::string(d.app.nesTitle()) == "NES");
+  assert(std::string(d.app.gameLabel(GameTitle::FlappyBird)) == "Flappy Bird");
+  assert(std::string(d.app.gameLabel(GameTitle::Nes)) == "NES: no ROM");
+  d.app.setBestScore(Mode::Original, 9);
+  d.tick(true);
+  assert(d.app.game.state == State::Playing);
+  assert(!d.app.setBootGame(GameTitle::Nes));
+  assert(!d.app.setCurrentGame(GameTitle::Nes));
+  assert(d.app.settings.bootGame == GameTitle::FlappyBird && !d.app.settingsDirty);
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 0);
+  for (MenuPage page : {MenuPage::BootGame, MenuPage::ChangeGame}) {
+    d.app.openMenu(page);
+    assert(d.app.menuItemCount() == 3);
+    assert(std::string(d.app.menuTitle()) == (page == MenuPage::BootGame ? "Game at Boot" : "Change Game"));
+    assert(std::string(d.app.menuLabel(0)) == "Flappy Bird");
+    assert(std::string(d.app.menuLabel(1)) == "NES: no ROM");
+    assert(std::string(d.app.menuLabel(2)) == "Back");
+    assert(std::string(d.app.menuValue(0)) == "*");
+    d.app.menu.selection = 1;
+    d.tick(true);
+    assert(d.app.menu.page == page && !d.app.settingsDirty);
+    assert(d.app.gameRequest == 0 && d.app.currentGame == GameTitle::FlappyBird);
+  }
+  char title[] = "Super Mario Bros.";
+  d.app.setNesTitle(title);
+  title[0] = 'X';
+  assert(std::string(d.app.nesTitle()) == "Super Mario Bros.");
+  d.app.setNesAvailable(true);
+  d.app.openMenu(MenuPage::BootGame);
+  assert(std::string(d.app.menuLabel(1)) == "Super Mario Bros.");
+  d.app.menu.selection = 1;
+  const uint32_t beforeBootRound = d.app.roundsStarted;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::BootGame);
+  assert(d.app.settings.bootGame == GameTitle::Nes && d.app.settingsDirty);
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 0);
+  assert(d.app.roundsStarted == beforeBootRound && d.app.game.state == State::Playing);
+  assert(std::string(d.app.menuValue(1)) == "*");
+  d.app.settingsDirty = false;
+  d.tick(true);
+  assert(!d.app.settingsDirty);
+  d.app.openMenu();
+  assert(std::string(d.app.menuValue(0)) == "Super Mario Bros.");
+  assert(std::string(d.app.menuValue(1)) == "Flappy Bird");
+  d.app.menu.selection = 1;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::ChangeGame);
+  d.tapMenu();
+  d.tick(true);
+  assert(d.app.currentGame == GameTitle::Nes && d.app.gameRequest == 1);
+  assert(!d.app.menuOpen() && !d.app.settingsDirty);
+  assert(!d.app.scoreEligible() && !d.app.humanControlling() && !d.app.autoPlaying());
+  const uint32_t pausedFrame = d.app.game.stateFrames;
+  const uint32_t pausedWorld = d.app.game.worldTick();
+  const float pausedBird = d.app.game.birdY, pausedPipe = d.app.game.pipes[0].x;
+  for (unsigned i = 0; i < 100; ++i) assert(d.tick(true) == NoEvent);
+  assert(d.app.game.stateFrames == pausedFrame && d.app.game.worldTick() == pausedWorld);
+  near(d.app.game.birdY, pausedBird);
+  near(d.app.game.pipes[0].x, pausedPipe);
+  d.tapMenu();
+  d.tapMenu();
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::ChangeGame);
+  assert(std::string(d.app.menuValue(1)) == "*");
+  d.tick(true);
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 2);
+  assert(d.app.game.state == State::Ready && d.app.game.bestScore == 9);
+  assert(!d.app.menuOpen() && !d.app.settingsDirty);
+  assert(d.app.settings.bootGame == GameTitle::Nes);
+  assert(d.app.setCurrentGame(GameTitle::FlappyBird));
+  assert(d.app.gameRequest == 2);
+  assert(!d.app.setCurrentGame(GameTitle(UINT8_MAX)));
+  assert(!d.app.setBootGame(GameTitle(UINT8_MAX)));
+  assert(!d.app.settingsDirty && d.app.gameRequest == 2);
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::Nes && d.app.gameRequest == 3);
+  assert(!d.app.settingsDirty);
+  d.app.setNesAvailable(false);
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 4);
+  assert(d.app.settings.bootGame == GameTitle::Nes && !d.app.settingsDirty);
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 4);
+  d.app.setNesAvailable(true);
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::Nes && d.app.gameRequest == 5);
+  assert(d.app.setBootGame(GameTitle::FlappyBird));
+  assert(d.app.currentGame == GameTitle::Nes && d.app.settingsDirty);
+  d.app.settingsDirty = false;
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 6);
+  assert(!d.app.settingsDirty);
+  d.app.settings.bootGame = GameTitle(UINT8_MAX);
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::FlappyBird && d.app.gameRequest == 6);
+  d.app.setNesTitle(nullptr);
+  assert(std::string(d.app.nesTitle()) == "NES");
+  const std::string longTitle(200, 'A');
+  d.app.setNesTitle(longTitle.c_str());
+  assert(std::string(d.app.nesTitle()).size() == 63);
+}
+
+static void controllerMenuRequestsAndStatus() {
+  Driver d;
+  assert(d.app.controllerRequest == 0 && d.app.controllerAction == 0);
+  assert(std::string(d.app.controllerStatus) == "Off");
+  d.app.openMenu();
+  assert(std::string(d.app.menuLabel(8)) == "Controller");
+  assert(std::string(d.app.menuLabel(9)) == "Back");
+  assert(std::string(d.app.menuValue(8)) == "Off");
+  d.app.setControllerStatus("Searching");
+  assert(std::string(d.app.menuValue(8)) == "Searching");
+  d.app.setControllerStatus(nullptr);
+  assert(std::string(d.app.menuValue(8)) == "Off");
+  d.app.setControllerStatus("");
+  assert(std::string(d.app.menuValue(8)) == "Off");
+  d.app.menu.selection = 8;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Controller);
+  assert(std::string(d.app.menuTitle()) == "Controller");
+  assert(d.app.menuItemCount() == 4);
+  const char* labels[] = {"Pair controller", "Disconnect", "Forget pairing", "Back"};
+  for (uint8_t index = 0; index < 4; ++index) assert(std::string(d.app.menuLabel(index)) == labels[index]);
+  for (uint8_t action = 1; action <= 3; ++action) {
+    for (unsigned repeat = 0; repeat < 2; ++repeat) {
+      const uint32_t before = d.app.controllerRequest;
+      d.app.openMenu(MenuPage::Controller);
+      d.app.menu.selection = uint8_t(action - 1);
+      d.tick(true);
+      assert(d.app.controllerAction == action && d.app.controllerRequest == before + 1);
+      assert(!d.app.menuOpen() && !d.app.settingsDirty);
+      assert(d.app.currentGame == GameTitle::FlappyBird);
+    }
+  }
+  d.app.openMenu(MenuPage::Controller);
+  d.app.menu.selection = 3;
+  const uint32_t before = d.app.controllerRequest;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Home && d.app.controllerRequest == before);
+  d.app.setNesAvailable(true);
+  assert(d.app.setCurrentGame(GameTitle::Nes));
+  d.app.openMenu(MenuPage::Controller);
+  d.tick(true);
+  assert(d.app.currentGame == GameTitle::Nes && d.app.controllerAction == 1);
+  assert(d.app.controllerRequest == before + 1);
 }
 
 static void clockAndCoopMenus() {
@@ -408,6 +563,8 @@ int main() {
   menuEdgesAndPause();
   everyMenuHasBack();
   volumeSettingsAndMenuNavigation();
+  launcherBootAndImmediateChanges();
+  controllerMenuRequestsAndStatus();
   clockAndCoopMenus();
   scoresStayWithTheirMode();
   takeoverAndResume();

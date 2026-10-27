@@ -15,6 +15,7 @@ struct RenderOptions {
   uint32_t nowMs = 0;
   const char* coopStatus = "";
   const char* peerName = "";
+  const char* notice = "";
   bool localReady = false, remoteReady = false, multipleHosts = false;
   bool localTint = false, remoteTint = true, remoteVisible = false;
   float remoteY = 0;
@@ -37,6 +38,10 @@ class Renderer {
     if (skins_.selected != app.settings.skinIndex) setSkin(app.settings.skinIndex);
     drawGame(app.game, app.settings.mode, &app, options);
     if (app.menuOpen()) drawMenu(app, options);
+    if (options.notice && *options.notice) {
+      panel(3, app.menuOpen() ? 48 : 222, 138, 9);
+      text(options.notice, 5, app.menuOpen() ? 50 : 224, 1, 0xffff, 33);
+    }
   }
 
  private:

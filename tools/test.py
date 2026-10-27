@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-sanitize", action="store_true")
+    parser.add_argument("--nes", action="store_true", help="Also run the optional NES core host checks")
     args = parser.parse_args()
     subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
                    cwd=ROOT, check=True)
@@ -25,7 +26,9 @@ def main():
     flags = ["-std=c++11", "-Wall", "-Wextra", "-Werror"]
     if not args.no_sanitize:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-    for name in ("game_core_test", "app_model_test", "coop_protocol_test"):
+    for name in ("game_core_test", "app_model_test", "coop_protocol_test", "controller_input_test", "nes_viewport_test"):
+        if not (ROOT / "tests" / (name + ".cpp")).is_file():
+            continue
         executable = target / (name + (".exe" if os.name == "nt" else ""))
         subprocess.run([compiler] + flags + [str(ROOT / "tests" / (name + ".cpp")), "-o", str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
@@ -51,6 +54,11 @@ def main():
             for state in (0, 1, 2):
                 subprocess.run([str(preview), str(width), str(height), str(state)],
                                stdout=subprocess.DEVNULL, check=True)
+    if args.nes:
+        nes_checks = ROOT / "tools" / "test_nes.py"
+        if not nes_checks.is_file():
+            raise SystemExit("NES core host checks are unavailable: tools/test_nes.py is missing")
+        subprocess.run([sys.executable, str(nes_checks)], cwd=ROOT, check=True)
     print("Source-only checks passed. No proprietary assets were used.")
 
 
