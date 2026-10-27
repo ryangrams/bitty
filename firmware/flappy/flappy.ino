@@ -9,6 +9,7 @@
 #include "nes_runtime.h"
 #include "nes_sound_events.h"
 #include "piezo_sound.h"
+#include "piezo_output.h"
 #include "nes_viewport.h"
 #include "mario_viewport.h"
 #include "rom_fingerprint.h"
@@ -35,6 +36,7 @@ flappy::coop::BleLink coopLink;
 flappy::controller::BleController* bluetoothPad = nullptr;
 flappy::NesRuntime nes;
 flappy::PiezoSound piezo;
+flappy::PiezoOutput piezoOutput;
 flappy::TetrisSoundTracker tetrisSounds[2];
 bool piezoDriver = false, soundReady = false;
 uint16_t soundFrequency = 0, soundDuty = 0;
@@ -155,6 +157,18 @@ void playCue(flappy::PiezoCue cue, uint32_t nowMs) {
   piezo.play(cue, nowMs);
 }
 
+struct PiezoDriver {
+  uint32_t setFrequency(uint16_t frequency) { return ledcChangeFrequency(2, frequency, 10); }
+  bool writeDuty(uint16_t duty) { return ledcWrite(2, duty); }
+};
+
+void servicePiezoOutput() {
+  PiezoDriver driver;
+  piezoOutput.service(driver);
+  soundFrequency = piezoOutput.frequency();
+  soundDuty = piezoOutput.duty();
+}
+
 void initializeSound() {
   piezoDriver = M5.getBoard() == m5::board_t::board_M5StickCPlus;
   if (piezoDriver) {
@@ -165,7 +179,10 @@ void initializeSound() {
     digitalWrite(2, LOW);
     gpio_pulldown_en(GPIO_NUM_2);
     soundReady = ledcAttach(2, 2500, 10);
-    if (soundReady) ledcWrite(2, 0);
+    if (soundReady) {
+      soundReady = ledcWrite(2, 0);
+      if (soundReady) piezoOutput.reset(2500, 0);
+    }
   } else soundReady = M5.Speaker.isEnabled();
 }
 
@@ -173,25 +190,28 @@ void serviceSound(uint32_t nowMs) {
   piezo.setQuiet(app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
   piezo.setVolumeIndex(app.settings.volumeIndex);
   if (soundOverride) {
-    if (int32_t(nowMs - soundOverrideUntil) < 0) return;
+    if (int32_t(nowMs - soundOverrideUntil) < 0) {
+      if (piezoDriver && soundReady) servicePiezoOutput();
+      return;
+    }
     soundOverride = false;
-    if (piezoDriver && soundReady) { ledcWrite(2, 0); ledcWriteTone(2, 0); }
+    if (piezoDriver && soundReady) piezoOutput.request(0, 0);
     else if (soundReady) M5.Speaker.stop(0);
     soundFrequency = soundDuty = 0;
     piezo.stop();
   }
   flappy::PiezoTone tone;
-  if (!piezo.update(nowMs, tone) || !soundReady) return;
-  soundFrequency = tone.frequency;
-  soundDuty = tone.frequency ? uint16_t(uint32_t(tone.volume) * 511u / 255u) : 0;
-  if (piezoDriver) {
-    if (tone.frequency && soundDuty) {
-      ledcWriteTone(2, tone.frequency);
-      ledcWrite(2, soundDuty);
-    } else { ledcWrite(2, 0); ledcWriteTone(2, 0); }
-  } else if (tone.frequency && tone.volume) {
-    M5.Speaker.tone(tone.frequency, tone.durationMs, 0, true);
-  } else M5.Speaker.stop(0);
+  if (piezo.update(nowMs, tone) && soundReady) {
+    const uint16_t duty = tone.frequency ? uint16_t(uint32_t(tone.volume) * 511u / 255u) : 0;
+    if (piezoDriver) piezoOutput.request(tone.frequency, duty);
+    else {
+      soundFrequency = tone.frequency;
+      soundDuty = duty;
+      if (tone.frequency && tone.volume) M5.Speaker.tone(tone.frequency, tone.durationMs, 0, true);
+      else M5.Speaker.stop(0);
+    }
+  }
+  if (piezoDriver && soundReady) servicePiezoOutput();
 }
 
 void menuSound(flappy::MenuPage before, uint8_t selection, bool action, uint32_t nowMs) {
@@ -1270,7 +1290,10 @@ void serviceDiagnostics() {
       soundOverrideUntil = millis() + 200;
       soundFrequency = soundReady ? 2500 : 0;
       soundDuty = soundReady ? 511 : 0;
-      if (piezoDriver && soundReady) { ledcWriteTone(2, 2500); ledcWrite(2, 511); }
+      if (piezoDriver && soundReady) {
+        piezoOutput.request(2500, 511);
+        servicePiezoOutput();
+      }
       else if (soundReady) M5.Speaker.tone(2500, 200, 0, true);
       Serial.printf("BEEP driver=%s ready=%u frequency=%u duration_ms=200\n", piezoDriver ? "GPIO2-LEDC" : "M5Speaker", unsigned(soundReady), unsigned(soundFrequency));
     } else if (!strcmp(command, "M5STATUS")) {

@@ -34,6 +34,7 @@ firmware/flappy/nes_sound_events.h
 firmware/flappy/nes_viewport.h
 firmware/flappy/nes_system_button.h
 firmware/flappy/piezo_sound.h
+firmware/flappy/piezo_output.h
 firmware/flappy/render.h
 firmware/flappy/skins.h
 firmware/flappy/stick_power.h
@@ -59,6 +60,7 @@ tests/nes_video_skip_test.c
 tests/nes_viewport_test.cpp
 tests/nes_system_button_test.cpp
 tests/piezo_sound_test.cpp
+tests/piezo_output_test.cpp
 tests/render_features_test.cpp
 tests/render_preview.cpp
 tests/test_asset_import.py
