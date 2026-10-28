@@ -77,6 +77,7 @@ struct Settings {
   uint8_t clockHour = 12;
   uint8_t clockMinute = 0;
   bool clock24Hour = true;
+  bool marioClock = false;
   uint8_t coopRole = 0;
   uint8_t geometryLevel = 0;
   uint8_t arcadeSensitivity = 1;
@@ -157,6 +158,7 @@ class AppModel {
   uint8_t controllerAction = 0;
   const char* controllerStatus = "Off";
   bool speakerBatteryCap = false;
+  bool marioClockAvailable = false;
   bool settingsDirty = false;
   bool highScoresDirty = false;
   uint32_t coopRequest = 0;
@@ -611,6 +613,7 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceCount() + 1;
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::Nes && marioClockAvailable) return 4;
         if (currentGame == GameTitle::FlappyBird) return 5;
         if (currentGame == GameTitle::Tetris) return 9;
         if (currentGame == GameTitle::TetrisZero) return 8;
@@ -650,6 +653,10 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceLabel(index);
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::Nes && marioClockAvailable) {
+          constexpr const char* labels[] = {"Mode", "Set clock", "New game / course"};
+          return labels[index];
+        }
         if (currentGame == GameTitle::FlappyBird) {
           constexpr const char* labels[] = {"Mode", "Skins", "Set clock", "Co-op link"};
           return labels[index];
@@ -751,6 +758,8 @@ class AppModel {
         if (index == 6) return sleepLabel(settings.sleepIndex);
         break;
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::Nes && marioClockAvailable && index == 0)
+          return settings.marioClock ? "Mario Clock" : "Play";
         if (currentGame == GameTitle::FlappyBird) {
           if (index == 0) return modeName(settings.mode);
           if (index == 1) return skinNames_ ? skinNames_[settings.skinIndex] : "";
@@ -1078,6 +1087,15 @@ class AppModel {
         break;
       }
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::Nes && marioClockAvailable) {
+          if (menu.selection == 0) {
+            settings.marioClock = !settings.marioClock;
+            settingsDirty = true;
+            requestGameRestart();
+          } else if (menu.selection == 1) openMenu(MenuPage::Clock);
+          else requestGameRestart();
+          break;
+        }
         if (currentGame == GameTitle::FlappyBird) {
           constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
           openMenu(destinations[menu.selection]);

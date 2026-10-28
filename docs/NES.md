@@ -50,7 +50,7 @@ On a 240×135 display, the native Mario view copies NES columns 8 through 247 at
 
 [Tetris](TETRIS.md) has one launcher entry with **Solo** and **2 players** settings. Solo uses its private TetrisGYM image; two-player play uses its private Tetris Zero image. Both use portrait layouts and M5 settings. You can include those two images, the general NES image and a separate [Geometry Dash](GEOMETRY_DASH.md) image in one build, alongside Flappy Bird.
 
-Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. All D-pad and A/B combinations pass through to the general NES game after automatic startup. Dedicated controller Start, Select and Menu buttons keep their assignments. Use **Game Settings > Restart game** to repeat Mario's automatic launch.
+Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. All D-pad and A/B combinations pass through to the general NES game after automatic startup. Dedicated controller Start, Select and Menu buttons keep their assignments. Use **Game Settings > New game / course** to repeat the recognized standalone Mario's automatic launch. That cartridge also supports [Mario Clock](MARIO_CLOCK.md) through the Mode setting. Other cartridges retain Restart game.
 
 On the recognized Mario cartridge's title screen, Up, Down or B starts a new game. A+B sends native A+Start, continuing at the first stage of the last world reached. A request made during Game Over waits until the title screen. These shortcuts apply outside active play; gameplay keeps ordinary A/B combinations, including running jumps.
 

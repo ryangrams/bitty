@@ -15,6 +15,7 @@
 #include "speaker_audio.h"
 #include "nes_viewport.h"
 #include "mario_viewport.h"
+#include "mario_clock.h"
 #include "rom_fingerprint.h"
 #include "runtime_cartridges.h"
 #include "usb_library.h"
@@ -99,6 +100,10 @@ flappy::MarioViewport marioViewport;
 flappy::MarioCartridge marioCartridge;
 flappy::MarioLauncher marioLauncher;
 flappy::MarioController marioController;
+flappy::MarioClock* marioClock = nullptr;
+bool marioClockActive = false;
+uint32_t marioClockGameRequest = ~uint32_t(0), marioClockRestart = ~uint32_t(0);
+uint32_t marioClockCourses = 0;
 flappy::TetrisViewport tetrisViewport;
 flappy::TetrisZeroViewport zeroViewport;
 flappy::TetrisZero::Options zeroOptions;
@@ -387,7 +392,7 @@ void updateNesSound(uint8_t input1, uint8_t input2, uint32_t nowMs) {
   // Speaker devices play the cartridge's mixed APU output, including music.
   // Input-based cue approximations are reserved for the passive buzzer.
   if (!piezoDriver) return;
-  if (!nes.ready() || app.menuOpen() || tetrisLaunching || zeroLaunching ||
+  if (!nes.ready() || app.menuOpen() || tetrisLaunching || zeroLaunching || marioClockActive ||
       (nativeGeometry && geometryLauncher.active()) ||
       (tetrisLinkActive() && coopLink.session().phase() != flappy::coop::Phase::Playing)) {
     piezo.setNesTone(0, 0, nowMs);
@@ -522,6 +527,7 @@ void loadSettings() {
   arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
   arcadeBestJetpack = preferences.getUInt("jetbest", 0);
   app.settings.clock24Hour = preferences.getBool("clock24", true);
+  app.settings.marioClock = preferences.getBool("marioclock", false);
   const uint8_t boot = preferences.getUChar("bootgame", 0);
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
   app.settings.bootCartridge = preferences.getUChar("bootcart", 0);
@@ -567,6 +573,7 @@ void saveSettings() {
   preferences.putUChar("jetgadget", app.settings.jetpackGadget);
   preferences.putBool("jethead", app.settings.jetpackHeadstart);
   preferences.putBool("clock24", app.settings.clock24Hour);
+  preferences.putBool("marioclock", app.settings.marioClock);
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
   preferences.putUChar("tettype", app.settings.tetrisGameType);
@@ -954,6 +961,15 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
     static uint32_t submitUs = 0;
     if (y1 == 0) { submittedRows = 0; submitUs = 0; }
     const uint32_t submittedAt = micros();
+    if (marioClockActive) {
+      if (marioViewport.targetRow(208) >= 0 && marioViewport.targetRow(215) >= 0)
+        marioClock->captureTile(x1, y1, x2, y2, source);
+      constexpr size_t outputPixels = 240u * 135u;
+      constexpr size_t scratchPixels = sizeof(canvasStorage) / sizeof(canvasStorage[0]) - outputPixels;
+      uint16_t* scratch = canvasStorage + outputPixels;
+      const uint16_t scroll = uint16_t(nes.readRam(0x71a) * 256u + nes.readRam(0x71c));
+      if (marioClock->overlay(x1, y1, x2, y2, source, scratch, scratchPixels, scroll)) source = scratch;
+    }
     const bool complete = marioViewport.consume(x1, y1, x2, y2, source, canvasStorage);
     int first = -1;
     int previous = -2;
@@ -1111,7 +1127,7 @@ void handleControllerRequest(uint32_t nowMs) {
   if (handledControllerRequest == app.controllerRequest) return;
   handledControllerRequest = app.controllerRequest;
   if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
-  nes.setPrgCache(0);
+  if (!marioClockActive) nes.setPrgCache(0);
   if (!bluetoothPad) bluetoothPad = new (std::nothrow) flappy::controller::BleController;
   if (!bluetoothPad) { app.setControllerStatus("Controller memory unavailable"); return; }
   if (app.controllerAction == 1) bluetoothPad->beginPairing(nowMs);
@@ -1500,6 +1516,50 @@ void handleGameRequest() {
   nextTick = micros() + TickMicros;
 }
 
+void startMarioClockCourse() {
+  asyncDisplay.drain();
+  stopGameAudio();
+  if (!marioClock) marioClock = new (std::nothrow) flappy::MarioClock;
+  if (marioClock) marioClock->generate(nonzeroRandom());
+  if (!marioClock || !marioClock->install(nes)) {
+    delete marioClock; marioClock = nullptr;
+    marioClockActive = false;
+    app.settings.marioClock = false;
+    app.settingsDirty = true;
+    runtimeNotice = "Clock memory unavailable";
+    app.requestGameRestart();
+    app.openMenu(flappy::MenuPage::GameSettings);
+    return;
+  }
+  ++marioClockCourses;
+  nes.softReset();
+  nes.setPcmEnabled(false);
+  marioViewport.resetCamera();
+  marioController.reset();
+  marioLauncher.reset(true);
+  marioLaunching = true;
+  gameMessageShown = 0;
+  clearPendingInput();
+  nextNesTick = micros();
+}
+
+void updateMarioClock(uint32_t nowMs) {
+  const bool requested = nativeMario && nes.ready() && marioCartridge.clockSupported() && app.settings.marioClock;
+  const bool reloaded = marioClockGameRequest != app.gameRequest || marioClockRestart != app.gameRestartRequest;
+  marioClockGameRequest = app.gameRequest;
+  marioClockRestart = app.gameRestartRequest;
+  if (!requested) {
+    marioClockActive = false;
+    delete marioClock; marioClock = nullptr;
+    return;
+  }
+  if (!marioClockActive || reloaded) {
+    marioClockActive = true;
+    startMarioClockCourse();
+  } else if (!marioLaunching && !app.menuOpen() && marioClock->finished(nes)) startMarioClockCourse();
+  if (marioClock) marioClock->setTime(app.clockHour(nowMs), app.clockMinute(nowMs), app.settings.clock24Hour);
+}
+
 void restartTetris(bool linked = false, const flappy::coop::StartInfo* start = nullptr) {
   stopGameAudio();
   nes.softReset();
@@ -1824,6 +1884,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   handleControllerRequest(nowMs);
   handleGameRequest();
   handleTetrisRequests(nowMs);
+  updateMarioClock(nowMs);
   handleJetpackUpgrade();
   if (handledArcadeCalibrate != app.arcadeCalibrateRequest) {
     handledArcadeCalibrate = app.arcadeCalibrateRequest;
@@ -2068,6 +2129,7 @@ void setup() {
   for (uint8_t i = 0; i < count; ++i) skinNames[i] = renderer->skinName(i);
   app.setSkinNames(skinNames, count);
   marioCartridge.configure(FlappyRom::data, FlappyRom::length);
+  app.marioClockAvailable = marioCartridge.clockSupported() && viewport.width >= 135 && viewport.height >= 240;
   app.setNesAvailable(FlappyRom::length > 0);
   app.setGeometryDashAvailable(GeometryRom::length > 0);
   app.setNesTitle(marioCartridge.supported() ? "Mario" : FlappyRom::title);
@@ -2087,6 +2149,7 @@ void setup() {
   app.restoreBootGame();
   handleGameRequest();
   initializeClock(millis());
+  updateMarioClock(millis());
   applyOutputSettings();
   showFrame(millis());
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
@@ -2191,6 +2254,12 @@ void serviceDiagnostics() {
         if (selection < app.menuItemCount()) app.menu.selection = uint8_t(selection);
         clearPendingInput();
       }
+    } else if (!strcmp(command,"M5GAMEFRAME") && nativeMario && !marioLaunching && !app.menuOpen()) {
+      asyncDisplay.drain();
+      Serial.println("GAMEFRAME 240 135");
+      Serial.write(reinterpret_cast<const uint8_t*>(canvasStorage),240u * 135u * sizeof(uint16_t));
+      Serial.println("\nGAMEFRAME_END");
+      nextNesTick = micros() + 1000000u / nes.frameRate();
     } else if (!strcmp(command,"M5UIFRAME") && app.menuOpen()) {
       showFrame(millis());
       asyncDisplay.drain();
@@ -2210,8 +2279,15 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5GEOMETRY")) {
       app.setCurrentGame(flappy::GameTitle::GeometryDash);
       app.closeMenu(); handleGameRequest();
-    } else if (!strcmp(command, "M5MARIO")) {
+    } else if (!strcmp(command, "M5MARIOCLOCK")) {
+      app.settings.marioClock = true;
       app.setCurrentGame(flappy::GameTitle::Nes);
+      app.requestGameRestart();
+      app.closeMenu(); handleGameRequest();
+    } else if (!strcmp(command, "M5MARIO")) {
+      app.settings.marioClock = false;
+      app.setCurrentGame(flappy::GameTitle::Nes);
+      app.requestGameRestart();
       app.closeMenu(); handleGameRequest();
     } else if (!strcmp(command, "M5DEMO") || !strcmp(command, "M5ORIGINAL")) {
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
@@ -2290,7 +2366,7 @@ void serviceDiagnostics() {
       asyncDisplay.startFrameProbe(500);
     } else if (!strncmp(command, "M5CACHE ", 8)) {
       unsigned mask = 0;
-      if (sscanf(command + 8, "%u", &mask) == 1 && (mask == 0 || mask == 2 || mask == 3)) {
+      if (!marioClockActive && sscanf(command + 8, "%u", &mask) == 1 && (mask == 0 || mask == 2 || mask == 3)) {
         benchmarkPrgCache = uint8_t(mask);
         nes.setPrgCache(benchmarkPrgCache);
       }
@@ -2343,10 +2419,13 @@ void serviceDiagnostics() {
           unsigned(flappy::TetrisGym::lines(nes)), unsigned(controllerConnected));
       if (nativeMario) {
         const auto player = marioCartridge.sample(nes);
-        Serial.printf("MARIO screen=%u mode=%u task=%u y=%d h=%d camera=%d hz=%u divisor=%u launch=%u\n",
+        Serial.printf("MARIO screen=%u mode=%u task=%u y=%d h=%d camera=%d hz=%u divisor=%u launch=%u clock=%u courses=%lu seed=%lu x=%u engine=%u pause=%u\n",
             unsigned(marioCartridge.screen(nes)), unsigned(nes.readRam(0x770)), unsigned(nes.readRam(0x772)),
             player.y, player.height, marioViewport.worldTop(), unsigned(nes.frameRate()),
-            unsigned(nes.videoDivisor()), unsigned(marioLaunching));
+            unsigned(nes.videoDivisor()), unsigned(marioLaunching), unsigned(marioClockActive),
+            (unsigned long)marioClockCourses, (unsigned long)(marioClock ? marioClock->seed() : 0),
+            unsigned(nes.readRam(0x6d)) * 256 + unsigned(nes.readRam(0x86)),
+            unsigned(nes.readRam(0x0e)), unsigned(marioClock ? marioClock->pauseFrames() : 0));
       }
       if (nativeGeometry) {
         flappy::GeometryScene scene;
@@ -2711,7 +2790,8 @@ void loop() {
             }
           }
           if (!frameTetris && !frameZero && nativeMario) {
-            if (!marioLaunching) input1 = uint8_t(marioController.step(marioCartridge.screen(nes),
+            if (!marioLaunching && marioClockActive) input1 = marioClock->input(nes);
+            else if (!marioLaunching) input1 = uint8_t(marioController.step(marioCartridge.screen(nes),
                 uint8_t(nesButtons(padButtons) | pendingControllerNesButtons)) | pendingNesButtons);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
             if (!marioLaunching && marioBenchmarkFrames) {

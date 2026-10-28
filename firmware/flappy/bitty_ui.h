@@ -15,7 +15,7 @@ constexpr uint16_t Rule = color(46,47,56), Violet = color(109,75,245);
 constexpr uint16_t Glow = color(180,160,255), Amber = color(232,163,61);
 constexpr uint16_t Text = color(240,240,243), Muted = color(185,188,196);
 constexpr uint16_t Low = color(255,107,44);
-constexpr uint32_t SplashMs = 900;
+constexpr uint32_t SplashMs = 2400;
 
 inline void rect(uint16_t* output, int width, int height, int x, int y,
                  int w, int h, uint16_t ink) {

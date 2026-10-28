@@ -49,6 +49,7 @@ void refreshCartridgeViews() {
     FlappyRom::length = selected->length; FlappyRom::title = selected->title;
   }
   marioCartridge.configure(FlappyRom::data, FlappyRom::length);
+  app.marioClockAvailable = marioCartridge.clockSupported() && viewport.width >= 135 && viewport.height >= 240;
   app.setNesAvailable(FlappyRom::length > 0);
   app.setNesTitle(marioCartridge.supported() ? "Mario" : FlappyRom::title);
   app.setGeometryDashAvailable(GeometryRom::length > 0);

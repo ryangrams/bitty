@@ -225,6 +225,18 @@ class NesRuntime {
   }
   uint8_t prgCacheMask() const { return core_ ? core_->host_prg_cache_mask : 0; }
 
+  // Authored level data may replace bytes in an owned, fixed mapper-0 window.
+  // The imported ROM and the mapper's original pointers remain read-only.
+  bool patchCachedPrg(unsigned bank, size_t offset, const uint8_t* data, size_t length) {
+    if (!core_ || core_->nes_rom.mapper_number != 0 || bank >= 4 ||
+        !(core_->host_prg_cache_mask & (1u << bank)) || !data || !length ||
+        offset >= 8192 || length > 8192 - offset) return false;
+    uint8_t* target = core_->host_prg_reads[bank];
+    if (!target || (target != core_->host_prg_cache && target != core_->host_prg_cache_extra)) return false;
+    for (size_t i = 0; i < length; ++i) target[offset + i] = data[i];
+    return true;
+  }
+
   void setPcmEnabled(bool enabled) { if (core_) core_->host_pcm_enabled = enabled; }
   bool pcmEnabled() const { return core_ && core_->host_pcm_enabled; }
 

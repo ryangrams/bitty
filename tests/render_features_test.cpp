@@ -518,6 +518,16 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
     }
   }
   assert(flappy::MenuFont::textWidth("RIGHT NEXT  M5 SELECT", 1) <= 128);
+  app.marioClockAvailable = true;
+  app.setCurrentGame(flappy::GameTitle::Nes);
+  app.openMenu(flappy::MenuPage::GameSettings);
+  for (unsigned clock = 0; clock < 2; ++clock) {
+    app.settings.marioClock = clock != 0;
+    for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
+      assert(flappy::MenuFont::textWidth(app.menuLabel(index)) <= 128);
+      assert(flappy::MenuFont::textWidth(app.menuValue(index)) <= 128);
+    }
+  }
   assert(flappy::MenuFont::textWidth("HOLD RIGHT TO EXIT", 1) <= 128);
 
   app.setCurrentGame(flappy::GameTitle::FlappyBird);

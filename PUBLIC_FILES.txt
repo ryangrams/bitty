@@ -30,6 +30,7 @@ docs/JETPACK_IMPORT.md
 docs/JETPACK_PROGRESSION.md
 docs/JETPACK_RESEARCH.md
 docs/NES.md
+docs/MARIO_CLOCK.md
 docs/RELEASE_STATUS.md
 docs/RIGHTS.md
 docs/SKINS_RESEARCH.md
@@ -74,6 +75,7 @@ firmware/flappy/jetpack_vehicle_physics.h
 firmware/flappy/library_protocol.h
 firmware/flappy/library_service.h
 firmware/flappy/mario_viewport.h
+firmware/flappy/mario_clock.h
 firmware/flappy/menu_font.h
 firmware/flappy/nes_runtime.h
 firmware/flappy/nes_sound_events.h
@@ -141,6 +143,7 @@ tests/jetpack_time_step_test.cpp
 tests/jetpack_vehicle_physics_test.cpp
 tests/library_protocol_test.cpp
 tests/mario_viewport_test.cpp
+tests/mario_clock_test.cpp
 tests/menu_font_test.cpp
 tests/nes_apu_pcm_test.c
 tests/nes_cpu_idle_test.cpp

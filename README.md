@@ -93,6 +93,8 @@ Hold the right side button for at least 700 ms (0.7 seconds) to open the menu du
 
 Menus now use Bitty’s pixel mark and website colors, with an estimated battery percentage and a separate external-power indicator. Startup plays a brief Bitty animation with `bitty.games` beneath it. See [battery, native text and splash details](docs/BITTY_UI.md).
 
+[Mario Clock](docs/MARIO_CLOCK.md) adds automatic play through generated ground courses, with the time built from native tiles in periodic clearings. It uses a privately supplied, recognized NTSC Mario cartridge. Select **Mario > Game Settings > Mode** to switch between Play and Mario Clock.
+
 Home contains **Game at Boot**, **Change Game**, **Game Settings**, **Brightness**, **Volume**, **Controller**, **Sleep** and **Back**. Game at Boot saves your startup choice; Change Game switches immediately. The seven visible game choices are **Flappy Bird**, the general **NES** cartridge with its imported title, **Tetris**, **Geometry Dash**, **Galaga**, **Arkanoid** and **Jetpack Joyride**. Missing cartridges remain unavailable. Flappy Bird is the initial startup choice.
 
 Game Settings holds the selected game's options. Flappy Bird puts Mode, Skins, Set clock and Co-op link there. Selecting a skin returns immediately to play. Geometry Dash provides Level and Restart level; selecting a level returns to gameplay after automatic cartridge preparation. Its first startup includes about 15 seconds of Famidash credits. Menus and Tetris use portrait orientation. Geometry Dash fills the landscape display with its procedural renderer. General NES play uses landscape with a scaled 4:3 picture or the recognized Mario cartridge's native pixel view. See [NES display details](docs/NES.md#screen-and-controls).

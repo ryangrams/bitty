@@ -16,10 +16,12 @@ Menu footers name the physical controls: right advances, M5 selects, and holding
 
 ## Startup
 
-Five pieces assemble into the Bitty pixel mark. The name follows, with `bitty.games` below. The sequence lasts about 0.9 seconds. Either front or right button can skip after its first 0.16 seconds. Release the button before playing. The saved boot choice then launches. Ordinary sleep resume retains the game and does not replay the splash.
+Five pieces assemble into the Bitty pixel mark. The name follows, with `bitty.games` below. The sequence lasts about 2.4 seconds, including an extra 1.5-second hold on the finished mark. Either front or right button can skip after its first 0.16 seconds. Release the button before playing. The saved boot choice then launches. Ordinary sleep resume retains the game and does not replay the splash.
 
 The animation reuses the existing canvas and asynchronous display buffers. It adds no image asset, framebuffer or font dependency. The Terminus font retains its existing OFL notice.
 
 ## Verification
 
 Portable tests cover valid and failed battery readings, percentage boundaries, native crop visibility, animation clipping and buffer guards, opaque menu backgrounds and battery updates confined to the header. The text audit covers every menu page, including Jetpack upgrades and missions. Both board targets compile. Connected-device results are recorded with the private release receipt; a compiled StickS3 build still needs physical checks.
+
+The previous 0.9-second sequence and four menu pages were checked on the original Plus. The new 2.4-second splash is covered by portable rendering checks and both builds. Its device load is pending while the connected MacBook is unreachable.

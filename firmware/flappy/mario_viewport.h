@@ -20,6 +20,7 @@ class MarioCartridge {
   enum class Screen : uint8_t { Other, Title, GameOver, Playing };
   bool configure(const uint8_t* rom, size_t length) {
     supported_ = false;
+    standalone_ = false;
     if (!rom || (length != 524304u && length != 40976u)) return false;
     uint32_t crc = 0xffffffffu;
     for (size_t i = 0; i < length; ++i) {
@@ -28,12 +29,14 @@ class MarioCartridge {
         crc = (crc >> 1u) ^ (0xedb88320u & (0u - (crc & 1u)));
     }
     const uint32_t checksum = crc ^ 0xffffffffu;
-    supported_ = (length == 40976u && checksum == 0x3337ec46u) ||
+    standalone_ = length == 40976u && checksum == 0x3337ec46u;
+    supported_ = standalone_ ||
         (length == 524304u && checksum == 0x4aa87799u);
     return supported_;
   }
 
   bool supported() const { return supported_; }
+  bool clockSupported() const { return standalone_; }
 
   template<class Runtime>
   Screen screen(const Runtime& runtime) const {
@@ -69,6 +72,7 @@ class MarioCartridge {
  private:
   friend struct MarioCartridgeTestAccess;
   bool supported_ = false;
+  bool standalone_ = false;
 };
 
 // Short title-screen inputs become native Start or A+Start. A brief grace period

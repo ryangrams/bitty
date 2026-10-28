@@ -9,10 +9,14 @@ The source and public interface preview are available. Firmware downloads remain
 - A two-column device game picker with native bitmap text, game icons and separate generic NES cartridge entries.
 - Public builds with authored starter art and private ROM/APK discovery disabled, a locked installer bundle, provenance and separate flash parts.
 - Mario camera tracking from stable RAM coordinates. Small, standing big and crouching big Mario have distinct anchors. Animation and invincibility blinking no longer choose the tracking target.
+- Mario Clock uses generated ground courses in the supplied NTSC cartridge, with native tile clocks in periodic clearings. Its private host test completes 128 consecutive courses. The [clock notes](MARIO_CLOCK.md) record its device-test boundary.
+- Bitty menu branding, native 6 by 12 text, a battery estimate and an animated startup mark with the website address. The splash now lasts 2.4 seconds.
 - Imported Jetpack formation pitch, vertical placement, isolated spacing, distance gates, obstacle profiles and smooth rotation.
 - Reusable M5Stick development, game-fidelity and content-to-GitHub skills, including Codex and Claude installation instructions.
 
 ## Verification
+
+The earlier 0.9-second Bitty UI build was flashed to the original Plus with its partition table and records retained. Four menu framebuffer captures covered Home, game selection, skins and Controller. Its AXP192 reported external power, active charging and roughly 4.11 V, yielding a 100% voltage estimate. The longer splash and Mario Clock builds compile for Plus and StickS3. Their next hardware load is pending because the connected MacBook became unreachable. Mario Clock's LCD throughput and memory with Bluetooth still need device measurements.
 
 The [StickS3 audio target](STICKS3_AUDIO.md) adds a separate ESP32-S3 build, native codec output, NES PCM music and effects, authored Flappy fallback sounds, menu volume previews and a battery volume cap. Both hardware families compile. Portable tests cover audio buffer ownership, backpressure, target isolation, flash receipt validation and power detection. These are software checks. Audible output and simultaneous audio, video and Bluetooth performance still need a connected StickS3.
 

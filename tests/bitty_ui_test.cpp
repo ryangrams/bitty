@@ -40,7 +40,8 @@ int main() {
     assert(pixels[14 * width + 10] == BittyUi::Glow);
   }
   std::vector<uint16_t> finished;
-  for (unsigned elapsed = 0; elapsed <= 1200; elapsed += 10) {
+  assert(BittyUi::SplashMs == 2400);
+  for (unsigned elapsed = 0; elapsed <= BittyUi::SplashMs + 100; elapsed += 10) {
     BittyUi::splash(pixels,width,height,elapsed);
     guards(); nativeCrop();
     if (elapsed == 900) finished.assign(pixels,pixels + size);

@@ -1207,7 +1207,39 @@ static void cartridgeCatalogSelectionAndBoot() {
   assert(d.app.gameChoiceCartridge(d.app.gameChoiceCount() - 1) == 12);
 }
 
+static void marioClockSettings() {
+  Driver d;
+  d.app.setNesAvailable(true);
+  d.app.setNesTitle("Mario");
+  d.app.setCurrentGame(GameTitle::Nes);
+  d.app.openMenu(MenuPage::GameSettings);
+  assert(d.app.menuItemCount() == 2);
+  d.app.marioClockAvailable = true;
+  assert(d.app.menuItemCount() == 4);
+  assert(std::string(d.app.menuLabel(0)) == "Mode");
+  assert(std::string(d.app.menuValue(0)) == "Play");
+  const uint32_t restart = d.app.gameRestartRequest;
+  d.tick(true);
+  assert(d.app.settings.marioClock && d.app.settingsDirty);
+  assert(!d.app.menuOpen() && d.app.gameRestartRequest == restart + 1);
+  d.tick(false);
+  d.app.openMenu(MenuPage::GameSettings);
+  assert(std::string(d.app.menuValue(0)) == "Mario Clock");
+  d.app.menu.selection = 1;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::Clock);
+  d.tick(false);
+  d.app.menu.selection = 3;
+  d.tick(true);
+  assert(d.app.menu.page == MenuPage::GameSettings);
+  d.tick(false);
+  d.tick(true);
+  assert(!d.app.settings.marioClock && !d.app.menuOpen());
+  assert(d.app.gameRestartRequest == restart + 2);
+}
+
 int main() {
+  marioClockSettings();
   cartridgeCatalogSelectionAndBoot();
   menuEdgesAndPause();
   everyMenuHasBack();

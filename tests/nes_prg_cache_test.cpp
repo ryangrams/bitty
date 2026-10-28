@@ -177,6 +177,33 @@ static void allocationFailureAndInvalidMasksPreserveLiveCache() {
 }
 
 int main() {
+  for (unsigned mapper : {0u, 1u, 4u}) {
+    auto rom = cartridge(mapper);
+    const auto original = rom;
+    flappy::NesRuntime runtime;
+    uint8_t patch[] = {0x12,0x34};
+    assert(!runtime.patchCachedPrg(0,0,patch,2));
+    assert(runtime.load(rom.data(),rom.size()));
+    assert(!runtime.patchCachedPrg(0,0,patch,2));
+    assert(runtime.setPrgCache(3));
+    assert(!runtime.patchCachedPrg(2,0,patch,2));
+    assert(!runtime.patchCachedPrg(4,0,patch,2));
+    assert(!runtime.patchCachedPrg(0,8191,patch,2));
+    assert(!runtime.patchCachedPrg(0,8192,patch,1));
+    assert(!runtime.patchCachedPrg(0,0,nullptr,1));
+    assert(!runtime.patchCachedPrg(0,0,patch,0));
+    assert(runtime.patchCachedPrg(1,8190,patch,2) == (mapper == 0));
+    if (mapper == 0) {
+      assert(core(runtime)->host_prg_reads[1][8190] == 0x12);
+      assert(core(runtime)->host_prg_reads[1][8191] == 0x34);
+      assert(runtime.softReset());
+      assert(core(runtime)->host_prg_reads[1][8190] == 0x12);
+      assert(runtime.setPrgCache(0));
+      assert(!runtime.patchCachedPrg(1,8190,patch,2));
+      assert(core(runtime)->host_prg_reads[1][8190] == original[16+16382]);
+    }
+    assert(rom == original);
+  }
   fixedWindowsPreserveStateAndBankIdentity();
   mapperCallbacksRetainReadOwnership();
   allocationFailureAndInvalidMasksPreserveLiveCache();
