@@ -9,7 +9,7 @@ struct JetpackTimeStep {
   static int32_t rounded(int64_t value, int64_t divisor) {
     return int32_t(value < 0 ? -((-value + divisor / 2) / divisor) : (value + divisor / 2) / divisor);
   }
-  static uint32_t bounded(uint32_t scale) { return scale > Unit ? Unit : scale; }
+  static uint32_t bounded(uint32_t scale) { return scale > Unit ? uint32_t(Unit) : scale; }
   static int32_t scale(int32_t value, uint32_t factor) {
     return rounded(int64_t(value) * bounded(factor), Unit);
   }

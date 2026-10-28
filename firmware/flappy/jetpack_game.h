@@ -717,11 +717,11 @@ class JetpackGame {
       zap.x = 258 * Unit;
       const unsigned kind = random() % 8;
       if (kind <= 2) {
-        zap.y = kind == 0 ? Ceiling : kind == 1 ? Floor : int16_t(47 + random() % 42);
+        zap.y = kind == 0 ? int16_t(Ceiling) : kind == 1 ? int16_t(Floor) : int16_t(47 + random() % 42);
         zap.dx = 32; zap.dy = 0;
       } else if (kind <= 4) {
         zap.dy = int16_t(36 + random() % 12);
-        zap.y = kind == 3 ? Ceiling : int16_t(Floor - zap.dy);
+        zap.y = kind == 3 ? int16_t(Ceiling) : int16_t(Floor - zap.dy);
         zap.dx = 0;
       } else if (kind <= 6) {
         zap.y = kind == 5 ? Ceiling : Floor;
