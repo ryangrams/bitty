@@ -73,7 +73,7 @@ class HockeyGame {
   }
   void hold() { ++ticks_; }
   hockey::Frame frame() const {
-    hockey::Frame f; f.tick=uint16_t(ticks_); f.map=map_; f.palette=options_.palette; f.rules=options_.powers; f.phase=phase_; f.puckMask=0;
+    hockey::Frame f; f.tick=ticks_; f.map=map_; f.palette=options_.palette; f.rules=options_.powers; f.phase=phase_; f.puckMask=0;
     for (unsigned i=0;i<3;++i) { f.x[i]=pixel(pucks_[i].x,134); f.y[i]=pixel(pucks_[i].y,239); if(pucks_[i].active) f.puckMask|=uint8_t(1<<i); }
     for (unsigned i=0;i<2;++i) {
       f.paddles[i]=pixel(players_[i].x,134); f.scores[i]=scores_[i]; f.powers[i]=players_[i].power;

@@ -32,7 +32,7 @@ struct Options {
 
 // Coordinates stay in host world space. The Queen's display rotates the rink.
 struct Frame {
-  uint16_t tick = 0;
+  uint32_t tick = 0;
   uint8_t x[3] = {}, y[3] = {}, paddles[2] = {67,67}, scores[2] = {};
   Power powers[2] = {Power::None,Power::None};
   uint8_t remaining[2] = {};

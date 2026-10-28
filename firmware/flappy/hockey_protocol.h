@@ -17,11 +17,11 @@ inline bool encodePayload(Part part,const Frame& f,const Input& in,uint8_t* b) {
   if(part==Part::Input) {
     write16(b,in.sequence); write16(b+2,uint16_t(in.move)); b[4]=uint8_t((in.finished ? 1 : 0)|(in.viewReady ? 2 : 0));
   } else if(part==Part::Motion) {
-    write16(b,f.tick);
+    write16(b,uint16_t(f.tick));
     for(unsigned i=0;i<3;++i) { b[2+i*2]=f.x[i]; b[3+i*2]=f.y[i]; }
     b[8]=f.paddles[0]; b[9]=f.paddles[1]; b[10]=uint8_t(f.puckMask|(uint8_t(f.phase)<<3)|(f.stunMask<<6));
   } else {
-    write16(b,f.tick); b[2]=uint8_t(f.scores[0]|(f.scores[1]<<4));
+    write16(b,uint16_t(f.tick)); b[2]=uint8_t(f.scores[0]|(f.scores[1]<<4));
     b[3]=uint8_t(f.map|(f.palette<<3)|(uint8_t(f.rules)<<5));
     b[4]=uint8_t(uint8_t(f.powers[0])|(uint8_t(f.powers[1])<<4));
     b[5]=f.remaining[0]; b[6]=f.remaining[1]; b[7]=uint8_t(uint8_t(f.pickup)|(f.pickupOwner<<4));
@@ -71,8 +71,9 @@ class Channel {
   }
   bool receiveFrame(Part part,const Frame& frame,uint32_t now) {
     if(part==Part::Input || !valid(frame) || (haveCurrent_ && !newer(frame.tick,current_.tick))) return false;
-    if(!parts_ || newer(frame.tick,pending_.tick)) { pending_=Frame(); pending_.tick=frame.tick; parts_=0; }
-    if(frame.tick!=pending_.tick) return false;
+    const uint16_t sequence=uint16_t(frame.tick);
+    if(!parts_ || newer(sequence,uint16_t(pending_.tick))) { pending_=Frame(); pending_.tick=sequence; parts_=0; }
+    if(sequence!=uint16_t(pending_.tick)) return false;
     if(part==Part::Motion) {
       for(unsigned i=0;i<3;++i) { pending_.x[i]=frame.x[i]; pending_.y[i]=frame.y[i]; }
       for(unsigned i=0;i<2;++i) pending_.paddles[i]=frame.paddles[i];
@@ -85,6 +86,8 @@ class Channel {
     }
     if(parts_==3) {
       if(!valid(pending_)) { parts_=0; return false; }
+      // Expand the wire counter so moving rink features keep their world phase.
+      if(haveCurrent_) pending_.tick=current_.tick+uint16_t(sequence-uint16_t(current_.tick));
       previous_=current_; previousMs_=currentMs_; havePrevious_=haveCurrent_;
       current_=pending_; currentMs_=now; haveCurrent_=true; parts_=0;
     }
@@ -105,6 +108,7 @@ class Channel {
     if(!havePrevious_ || !span || span>100 || current_.phase!=previous_.phase || current_.phase!=Phase::Rally) return true;
     const uint32_t age=uint32_t(now-currentMs_);
     const float alpha=age>=PacketIntervalMs ? 1.f : float(span+age>PacketIntervalMs ? span+age-PacketIntervalMs : 0)/span;
+    result.tick=previous_.tick+uint32_t(float(uint32_t(current_.tick-previous_.tick))*alpha+.5f);
     for(unsigned i=0;i<3;++i) if((current_.puckMask&previous_.puckMask)&(1<<i)) {
       const int dx=int(current_.x[i])-previous_.x[i],dy=int(current_.y[i])-previous_.y[i];
       if(dx*dx+dy*dy<1600) { result.x[i]=mix(previous_.x[i],current_.x[i],alpha); result.y[i]=mix(previous_.y[i],current_.y[i],alpha); }

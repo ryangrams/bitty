@@ -42,7 +42,10 @@ static void pairedFramesAndStaleness() {
   assert(!c.receiveFrame(hockey::Part::Motion,f,4));
   next.tick=0; next.x[0]=45;
   assert(c.receiveFrame(hockey::Part::Board,next,34)); assert(c.latest().tick==65535);
-  assert(c.receiveFrame(hockey::Part::Motion,next,36)); assert(c.latest().tick==0);
+  assert(c.receiveFrame(hockey::Part::Motion,next,36)); assert(c.latest().tick==65536);
+  float hx,hy,hr,gx,gy,gr;
+  HockeyGame::bumper(3,65536,0,hx,hy,hr); HockeyGame::bumper(3,c.latest().tick,0,gx,gy,gr);
+  assert(hx==gx && hy==gy && hr==gr);
   hockey::Frame display; assert(c.display(45,display)); assert(display.x[0]>35 && display.x[0]<45);
   assert(c.display(400,display) && display.phase==hockey::Phase::LinkWait);
   hockey::Input input; input.sequence=65535; input.move=-1024;
@@ -85,6 +88,24 @@ struct Match {
     net::StartInfo a,b; assert(host.consumeStart(a) && guest.consumeStart(b)); assert(a.seed==b.seed && a.baseHue==b.baseHue);
   }
 };
+static void longMatchWorldPhase() {
+  hockey::Channel channel; HockeyGame game; game.reset(11);
+  for(unsigned tick=0;tick<270000;tick+=100) {
+    auto frame=game.frame(); frame.tick=tick; frame.map=3;
+    for(auto type:{net::MessageType::HockeyMotion,net::MessageType::HockeyBoard}) {
+      auto m=message(type); m.hockeyFrame=frame; const auto wire=packet(m); net::Message decoded;
+      assert(net::decode(wire.bytes,wire.length,decoded));
+      assert(channel.receiveFrame(net::hockeyPart(type),decoded.hockeyFrame,tick));
+    }
+    assert(channel.latest().tick==tick);
+    for(unsigned map=0;map<hockey::MapCount;++map) for(unsigned i=0;i<HockeyGame::bumperCount(uint8_t(map));++i) {
+      float ax,ay,ar,bx,by,br;
+      HockeyGame::bumper(uint8_t(map),tick,i,ax,ay,ar);
+      HockeyGame::bumper(uint8_t(map),channel.latest().tick,i,bx,by,br);
+      assert(ax==bx && ay==by && ar==br);
+    }
+  }
+}
 static void sessions() {
   for(uint32_t begin:{0u,UINT32_MAX-2000}) {
     Match m(begin); m.start(begin); m.drop=true;
@@ -110,4 +131,4 @@ static void sessions() {
     m.host.advance(begin+66000); assert(m.host.phase()==net::Phase::Disconnected);
   }
 }
-int main() { codec(); pairedFramesAndStaleness(); sessions(); std::cout<<"Hockey link: 20-byte paired snapshots, truncation rejection, ordering, wrap, interpolation, stale inputs, dropped packets, role/session checks and rematches passed\n"; }
+int main() { codec(); pairedFramesAndStaleness(); longMatchWorldPhase(); sessions(); std::cout<<"Hockey link: 20-byte paired snapshots, truncation rejection, ordering, 75-minute world phase, wrap, interpolation, stale inputs, dropped packets, role/session checks and rematches passed\n"; }
