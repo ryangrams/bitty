@@ -684,7 +684,7 @@ class Renderer {
       }
       if (!back && *app.menuValue(index)) rect(x + 54, y + 3, 4, 4, ink);
     }
-    const bool available = app.menu.selection + 1 == count || app.gameChoiceAvailable(app.menu.selection);
+    const bool available = unsigned(app.menu.selection) + 1 == count || app.gameChoiceAvailable(app.menu.selection);
     menuCentered(available ? "A SELECT  MENU NEXT" : "ADD ROM VIA USB", 215, 1, rgb(166, 224, 232));
     menuCentered("HOLD MENU TO EXIT", 231, 1);
   }
