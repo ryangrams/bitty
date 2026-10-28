@@ -1,4 +1,5 @@
 #include "../firmware/flappy/app_model.h"
+#include "../firmware/flappy/game_home.h"
 #include "../firmware/flappy/mario_viewport.h"
 #include "../firmware/flappy/nes_runtime.h"
 #include "../firmware/flappy/rom_fingerprint.h"
@@ -8,6 +9,7 @@
 #include "../firmware/flappy/geometry_launcher.h"
 #include "../firmware/flappy/geometry_level.h"
 #include "../firmware/flappy/speaker_audio.h"
+#include "../firmware/flappy/jetpack_game.h"
 
 #include <cassert>
 #include <cstring>
@@ -36,7 +38,10 @@ struct Hardware {
   struct DisplayType { int width() const { return 240; } int height() const { return 135; } } Display;
 } M5;
 struct Link {
-  struct Session { flappy::coop::Role role() const { return flappy::coop::Role::Off; } } value;
+  struct Session {
+    flappy::coop::Role selected = flappy::coop::Role::Off;
+    flappy::coop::Role role() const { return selected; }
+  } value;
   const Session& session() const { return value; }
 } coopLink;
 
@@ -52,6 +57,10 @@ flappy::GeometryLauncher geometryLauncher;
 uint32_t handledGeometryRequest = 0;
 uint8_t geometryHeld = 0;
 flappy::AppModel app;
+flappy::GameHome gameHome;
+flappy::ArcadeControls arcadeControls;
+flappy::JetpackGame* jetpackGame = nullptr;
+uint32_t handledRestart = 0, handledTetrisRequest = 0, handledZeroRequest = 0, handledTetrisLink = 0;
 flappy::NesRuntime nes;
 flappy::MarioCartridge marioCartridge;
 flappy::MarioViewport marioViewport;
@@ -126,7 +135,7 @@ static void checkLoad(bool nes2, bool pal, unsigned mapper) {
   handledGameRequest = UINT32_MAX;
   pendingNesButtons = pendingControllerNesButtons = 0xff;
   tetrisLaunching = zeroLaunching = marioLaunching = nativeMario = true;
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(geometryPresentation == nullptr);
   assert(pendingNesButtons == 0 && pendingControllerNesButtons == 0);
   assert(!tetrisLaunching && !zeroLaunching);
@@ -143,10 +152,10 @@ static void checkLoad(bool nes2, bool pal, unsigned mapper) {
     for (unsigned frame = 0; frame < 3; ++frame) assert(nes.step(0));
   }
   const unsigned stops = audioStops;
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(stops == audioStops);
   assert(app.setCurrentGame(flappy::GameTitle::FlappyBird));
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(!nes.ready() && renderer->cacheEnabled);
 }
 
@@ -164,18 +173,18 @@ static void checkGeometrySlot() {
   assert(app.setCurrentGame(flappy::GameTitle::GeometryDash));
   handledGameRequest = UINT32_MAX;
   nativeMario = marioLaunching = true;
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(!nes.ready() && !nativeMario && !nativeGeometry && !marioLaunching);
   assert(geometryPresentation == nullptr);
   assert(std::strcmp(runtimeNotice, "Geometry Dash ROM mismatch") == 0);
   assert(app.currentGame == flappy::GameTitle::FlappyBird);
   assert(app.menu.page == flappy::MenuPage::ChangeGame);
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(nes.ready() && nes.core()->nes_rom.mapper_number == 0);
   assert(FlappyRom::data == mario.data() && GeometryRom::data == geometry.data());
   assert(app.setCurrentGame(flappy::GameTitle::FlappyBird));
-  handleGameRequest();
+  handlePlayGameRequest();
   assert(!nes.ready());
 }
 
@@ -187,26 +196,66 @@ static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
     app.setNesAvailable(true);
     app.setCurrentGame(flappy::GameTitle::Nes);
     handledGameRequest = UINT32_MAX;
-    handleGameRequest();
+    handlePlayGameRequest();
     assert(nes.ready());
     nativeBeginOk = true;
     const unsigned begins = nativeBegins, releases = nativeReleases;
     app.setCurrentGame(title);
-    handleGameRequest();
+    handlePlayGameRequest();
     assert(app.currentGame == title && !nes.ready());
     assert(landscape == (title == flappy::GameTitle::JetpackJoyride));
     assert(!nativeMario && !nativeGeometry && !renderer->cacheEnabled);
     assert(nativeBegins == begins + 1 && nativeReleases == releases + 1);
     app.setCurrentGame(flappy::GameTitle::FlappyBird);
-    handleGameRequest();
+    handlePlayGameRequest();
     assert(renderer->cacheEnabled);
     nativeBeginOk = false;
     app.setCurrentGame(title);
-    handleGameRequest();
+    handlePlayGameRequest();
     assert(app.currentGame == flappy::GameTitle::FlappyBird && !nes.ready());
     assert(app.menu.page == flappy::MenuPage::ChangeGame && renderer->cacheEnabled);
     assert(std::strcmp(runtimeNotice, "Arcade memory/display unavailable") == 0);
   }
+}
+
+static void homePlayIntentsAndInactiveCoop() {
+  for (unsigned role = 1; role <= 2; ++role) {
+    app = flappy::AppModel(); gameHome = flappy::GameHome();
+    app.setTetrisAvailable(true); app.activateTetris(); gameHome.observe(app);
+    handledRestart = app.gameRestartRequest; handledGeometryRequest = app.geometryRequest;
+    handledTetrisRequest = app.tetrisRequest; handledZeroRequest = app.tetrisZeroRequest;
+    handledTetrisLink = app.tetrisLinkRequest;
+    app.openMenu(flappy::MenuPage::TetrisLink); app.menu.selection = uint8_t(role);
+    app.step(true,false,17,false);
+    assert(app.menuOpen() && gameHome.active());
+    handleHomePlayRequests(false);
+    assert(!gameHome.active() && !app.menuOpen() && app.tetrisLinkRole == role);
+  }
+  app = flappy::AppModel(); gameHome = flappy::GameHome(); gameHome.observe(app);
+  handledRestart = app.gameRestartRequest; handledGeometryRequest = app.geometryRequest;
+  handledTetrisRequest = app.tetrisRequest; handledZeroRequest = app.tetrisZeroRequest;
+  handledTetrisLink = app.tetrisLinkRequest;
+  handleHomePlayRequests(false); assert(gameHome.active());
+  app.openMenu(); handleHomePlayRequests(false); assert(gameHome.active() && app.menuOpen());
+  app.closeMenu(); app.requestGameRestart(); handleHomePlayRequests(false); assert(!gameHome.active());
+  for (auto role : {flappy::coop::Role::Off,flappy::coop::Role::Host}) {
+    app = flappy::AppModel(); app.setMode(flappy::Mode::Coop);
+    coopLink.value.selected = role; handledGameRequest = UINT32_MAX;
+    handlePlayGameRequest();
+    assert(app.settings.mode == (role == flappy::coop::Role::Off ? flappy::Mode::Original : flappy::Mode::Coop));
+  }
+  coopLink.value.selected = flappy::coop::Role::Off;
+  flappy::JetpackGame runner;
+  jetpackGame = &runner; arcadeControls.reset();
+  prepareNativeHomePlay();
+  const auto start = arcadeControls.input(0,true,true);
+  runner.tick(start);
+  assert(start.pressed && runner.phase() == flappy::JetpackGame::Phase::Running);
+  runner.tick(arcadeControls.input(0,true,false));
+  assert(runner.phase() == flappy::JetpackGame::Phase::Running);
+  jetpackGame = nullptr;
+  arcadeControls.reset(); prepareNativeHomePlay();
+  assert(arcadeControls.input(0,true,true).pressed);
 }
 
 int main() {
@@ -220,6 +269,7 @@ int main() {
   geometryPresentation = new GeometryPresentation;
   checkGeometrySlot();
   nativeGamesReleaseTheEmulatorAndHandleFailure();
+  homePlayIntentsAndInactiveCoop();
   assert(nesAudioQueue == nullptr && audioFrames == 0);
   piezoDriver = false;
   checkLoad(false, false, 0);

@@ -328,7 +328,7 @@ class JetpackGame {
       c.number(best > score() ? best : score(), 189, 1, rgb(224, 240, 216));
     }
     if (phase_ == Phase::Ready) {
-      panel(c, "JETPACK JOYRIDE", "HOLD TO FLY", "TAP TO START");
+      panel(c, "BITTY JET", "HOLD TO FLY", "TAP TO START");
     } else if (phase_ == Phase::Spin) {
       drawSpin(c);
     } else if (phase_ == Phase::Over) {

@@ -90,6 +90,28 @@ static void colorTransforms() {
   assert(std::abs(int(source & 31) - int(twice & 31)) <= 1);
 }
 
+static void scoreColorsFollowTheSelectedSkin() {
+  for (uint8_t selected = 0; selected < flappy::Skins::count(); ++selected) {
+    flappy::Skins skin; skin.select(selected);
+    flappy::AppModel app(13); preparePlaying(app,flappy::Mode::Original,selected);
+    app.game.birdY = 180;
+    const auto pixels = frame(app);
+    const auto& glyph = FlappyAssets::digits[0];
+    const int left = flappy::PixelWidth/2-int(glyph.width)/2;
+    for (unsigned y = 0; y < glyph.height; ++y) for (unsigned x = 0; x < glyph.width; ++x) {
+      const unsigned at = y*glyph.width+x;
+      const uint16_t color = glyph.pixels[at];
+      if (color == FlappyAssets::kTransparent || (glyph.alpha && glyph.alpha[at] != 255)) continue;
+      const uint16_t output = pixels[(18+y)*flappy::PixelWidth+left+x];
+      assert(output == skin.scorePixel(color));
+      if (selected == 1) {
+        assert((output>>11) <= 10 && ((output>>5)&63) <= 21 && (output&31) <= 20);
+      }
+    }
+    if (selected == 10 || selected == 11) assert(skin.scorePixel(0xffff) != 0xffff);
+  }
+}
+
 static void messageScreensClearArtAndKeepTextInsideNativeCrop() {
   GuardedPixels pixels(FramePixels);
   flappy::Renderer renderer(pixels.data());
@@ -518,14 +540,24 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
     }
   }
   assert(flappy::MenuFont::textWidth("RIGHT NEXT  M5 SELECT", 1) <= 128);
-  app.marioClockAvailable = true;
-  app.setCurrentGame(flappy::GameTitle::Nes);
-  app.openMenu(flappy::MenuPage::GameSettings);
-  for (unsigned clock = 0; clock < 2; ++clock) {
-    app.settings.marioClock = clock != 0;
+  for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
+    assert(app.setCurrentGame(flappy::GameTitle(game)));
+    app.openMenu(flappy::MenuPage::Home);
+    assert(app.menuItemCount() == 10);
+    assert(std::strcmp(app.menuLabel(7), "Set clock") == 0);
+    assert(std::strcmp(app.menuLabel(8), "Game home") == 0);
+    assert(std::strcmp(app.menuLabel(9), "Back") == 0);
     for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
       assert(flappy::MenuFont::textWidth(app.menuLabel(index)) <= 128);
       assert(flappy::MenuFont::textWidth(app.menuValue(index)) <= 128);
+    }
+    app.openMenu(flappy::MenuPage::Clock);
+    assert(std::strcmp(app.menuTitle(), "Set clock") == 0);
+    for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
+      assert(flappy::MenuFont::textWidth(app.menuLabel(index)) <= 128);
+      assert(flappy::MenuFont::textWidth(app.menuValue(index)) <= 128);
+      app.menu.selection = index;
+      assert(frame(app).size() == FramePixels);
     }
   }
   assert(flappy::MenuFont::textWidth("HOLD RIGHT TO EXIT", 1) <= 128);
@@ -672,7 +704,7 @@ static void launcherMenusShowAvailabilityAndTitles() {
   app.setNesTitle(longTitle.c_str());
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
   app.openMenu();
-  assert(app.menuItemCount() == 8);
+  assert(app.menuItemCount() == 10);
   for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
     app.menu.selection = selected;
     flappy::RenderOptions options;
@@ -717,7 +749,7 @@ static void gameSettingsReflectEachSelectedGame() {
     assert(app.setCurrentGame(game));
     app.openMenu(flappy::MenuPage::GameSettings);
     const uint8_t count = app.menuItemCount();
-    assert(count == (game == flappy::GameTitle::FlappyBird ? 5 : game == flappy::GameTitle::Tetris ? 9 :
+    assert(count == (game == flappy::GameTitle::FlappyBird ? 4 : game == flappy::GameTitle::Tetris ? 9 :
                      game == flappy::GameTitle::TetrisZero ? 8 : game == flappy::GameTitle::GeometryDash ? 3 : 2));
     const auto current = frame(app);
     if (!previous.empty()) assert(differentPixels(previous, current) > 0);
@@ -767,6 +799,40 @@ static void geometryLevelsFitNativeFontAndScrollVertically() {
     flappy::RenderOptions options;
     options.uiScale = uiScale;
     assert(frame(app, options).size() == FramePixels);
+  }
+}
+
+static void sharedClockControlsRenderForEveryGame() {
+  flappy::AppModel app(43);
+  app.setNesAvailable(true);
+  app.setTetrisAvailable(true);
+  app.setTetrisZeroAvailable(true);
+  app.setGeometryDashAvailable(true);
+  for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
+    assert(app.setCurrentGame(flappy::GameTitle(game)));
+    for (uint8_t scale : {uint8_t(2), uint8_t(3)}) {
+      flappy::RenderOptions options; options.uiScale = scale;
+      app.setClock(12, 34, 0);
+      app.openMenu(flappy::MenuPage::Home); app.menu.selection = 7;
+      const auto before = frame(app, options);
+      app.setClock(13, 35, 0);
+      assert(differentPixels(before, frame(app, options)) > 0);
+      app.menu.selection = 8;
+      const auto gameHome = frame(app, options);
+      assert(differentPixels(before, gameHome) > 0);
+      app.openMenu(flappy::MenuPage::Clock);
+      for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
+        app.menu.selection = selected;
+        const auto clock = frame(app, options);
+        if (selected < 2) {
+          app.setClock(uint8_t(14 + selected), uint8_t(36 + selected), 0);
+          assert(differentPixels(clock, frame(app, options)) > 0);
+        } else if (selected == 2) {
+          app.settings.clock24Hour = !app.settings.clock24Hour;
+          assert(differentPixels(clock, frame(app, options)) > 0);
+        }
+      }
+    }
   }
 }
 
@@ -978,6 +1044,7 @@ static void viewportCopiesStayInsideBuffers() {
 
 int main() {
   colorTransforms();
+  scoreColorsFollowTheSelectedSkin();
   messageScreensClearArtAndKeepTextInsideNativeCrop();
   landscapeMessageUsesNativeFontAndStaysInsideCanvas();
   activeSkinMasksFollowPixels();
@@ -995,6 +1062,7 @@ int main() {
   controllerMenuShowsStatusAndActions();
   gameSettingsReflectEachSelectedGame();
   geometryLevelsFitNativeFontAndScrollVertically();
+  sharedClockControlsRenderForEveryGame();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   scrollingGroundMatchesSourceAndAlphaAtBothScales();

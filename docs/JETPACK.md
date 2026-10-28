@@ -1,10 +1,10 @@
-# Jetpack Joyride for M5
+# Bitty Jet
 
-This native adaptation imagines Jetpack Joyride as a small SNES-style game. It fills the M5StickC Plus's 240 by 135 landscape screen with original shaded pixel art and tile-based lab scenery. The camera stays fixed while the lab scrolls past. Each game pixel maps directly to a display pixel.
+Bitty Jet is a native jetpack runner with SNES-style art, developed with Jetpack Joyride as its private gameplay reference. It fills the M5StickC Plus's 240 by 135 landscape screen with original shaded pixel art and tile-based lab scenery. The camera stays fixed while the lab scrolls past. Each game pixel maps directly to a display pixel.
 
 The [Flipper remake](https://github.com/timstrasser/flipper-jetpack-game) provided a reference for the compact composition and low-resolution character. Halfbrick's game provided the gameplay reference. The M5 version uses new code and artwork. No Flipper source, sprites, original mobile assets or audio are bundled in the public source. A private rebuild can import coin formations and optional runner art from a package supplied by the user. See the [research notes](JETPACK_RESEARCH.md) for sources and the boundary between references and this implementation.
 
-Choose **Jetpack Joyride** under **Change Game** to play immediately. It is also available under **Game at Boot**. Flappy Bird remains the initial boot default. This game needs no ROM or separate asset import.
+Choose **Bitty Jet** under **Change Game** for its portrait coin clock, then press M5 to play. It is also available under **Game at Boot**. Flappy Bird remains the initial boot default. This game needs no ROM or separate asset import.
 
 ## Controls
 

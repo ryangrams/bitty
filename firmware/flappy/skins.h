@@ -73,12 +73,20 @@ class Skins {
     selected = index < count() ? index : 0;
     buildPalette();
     unsigned gray = 0, total = 0;
+    unsigned darkest = 766, lightest = 0;
+    scoreLight_ = rgb(249,203,135); scoreDark_ = rgb(119,57,20);
+    if (selected == 11) { scoreLight_ = rgb(167,206,216); scoreDark_ = rgb(38,54,75); }
     for (int f = 0; f < 3; ++f) for (int y = 0; y < 12; ++y) for (int x = 0; x < 17; ++x) {
       const uint16_t c = birdPixel(f, x, y);
       if (c == FlappyAssets::kTransparent) continue;
       const int r = ((c >> 11) & 31) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31;
       const int hi = r > g ? (r > b ? r : b) : (g > b ? g : b);
       const int lo = r < g ? (r < b ? r : b) : (g < b ? g : b);
+      if (selected >= BuiltinCount && hi - lo > 24) {
+        const unsigned light = unsigned(r + g + b);
+        if (light > lightest) { lightest = light; scoreLight_ = c; }
+        if (light < darkest) { darkest = light; scoreDark_ = c; }
+      }
       gray += hi - lo <= 24;
       ++total;
     }
@@ -109,7 +117,15 @@ class Skins {
 
   uint16_t birdPixel(int frame, int x, int y) const { return palette(rawBirdPixel(selected, frame, x, y)); }
 
+  uint16_t scorePixel(uint16_t color) const {
+    if (selected < 10) return palette(color);
+    if (selected >= BuiltinCount && monochrome) return color;
+    const unsigned light = (color >> 11) * 77u + ((color >> 5) & 63u) * 75u + (color & 31u) * 29u;
+    return light >= 4096 ? scoreLight_ : scoreDark_;
+  }
+
  private:
+  uint16_t scoreLight_ = 0xffff, scoreDark_ = 0;
   uint64_t masks_[3][24] = {};
   uint16_t red_[32] = {}, green_[64] = {}, blue_[32] = {}, luminance_[256] = {};
 

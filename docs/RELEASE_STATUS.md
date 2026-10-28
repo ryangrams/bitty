@@ -9,12 +9,15 @@ The source and public interface preview are available. Firmware downloads remain
 - A two-column device game picker with native bitmap text, game icons and separate generic NES cartridge entries.
 - Public builds with authored starter art and private ROM/APK discovery disabled, a locked installer bundle, provenance and separate flash parts.
 - Mario camera tracking from stable RAM coordinates. Small, standing big and crouching big Mario have distinct anchors. Animation and invincibility blinking no longer choose the tracking target.
-- Mario Clock uses generated ground courses in the supplied NTSC cartridge, with native tile clocks in periodic clearings. Its private host test completes 128 consecutive courses. The [clock notes](MARIO_CLOCK.md) record its device-test boundary.
+- Every game opens on a portrait clock home. Left cycles games, M5 plays, and Game home returns from play. Shared clock settings replace per-game Clock mode entries. [The scene guide](GAME_HOMES.md) covers coin, tetromino, enemy, pipe and brick clocks.
+- Mario's new endless clock reads native art from the supplied NTSC ROM, uses pipe transitions through four environments and includes enemies and collectible coin time. Private tests run 256 seeds and 18,432,000 simulation steps without emergency safety rebounds. [The clock notes](MARIO_CLOCK.md) distinguish this scene from the previously flashed generator.
 - Bitty menu branding, native 6 by 12 text, a battery estimate and an animated startup mark with the website address. The splash now lasts 2.4 seconds.
 - Imported Jetpack formation pitch, vertical placement, isolated spacing, distance gates, obstacle profiles and smooth rotation.
 - Reusable M5Stick development, game-fidelity and content-to-GitHub skills, including Codex and Claude installation instructions.
 
 ## Verification
+
+The new universal clock-home update passes the source suite with AddressSanitizer and UndefinedBehaviorSanitizer. Its Plus image compiles within the existing 3 MiB app partition. Native-size private previews cover every scene. The MacBook used for flashing is currently unreachable, so this update has not been flashed or measured on a device. Earlier hardware results below apply to their named builds.
 
 The earlier 0.9-second Bitty UI build was flashed to the original Plus with its partition table and records retained. Four menu framebuffer captures covered Home, game selection, skins and Controller. Its AXP192 reported external power, active charging and roughly 4.11 V, yielding a 100% voltage estimate. The next app-only update added the longer splash and Mario Clock, with its written hash verified. The Plus measured the splash at 2,400 ms and both clock and manual Mario at approximately 60.009 completed SPI frame boundaries per second over separate 500-interval probes. BLE discovery was active, no controller connected, and clock mode retained 29,124 bytes free heap. Controller pairing from clock mode retained its generated course cache. Records and profile matched before and after. The serial handle was closed with Mario Clock running. Panel scanout and physical controller feel remain separate checks. StickS3 still needs its own hardware measurements.
 

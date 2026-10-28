@@ -6,6 +6,8 @@ Open a game/app request before a large change so the device limits and public di
 
 Run `python tools/test.py` and `node tests/web_protocol_test.mjs`. For emulator changes, also run `python tools/test_nes.py`. Use `python tools/check_distribution.py --git` and the source packager before publishing. Add reviewed source paths to `PUBLIC_FILES.txt`. Public fixtures must be synthetic or redistributable.
 
+Start with the [agent quickstart](docs/AGENT_QUICKSTART.md) and [game authoring guide](docs/CREATING_GAMES.md). Every new game needs the shared portrait clock home, left-tap game cycling and M5-to-play behavior. Creator-hosted projects can be proposed as external links with source, licenses and target details.
+
 Use the skills under `skills/` for M5Stick development, game fidelity audits and content-to-GitHub publishing. They use the same SKILL.md format for Codex and Claude. Read the hardware evidence before reusing board settings. Separate host simulation, injected device input and physical-controller evidence in reports.
 
 Two original game directions are under consideration: a summer-camp flashlight-dodging game using tilt and a duck button, and a cable-routing puzzle about a gremlin moving signals between patch points. These are proposals. Names, designs and implementation remain open for contributors.

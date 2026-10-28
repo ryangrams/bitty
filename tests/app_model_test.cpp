@@ -85,17 +85,21 @@ static void everyMenuHasBack() {
     assert(std::string(d.app.menuLabel(count)).empty());
     d.app.menu.selection = count - 1;
     d.tick(true);
-    const bool nested = page == MenuPage::Modes || page == MenuPage::Skins || page == MenuPage::Clock ||
+    const bool nested = page == MenuPage::Modes || page == MenuPage::Skins ||
       page == MenuPage::Coop || page == MenuPage::TetrisLevel || page == MenuPage::TetrisType ||
       page == MenuPage::TetrisControls || page == MenuPage::TetrisLink || page == MenuPage::TetrisZeroPlayers ||
       page == MenuPage::GeometryLevel;
     assert(page == MenuPage::Home ? !d.app.menuOpen() : d.app.menu.page == (nested ? MenuPage::GameSettings : MenuPage::Home));
   }
-  for (unsigned i = 0; i < unsigned(Mode::Count); ++i) {
+  const Mode playableModes[] = {Mode::Original, Mode::Demo, Mode::Arcade, Mode::Big, Mode::Coop};
+  for (unsigned i = 0; i < 5; ++i) {
     d.app.openMenu(MenuPage::Modes);
+    assert(d.app.menuItemCount() == 6 && playModeChoice(uint8_t(i)) == playableModes[i]);
+    assert(std::string(d.app.menuLabel(uint8_t(i))) == modeName(playableModes[i]));
+    assert(std::string(d.app.menuLabel(uint8_t(i))) != "Clock");
     d.app.menu.selection = uint8_t(i);
     d.tick(true);
-    assert(d.app.settings.mode == Mode(i) && !d.app.menuOpen());
+    assert(d.app.settings.mode == playableModes[i] && !d.app.menuOpen());
   }
   d.app.openMenu(MenuPage::Skins);
   d.app.menu.selection = 2;
@@ -132,13 +136,13 @@ static void volumeSettingsAndMenuNavigation() {
   d.app.setVolume(2);
   assert(!d.app.settingsDirty);
   d.holdMenu();
-  assert(d.app.menuItemCount() == 8);
-  const char* homeLabels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Back"};
+  assert(d.app.menuItemCount() == 10);
+  const char* homeLabels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Set clock", "Game home", "Back"};
   const MenuPage homePages[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
-    MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep};
-  for (uint8_t index = 0; index < 8; ++index) assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
+    MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep, MenuPage::Clock};
+  for (uint8_t index = 0; index < 10; ++index) assert(std::string(d.app.menuLabel(index)) == homeLabels[index]);
   assert(std::string(d.app.menuValue(4)) == "40%");
-  for (uint8_t index = 0; index < 7; ++index) {
+  for (uint8_t index = 0; index < 8; ++index) {
     d.app.openMenu(); d.app.menu.selection = index; d.tick(true);
     assert(d.app.menu.page == homePages[index]);
   }
@@ -187,7 +191,7 @@ static void sleepSettingsDefaultsChoicesAndNavigation() {
   d.app.setSleep(0);
   assert(!d.app.settingsDirty);
   d.holdMenu();
-  assert(d.app.menuItemCount() == 8 && std::string(d.app.menuLabel(6)) == "Sleep");
+  assert(d.app.menuItemCount() == 10 && std::string(d.app.menuLabel(6)) == "Sleep");
   assert(std::string(d.app.menuValue(6)) == "30 sec");
   for (unsigned index = 0; index < 6; ++index) d.tapMenu();
   d.tick(true);
@@ -257,7 +261,7 @@ static void launcherBootAndImmediateChanges() {
     assert(std::string(d.app.menuLabel(3)) == "Geometry Dash: no ROM");
     assert(std::string(d.app.menuLabel(4)) == "Galaga");
     assert(std::string(d.app.menuLabel(5)) == "Arkanoid");
-    assert(std::string(d.app.menuLabel(6)) == "Jetpack Joyride");
+    assert(std::string(d.app.menuLabel(6)) == "Bitty Jet");
     assert(std::string(d.app.menuLabel(7)) == "Back");
     assert(std::string(d.app.menuLabel(8)).empty());
     for (uint8_t index : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
@@ -459,7 +463,7 @@ static void nativeArcadeLauncherAndBoot() {
   for (GameTitle title : {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::TetrisZero,
                           GameTitle::GeometryDash, GameTitle(UINT8_MAX)}) assert(!nativeArcadeGame(title));
   const GameTitle titles[] = {GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride};
-  const char* names[] = {"Galaga", "Arkanoid", "Jetpack Joyride"};
+  const char* names[] = {"Galaga", "Arkanoid", "Bitty Jet"};
   for (uint8_t game = 0; game < 3; ++game) {
     Driver d;
     const GameTitle title = titles[game];
@@ -484,7 +488,7 @@ static void nativeArcadeLauncherAndBoot() {
     assert(d.app.game.worldTick() == worldTick && d.app.roundsStarted == rounds);
     near(d.app.game.birdY, y);
     d.holdMenu();
-    assert(d.app.menu.page == MenuPage::Home && d.app.menuItemCount() == 8);
+    assert(d.app.menu.page == MenuPage::Home && d.app.menuItemCount() == 10);
     assert(std::string(d.app.menuValue(0)) == names[game] && std::string(d.app.menuValue(1)) == names[game]);
     d.app.menu.selection = 1; d.tick(true);
     assert(d.app.menu.page == MenuPage::ChangeGame && std::string(d.app.menuValue(index)) == "*");
@@ -557,7 +561,7 @@ static void nativeArcadeSettingsAndRequests() {
     assert(!d.app.menuOpen() && d.app.gameRestartRequest == 1 && d.app.currentGame == title);
     assert(d.app.gameRequest == gameRequest && d.app.roundsStarted == rounds && !d.app.settingsDirty);
     d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = 5; d.tick(true);
-    assert(d.app.menu.page == MenuPage::Home && d.app.menuItemCount() == 8 && !d.app.settingsDirty);
+    assert(d.app.menu.page == MenuPage::Home && d.app.menuItemCount() == 10 && !d.app.settingsDirty);
     d.app.gameRestartRequest = UINT32_MAX; d.app.requestGameRestart();
     assert(!d.app.menuOpen() && d.app.gameRestartRequest == 0 && d.app.geometryRequest == 0);
   }
@@ -696,7 +700,7 @@ static void controllerMenuRequestsAndStatus() {
   Driver d;
   assert(d.app.controllerRequest == 0 && d.app.controllerAction == 0);
   d.app.openMenu();
-  assert(std::string(d.app.menuLabel(5)) == "Controller" && std::string(d.app.menuLabel(6)) == "Sleep" && std::string(d.app.menuLabel(7)) == "Back");
+  assert(std::string(d.app.menuLabel(5)) == "Controller" && std::string(d.app.menuLabel(6)) == "Sleep" && std::string(d.app.menuLabel(9)) == "Back");
   d.app.setControllerStatus("Searching");
   assert(std::string(d.app.menuValue(5)) == "Searching");
   d.app.menu.selection = 5; d.tick(true);
@@ -721,9 +725,9 @@ static void controllerMenuRequestsAndStatus() {
 static void perGameSettingsAndTetrisRequests() {
   Driver d;
   d.app.openMenu(MenuPage::GameSettings);
-  assert(d.app.menuItemCount() == 5);
-  const MenuPage flappyPages[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
-  for (uint8_t i = 0; i < 4; ++i) {
+  assert(d.app.menuItemCount() == 4);
+  const MenuPage flappyPages[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Coop};
+  for (uint8_t i = 0; i < 3; ++i) {
     d.app.openMenu(MenuPage::GameSettings); d.app.menu.selection = i; d.tick(true);
     assert(d.app.menu.page == flappyPages[i]);
   }
@@ -1207,39 +1211,67 @@ static void cartridgeCatalogSelectionAndBoot() {
   assert(d.app.gameChoiceCartridge(d.app.gameChoiceCount() - 1) == 12);
 }
 
-static void marioClockSettings() {
+static void sharedClockAndHomeRequests() {
   Driver d;
   d.app.setNesAvailable(true);
-  d.app.setNesTitle("Mario");
-  d.app.setCurrentGame(GameTitle::Nes);
+  d.app.setTetrisAvailable(true);
+  d.app.setTetrisZeroAvailable(true);
+  d.app.setGeometryDashAvailable(true);
+  d.app.setClock(13, 42, d.now);
+  assert(d.app.homeRequest == 0);
+  for (uint8_t index = 0; index < VisibleGameCount; ++index) {
+    const GameTitle title = visibleGameTitle(index);
+    assert(d.app.setCurrentGame(title));
+    d.app.openMenu();
+    assert(d.app.menuItemCount() == 10);
+    assert(std::string(d.app.menuLabel(7)) == "Set clock");
+    assert(std::string(d.app.menuValue(7)) == "13:42");
+    assert(std::string(d.app.menuLabel(8)) == "Game home");
+    assert(std::string(d.app.menuValue(8)) == d.app.gameLabel(title));
+    d.app.menu.selection = 7; d.tick(true);
+    assert(d.app.menu.page == MenuPage::Clock && std::string(d.app.menuTitle()) == "Set clock");
+    assert(std::string(d.app.menuValue(0)) == "13" && std::string(d.app.menuValue(1)) == "42");
+    d.app.menu.selection = 3; d.tick(true);
+    assert(d.app.menu.page == MenuPage::Home && d.app.currentGame == title);
+
+    const uint32_t home = d.app.homeRequest, game = d.app.gameRequest, restart = d.app.gameRestartRequest;
+    d.app.settingsDirty = false;
+    d.app.menu.selection = 8; d.tick(true);
+    assert(!d.app.menuOpen() && d.app.homeRequest == home + 1);
+    assert(d.app.currentGame == title && d.app.gameRequest == game && d.app.gameRestartRequest == restart);
+    assert(!d.app.settingsDirty);
+
+    // Selecting the current game still requests its clock home.
+    d.app.openMenu(MenuPage::ChangeGame); d.app.menu.selection = index; d.tick(true);
+    assert(!d.app.menuOpen() && d.app.currentGame == title && d.app.homeRequest == home + 2);
+    assert(d.app.gameRequest == game);
+    const uint8_t next = uint8_t((index + 1u) % VisibleGameCount);
+    d.app.openMenu(MenuPage::ChangeGame); d.app.menu.selection = next; d.tick(true);
+    assert(!d.app.menuOpen() && d.app.currentGame == visibleGameTitle(next) && d.app.homeRequest == home + 3);
+    assert(d.app.gameRequest == game + 1);
+    d.app.openMenu(); d.app.menu.selection = 9; d.tick(true);
+    assert(!d.app.menuOpen() && d.app.homeRequest == home + 3);
+  }
+  d.app.setNesAvailable(false);
+  const uint32_t home = d.app.homeRequest;
+  d.app.openMenu(MenuPage::ChangeGame); d.app.menu.selection = 1; d.tick(true);
+  assert(d.app.menu.page == MenuPage::ChangeGame && d.app.homeRequest == home);
+
+  d.app.setNesAvailable(true); d.app.setNesTitle("Mario");
+  assert(d.app.setCurrentGame(GameTitle::Nes));
   d.app.openMenu(MenuPage::GameSettings);
-  assert(d.app.menuItemCount() == 2);
-  d.app.marioClockAvailable = true;
-  assert(d.app.menuItemCount() == 4);
-  assert(std::string(d.app.menuLabel(0)) == "Mode");
-  assert(std::string(d.app.menuValue(0)) == "Play");
+  assert(d.app.menuItemCount() == 2 && std::string(d.app.menuLabel(0)) == "Restart game");
   const uint32_t restart = d.app.gameRestartRequest;
   d.tick(true);
-  assert(d.app.settings.marioClock && d.app.settingsDirty);
-  assert(!d.app.menuOpen() && d.app.gameRestartRequest == restart + 1);
-  d.tick(false);
-  d.app.openMenu(MenuPage::GameSettings);
-  assert(std::string(d.app.menuValue(0)) == "Mario Clock");
-  d.app.menu.selection = 1;
-  d.tick(true);
-  assert(d.app.menu.page == MenuPage::Clock);
-  d.tick(false);
-  d.app.menu.selection = 3;
-  d.tick(true);
-  assert(d.app.menu.page == MenuPage::GameSettings);
-  d.tick(false);
-  d.tick(true);
-  assert(!d.app.settings.marioClock && !d.app.menuOpen());
-  assert(d.app.gameRestartRequest == restart + 2);
+  assert(!d.app.menuOpen() && d.app.gameRestartRequest == restart + 1 && d.app.homeRequest == home);
+
+  d.app.homeRequest = UINT32_MAX;
+  d.app.openMenu(); d.app.menu.selection = 8; d.tick(true);
+  assert(!d.app.menuOpen() && d.app.homeRequest == 0);
 }
 
 int main() {
-  marioClockSettings();
+  sharedClockAndHomeRequests();
   cartridgeCatalogSelectionAndBoot();
   menuEdgesAndPause();
   everyMenuHasBack();

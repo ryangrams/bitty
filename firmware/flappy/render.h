@@ -53,6 +53,7 @@ class Renderer {
   static const char* skinName(uint8_t index) { return Skins::name(index); }
   const uint64_t (*birdMasks() const)[24] { return skins_.masks(); }
   const uint16_t* pixels() const { return pixels_; }
+  const Skins& skin() const { return skins_; }
 
   void drawMessage(const char* title, const char* detail) {
     rect(0, 0, PixelWidth, PixelHeight, 0);
@@ -204,7 +205,7 @@ class Renderer {
     rect(x, y, w, 1, rgb(255, 220, 116));
     rect(x, y + h - 1, w, 1, rgb(255, 220, 116));
   }
-  void sprite(const FlappyAssets::Sprite& asset, int x, int y, int scale = 1, bool recolor = true) {
+  void sprite(const FlappyAssets::Sprite& asset, int x, int y, int scale = 1, bool recolor = true, bool score = false) {
     if (scale == 1) {
       const int firstX = x < 0 ? -x : 0, firstY = y < 0 ? -y : 0;
       const int lastX = x + asset.width > PixelWidth ? PixelWidth - x : asset.width;
@@ -220,7 +221,7 @@ class Renderer {
             int end = col + 1;
             while (end < lastX && source[end] == color) ++end;
             if (color != FlappyAssets::kTransparent) {
-              const uint16_t output = recolor ? skins_.palette(color) : color;
+              const uint16_t output = score ? skins_.scorePixel(color) : recolor ? skins_.palette(color) : color;
               for (int at = col; at < end; ++at) target[at - firstX] = output;
             }
             col = end;
@@ -228,7 +229,8 @@ class Renderer {
         } else for (int col = firstX; col < lastX; ++col) {
           uint16_t color = source[col];
           if (color == FlappyAssets::kTransparent) continue;
-          if (recolor) color = skins_.palette(color);
+          if (score) color = skins_.scorePixel(color);
+          else if (recolor) color = skins_.palette(color);
           uint16_t& destination = target[col - firstX];
           destination = alpha && alpha[col] != 255 ? blend(color, destination, alpha[col]) : color;
         }
@@ -246,7 +248,8 @@ class Renderer {
         const int source = sy * asset.width + sx;
         uint16_t color = asset.pixels[source];
         if (color == FlappyAssets::kTransparent) continue;
-        if (recolor) color = skins_.palette(color);
+        if (score) color = skins_.scorePixel(color);
+        else if (recolor) color = skins_.palette(color);
         const uint8_t alpha = asset.alpha ? asset.alpha[source] : 255;
         if (!alpha) continue;
         const int left = x + sx * scale, endX = left + scale < PixelWidth ? left + scale : PixelWidth;
@@ -317,7 +320,7 @@ class Renderer {
     x -= alignRight ? width : width / 2;
     for (int i = count - 1; i >= 0; --i) {
       const auto& glyph = font[glyphs[i]];
-      sprite(glyph, x, y, scale, false);
+      sprite(glyph, x, y, scale, true, true);
       x += (glyph.width + 1) * scale;
     }
   }

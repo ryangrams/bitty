@@ -26,7 +26,7 @@ def main():
     flags = ["-std=c++11", "-Wall", "-Wextra", "-Werror"]
     if not args.no_sanitize:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-    for name in ("bitty_ui_test", "mario_clock_test", "speaker_audio_test", "cartridge_store_test", "library_protocol_test", "jetpack_placement_test", "game_core_test", "app_model_test", "arcade_support_test", "galaga_game_test", "arkanoid_game_test", "jetpack_game_test", "jetpack_art_test", "jetpack_fairness_test", "jetpack_progression_test", "jetpack_rewards_test", "jetpack_missions_test", "jetpack_profile_test", "jetpack_spin_test", "jetpack_bonus_integration_test", "jetpack_time_step_test", "jetpack_rocket_time_test", "jetpack_rocket_course_test", "jetpack_vehicle_physics_test", "coop_protocol_test", "controller_input_test", "ble_radio_test", "nes_viewport_test", "nes_system_button_test", "nes_sound_events_test", "piezo_sound_test", "piezo_output_test", "mario_viewport_test", "rom_fingerprint_test", "geometry_input_test", "geometry_scene_test", "geometry_collision_test", "geometry_level_test", "geometry_renderer_test", "geometry_scanorder_test", "geometry_launcher_test", "tetris_input_test", "tetris_actions_test", "tetris_viewport_test", "tetris_zero_viewport_test", "menu_font_test", "display_damage_test", "async_display_test", "inactivity_test"):
+    for name in ("game_home_test", "mario_world_clock_test", "tetris_clock_test", "jetpack_clock_test", "geometry_clock_test", "galaga_clock_test", "arkanoid_clock_test", "bitty_ui_test", "mario_clock_test", "speaker_audio_test", "cartridge_store_test", "library_protocol_test", "jetpack_placement_test", "game_core_test", "app_model_test", "arcade_support_test", "galaga_game_test", "arkanoid_game_test", "jetpack_game_test", "jetpack_art_test", "jetpack_fairness_test", "jetpack_progression_test", "jetpack_rewards_test", "jetpack_missions_test", "jetpack_profile_test", "jetpack_spin_test", "jetpack_bonus_integration_test", "jetpack_time_step_test", "jetpack_rocket_time_test", "jetpack_rocket_course_test", "jetpack_vehicle_physics_test", "coop_protocol_test", "controller_input_test", "ble_radio_test", "nes_viewport_test", "nes_system_button_test", "nes_sound_events_test", "piezo_sound_test", "piezo_output_test", "mario_viewport_test", "rom_fingerprint_test", "geometry_input_test", "geometry_scene_test", "geometry_collision_test", "geometry_level_test", "geometry_renderer_test", "geometry_scanorder_test", "geometry_launcher_test", "tetris_input_test", "tetris_actions_test", "tetris_viewport_test", "tetris_zero_viewport_test", "menu_font_test", "display_damage_test", "async_display_test", "inactivity_test"):
         if not (ROOT / "tests" / (name + ".cpp")).is_file():
             continue
         executable = target / (name + (".exe" if os.name == "nt" else ""))
@@ -54,11 +54,13 @@ def main():
         assets = fixture / "generated"
         generate(atlas.read_bytes(), manifest.read_bytes(), {}, assets)
         generate_skins([], assets)
-        features_source = ROOT / "tests" / "render_features_test.cpp"
-        if features_source.is_file():
-            features = fixture / ("render_features_test.exe" if os.name == "nt" else "render_features_test")
-            subprocess.run([compiler] + flags + ["-I", str(assets), str(features_source), "-o", str(features)], check=True)
-            subprocess.run([str(features)], check=True)
+        for name in ("render_features_test", "flappy_clock_test", "clock_runtime_test"):
+            source = ROOT / "tests" / (name + ".cpp")
+            if not source.is_file():
+                continue
+            executable = fixture / (name + (".exe" if os.name == "nt" else ""))
+            subprocess.run([compiler] + flags + ["-I", str(assets), str(source), "-o", str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
         preview = fixture / ("render_preview.exe" if os.name == "nt" else "render_preview")
         subprocess.run([compiler] + flags + ["-I", str(assets), str(ROOT / "tests" / "render_preview.cpp"),
                                             "-o", str(preview)], check=True)

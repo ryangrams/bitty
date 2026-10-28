@@ -174,7 +174,10 @@ def main():
     from setup_nes import prepare
     library = prepare()
     build = ROOT / ".local" / ("build-sticks3" if args.board == "sticks3" else "build")
-    optimization = "-O2" if args.board == "sticks3" else "-O2 -mno-fix-esp32-psram-cache-issue"
+    # Keep constants close to their users as the native game code grows.
+    optimization = "-O2 -mtext-section-literals"
+    if args.board != "sticks3":
+        optimization += " -mno-fix-esp32-psram-cache-issue"
     subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", BOARD_FQBN[args.board],
                     "--build-property", "compiler.optimization_flags=" + optimization,
                     "--build-path", str(build), "--library", str(library), str(sketch)], check=True)

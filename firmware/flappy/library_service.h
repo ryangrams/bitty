@@ -49,7 +49,6 @@ void refreshCartridgeViews() {
     FlappyRom::length = selected->length; FlappyRom::title = selected->title;
   }
   marioCartridge.configure(FlappyRom::data, FlappyRom::length);
-  app.marioClockAvailable = marioCartridge.clockSupported() && viewport.width >= 135 && viewport.height >= 240;
   app.setNesAvailable(FlappyRom::length > 0);
   app.setNesTitle(marioCartridge.supported() ? "Mario" : FlappyRom::title);
   app.setGeometryDashAvailable(GeometryRom::length > 0);
@@ -88,6 +87,8 @@ void libraryText(const char* text, int y) {
 void enterLibrary() {
   if (libraryActive) return;
   asyncDisplay.drain(); stopGameAudio(); nes.unload(); releaseNativeArcade();
+  if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+  gameHome.enter(); homeClocks.release(); clearPendingInput();
   delete geometryPresentation; geometryPresentation = nullptr;
   saveSettings();
   if (bluetoothPad) bluetoothPad->stop();

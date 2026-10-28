@@ -34,7 +34,9 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     firmware = (ROOT / "firmware" / "flappy" / "flappy.ino").read_text()
     (output / "generated_nes_launcher.h").write_text(
-        firmware_function(firmware, "void handleGameRequest() {"))
+        firmware_function(firmware, "void handlePlayGameRequest() {") +
+        firmware_function(firmware, "void handleHomePlayRequests(bool coopStart) {") +
+        firmware_function(firmware, "void prepareNativeHomePlay() {"))
     cc = shutil.which("cc") or shutil.which("gcc")
     cxx = shutil.which("c++") or shutil.which("g++")
     if not cc or not cxx:

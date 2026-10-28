@@ -37,6 +37,10 @@ inline uint8_t visibleGameIndex(GameTitle title) {
   }
 }
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
+inline Mode playModeChoice(uint8_t index) {
+  static constexpr Mode choices[] = {Mode::Original, Mode::Demo, Mode::Arcade, Mode::Big, Mode::Coop};
+  return index < 5 ? choices[index] : Mode::Original;
+}
 enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions };
 
 constexpr uint8_t GeometryLevelCount = 22;
@@ -77,7 +81,6 @@ struct Settings {
   uint8_t clockHour = 12;
   uint8_t clockMinute = 0;
   bool clock24Hour = true;
-  bool marioClock = false;
   uint8_t coopRole = 0;
   uint8_t geometryLevel = 0;
   uint8_t arcadeSensitivity = 1;
@@ -144,6 +147,7 @@ class AppModel {
   MenuState menu;
   GameTitle currentGame = GameTitle::FlappyBird;
   uint32_t gameRequest = 0;
+  uint32_t homeRequest = 0;
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
   uint32_t arcadeCalibrateRequest = 0;
@@ -158,7 +162,6 @@ class AppModel {
   uint8_t controllerAction = 0;
   const char* controllerStatus = "Off";
   bool speakerBatteryCap = false;
-  bool marioClockAvailable = false;
   bool settingsDirty = false;
   bool highScoresDirty = false;
   uint32_t coopRequest = 0;
@@ -318,7 +321,7 @@ class AppModel {
   const char* gameLabel(GameTitle title) const {
     if (title == GameTitle::Galaga) return "Galaga";
     if (title == GameTitle::Arkanoid) return "Arkanoid";
-    if (title == GameTitle::JetpackJoyride) return "Jetpack Joyride";
+    if (title == GameTitle::JetpackJoyride) return "Bitty Jet";
     if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
     if (title == GameTitle::GeometryDash) return geometryDashAvailable_ ? "Geometry Dash" : "Geometry Dash: no ROM";
     if (title == GameTitle::Tetris || title == GameTitle::TetrisZero)
@@ -563,6 +566,7 @@ class AppModel {
 
   uint8_t clockHour(uint32_t nowMs) const { return uint8_t(clockMinutes(nowMs) / 60); }
   uint8_t clockMinute(uint32_t nowMs) const { return uint8_t(clockMinutes(nowMs) % 60); }
+  uint8_t clockSecond(uint32_t nowMs) const { return uint8_t((uint32_t(nowMs - clockBaseMs_) / 1000u) % 60u); }
 
   void openMenu(MenuPage page = MenuPage::Home) {
     menu.page = page;
@@ -609,19 +613,18 @@ class AppModel {
 
   uint8_t menuItemCount() const {
     switch (menu.page) {
-      case MenuPage::Home: return 8;
+      case MenuPage::Home: return 10;
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceCount() + 1;
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::Nes && marioClockAvailable) return 4;
-        if (currentGame == GameTitle::FlappyBird) return 5;
+        if (currentGame == GameTitle::FlappyBird) return 4;
         if (currentGame == GameTitle::Tetris) return 9;
         if (currentGame == GameTitle::TetrisZero) return 8;
         if (currentGame == GameTitle::GeometryDash) return 3;
         if (currentGame == GameTitle::JetpackJoyride) return 6;
         return nativeArcadeGame(currentGame) ? 6 : 2;
       case MenuPage::GeometryLevel: return GeometryLevelCount + 1;
-      case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
+      case MenuPage::Modes: return 6;
       case MenuPage::Brightness: return 4;
       case MenuPage::TetrisLevel: return currentGame == GameTitle::TetrisZero ? 11 : 31;
       case MenuPage::TetrisType: return 3;
@@ -647,18 +650,14 @@ class AppModel {
     if (index == count - 1) return "Back";
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep"};
+        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Set clock", "Game home"};
         return labels[index];
       }
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceLabel(index);
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::Nes && marioClockAvailable) {
-          constexpr const char* labels[] = {"Mode", "Set clock", "New game / course"};
-          return labels[index];
-        }
         if (currentGame == GameTitle::FlappyBird) {
-          constexpr const char* labels[] = {"Mode", "Skins", "Set clock", "Co-op link"};
+          constexpr const char* labels[] = {"Mode", "Skins", "Co-op link"};
           return labels[index];
         }
         if (currentGame == GameTitle::Tetris) {
@@ -705,7 +704,7 @@ class AppModel {
         constexpr const char* labels[] = {"Disconnect", "Host game", "Join game"};
         return labels[index];
       }
-      case MenuPage::Modes: return modeName(Mode(index));
+      case MenuPage::Modes: return modeName(playModeChoice(index));
       case MenuPage::Brightness: {
         constexpr const char* labels[] = {"Low", "Medium", "High"};
         return labels[index];
@@ -756,14 +755,17 @@ class AppModel {
         }
         if (index == 5) return controllerStatus;
         if (index == 6) return sleepLabel(settings.sleepIndex);
+        if (index == 7) {
+          snprintf(valueBuffer_, sizeof(valueBuffer_), "%02u:%02u", unsigned(clockHour(lastNowMs_)), unsigned(clockMinute(lastNowMs_)));
+          return valueBuffer_;
+        }
+        if (index == 8) return gameLabel(currentGame);
         break;
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::Nes && marioClockAvailable && index == 0)
-          return settings.marioClock ? "Mario Clock" : "Play";
         if (currentGame == GameTitle::FlappyBird) {
           if (index == 0) return modeName(settings.mode);
           if (index == 1) return skinNames_ ? skinNames_[settings.skinIndex] : "";
-          if (index == 3) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
+          if (index == 2) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
         } else if (currentGame == GameTitle::Tetris) {
           if (index == 0) return "Solo";
           if (index == 2) {
@@ -851,7 +853,7 @@ class AppModel {
       case MenuPage::ChangeGame: return (gameChoiceTitle(index) == currentGame ||
           (gameChoiceTitle(index) == GameTitle::Tetris && currentGame == GameTitle::TetrisZero)) &&
           (currentGame != GameTitle::Nes || gameChoiceCartridge(index) == currentCartridge) ? "*" : "";
-      case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
+      case MenuPage::Modes: return playModeChoice(index) == settings.mode ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
       case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
       case MenuPage::Sleep: return index == (settings.sleepIndex < SleepChoiceCount ? settings.sleepIndex : 0) ? "*" : "";
@@ -883,7 +885,7 @@ class AppModel {
   }
 
   // Call at 60 Hz. The menu consumes input and freezes the game simulation.
-  uint8_t step(bool actionEdge, bool menuDown, uint32_t nowMs) {
+  uint8_t step(bool actionEdge, bool menuDown, uint32_t nowMs, bool simulateGame = true) {
     lastNowMs_ = nowMs;
     const bool wasOpen = menuOpen();
     bool menuHandled = false;
@@ -911,7 +913,7 @@ class AppModel {
       if (actionEdge && !menuHandled) selectMenuItem(nowMs);
       return NoEvent;
     }
-    if (wasOpen || menuHandled || currentGame != GameTitle::FlappyBird) return NoEvent;
+    if (wasOpen || menuHandled || currentGame != GameTitle::FlappyBird || !simulateGame) return NoEvent;
 
     if (automatedMode() && actionEdge && !humanOverride_) {
       humanOverride_ = true;
@@ -1057,7 +1059,8 @@ class AppModel {
   void selectMenuItem(uint32_t nowMs) {
     if (menu.selection >= menuItemCount() - 1) {
       if (menu.page == MenuPage::Home) closeMenu();
-      else if (menu.page == MenuPage::Modes || menu.page == MenuPage::Skins || menu.page == MenuPage::Clock ||
+      else if (menu.page == MenuPage::Clock) openMenu();
+      else if (menu.page == MenuPage::Modes || menu.page == MenuPage::Skins ||
                menu.page == MenuPage::Coop || menu.page == MenuPage::TetrisLevel ||
                menu.page == MenuPage::TetrisType || menu.page == MenuPage::TetrisControls ||
                menu.page == MenuPage::TetrisLink || menu.page == MenuPage::TetrisZeroPlayers ||
@@ -1068,8 +1071,9 @@ class AppModel {
     }
     switch (menu.page) {
       case MenuPage::Home: {
+        if (menu.selection == 8) { ++homeRequest; closeMenu(); break; }
         constexpr MenuPage destinations[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
-                                             MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep};
+                                             MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep, MenuPage::Clock};
         openMenu(destinations[menu.selection]);
         break;
       }
@@ -1083,21 +1087,12 @@ class AppModel {
       case MenuPage::ChangeGame: {
         const GameTitle title = gameChoiceTitle(menu.selection);
         if (title == GameTitle::Nes && !chooseCartridge(gameChoiceCartridge(menu.selection))) break;
-        if (title == GameTitle::Tetris ? activateTetris() : setCurrentGame(title)) closeMenu();
+        if (title == GameTitle::Tetris ? activateTetris() : setCurrentGame(title)) { ++homeRequest; closeMenu(); }
         break;
       }
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::Nes && marioClockAvailable) {
-          if (menu.selection == 0) {
-            settings.marioClock = !settings.marioClock;
-            settingsDirty = true;
-            requestGameRestart();
-          } else if (menu.selection == 1) openMenu(MenuPage::Clock);
-          else requestGameRestart();
-          break;
-        }
         if (currentGame == GameTitle::FlappyBird) {
-          constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Clock, MenuPage::Coop};
+          constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Coop};
           openMenu(destinations[menu.selection]);
         } else if (currentGame == GameTitle::Tetris) {
           if (menu.selection == 0) openMenu(MenuPage::TetrisZeroPlayers);
@@ -1176,7 +1171,7 @@ class AppModel {
         ++tetrisLinkRequest;
         break;
       case MenuPage::Modes:
-        setMode(Mode(menu.selection));
+        setMode(playModeChoice(menu.selection));
         closeMenu();
         break;
       case MenuPage::Brightness: setBrightness(menu.selection); break;

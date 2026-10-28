@@ -9,6 +9,8 @@ Identify the hardware before assigning pins. An ESP32 family name or M5 USB ID d
 
 For this project, read [hardware and verification](references/hardware.md). For a new board, establish equivalent evidence from its schematic and a minimal probe before reusing those settings.
 
+In Bitty, every game opens on a portrait animated clock home. A short left tap cycles available games, front M5 starts play, and holding right opens the shared menu. Keep Set clock in that menu and return through Game home. Clock simulation must leave scores, rewards and saved progress untouched. Read the repository's [game-home contract](https://github.com/ryangrams/bitty/blob/main/docs/GAME_HOMES.md) and [authoring guide](https://github.com/ryangrams/bitty/blob/main/docs/CREATING_GAMES.md) when adding a Bitty game. This is a Bitty convention; other M5 apps keep their requested interaction.
+
 Separate simulation time, completed video transfers and input sampling. Measure all three on hardware. A 60 Hz loop counter cannot prove 60 displayed frames. Test alternating sprites so frame skipping cannot silently erase blinking actors. Use fixed simulation steps and bounded catch-up. Never speed a game up to improve a rendering metric.
 
 Use bitmap fonts at their native pixel size and integer placement. Cropping preserves pixels; fractional scaling changes stroke widths. Inspect a real-resolution capture. Display transfer buffers remain owned until DMA completes. Confirm RGB565 byte order and display scan direction before changing art colors.
