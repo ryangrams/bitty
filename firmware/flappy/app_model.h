@@ -154,6 +154,8 @@ class AppModel {
   uint32_t gameRequest = 0;
   uint32_t homeRequest = 0;
   uint32_t clockWriteRequest = 0;
+  uint32_t powerOffRequest = 0;
+  bool powerOffAvailable = false;
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
   uint32_t arcadeCalibrateRequest = 0;
@@ -685,7 +687,7 @@ class AppModel {
       case MenuPage::TetrisLink: return 4;
       case MenuPage::TetrisZeroPlayers: return 3;
       case MenuPage::Volume: return 7;
-      case MenuPage::Sleep: return SleepChoiceCount + 1;
+      case MenuPage::Sleep: return uint8_t(SleepChoiceCount + 1 + powerOffAvailable);
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
       case MenuPage::Clock: return 6;
       case MenuPage::ClockDate: return 4;
@@ -783,7 +785,7 @@ class AppModel {
         constexpr const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
         return labels[index];
       }
-      case MenuPage::Sleep: return sleepLabel(index);
+      case MenuPage::Sleep: return index == SleepChoiceCount ? "Power off" : sleepLabel(index);
       case MenuPage::Skins:
         if (skinNames_) return skinNames_[index];
         if (!index) return "Original";
@@ -1287,7 +1289,10 @@ class AppModel {
         break;
       case MenuPage::Brightness: setBrightness(menu.selection); break;
       case MenuPage::Volume: setVolume(menu.selection); break;
-      case MenuPage::Sleep: setSleep(menu.selection); break;
+      case MenuPage::Sleep:
+        if (menu.selection < SleepChoiceCount) setSleep(menu.selection);
+        else if (powerOffAvailable) ++powerOffRequest;
+        break;
       case MenuPage::Skins: setSkin(menu.selection); closeMenu(); break;
       case MenuPage::Clock:
         if (menu.selection < 2) {

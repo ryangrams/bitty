@@ -24,22 +24,41 @@ export function cleanTitle(title) {
   return title.replace(/\.nes$/i, '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, 32) || 'NES cartridge';
 }
 
+export function localClockFields(date = new Date()) {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime()) || date.getFullYear() < 2000 || date.getFullYear() > 2099)
+    throw new Error('Set the computer clock to a date between 2000 and 2099.');
+  return [date.getFullYear(),date.getMonth()+1,date.getDate(),date.getHours(),date.getMinutes(),date.getSeconds()];
+}
+
 // One request at a time. Receive bounds and deadlines also apply to boot noise.
 export class LibraryClient {
   constructor(port) { this.port = port; this.queue = []; this.buffer = ''; this.closed = false; this.waiter = null; this.sequence = 0; this.busy = false; }
-  async open() {
-    await this.port.open({baudRate: 9600});
-    await this.port.setSignals({dataTerminalReady: false, requestToSend: false});
-    await this.port.close();
-    await this.port.open({baudRate: 115200});
-    await this.port.setSignals({dataTerminalReady: false, requestToSend: false});
+  async open({library = true} = {}) {
+    this.librarySession = library;
+    const nativeUsb = this.port.getInfo?.().usbVendorId === 0x303a;
+    const signals = {dataTerminalReady:nativeUsb, requestToSend:false};
+    if (!nativeUsb) {
+      await this.port.open({baudRate:9600});
+      await this.port.setSignals(signals);
+      await this.port.close();
+    }
+    await this.port.open({baudRate:115200});
+    await this.port.setSignals(signals);
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this.reading = this.readLoop();
+    if (!library) return;
     const hello = await this.request('HELLO', [], 'HELLO', 8000);
-    if (hello[1] !== '1' || hello[2] !== 'M5StickCPlus') throw new Error('This device is running an incompatible library protocol.');
+    if (hello[1] !== '1' || !['M5StickCPlus','M5StickS3'].includes(hello[2])) throw new Error('This device is running an incompatible library protocol.');
     if (hello[4] !== '1') throw new Error('Cartridge storage is unavailable. Read the recovery instructions before reinstalling or erasing the device.');
     return hello;
+  }
+  async syncClock(date = new Date()) {
+    const fields = localClockFields(date);
+    const reply = await this.request('TIME',fields);
+    if (reply.length !== 8 || fields.some((value,index) => Number(reply[index+2]) !== value))
+      throw new Error('The device did not confirm the computer clock. Reconnect and try again.');
+    return date;
   }
   async readLoop() {
     const decoder = new TextDecoder();
@@ -86,7 +105,10 @@ export class LibraryClient {
       const response = await this.response(deadline);
       if (response[0] !== sequence) continue;
       const reply = response.slice(1);
-      if (reply[0] === 'ERROR') throw new Error(`Device: ${reply[1]}. Your previous cartridge remains installed until a replacement commits.`);
+      if (reply[0] === 'ERROR') {
+        if (command === 'TIME') throw new Error('The firmware could not set the clock. Install a build with USB clock sync and try again.');
+        throw new Error(`Device: ${reply[1]}. Your previous cartridge remains installed until a replacement commits.`);
+      }
       if (reply[0] === 'BYE') throw new Error('Library session ended. Reconnect to continue.');
       if (reply[0] === 'ITEM') { items.push(reply.slice(1)); continue; }
       if (reply[0] === expected) {
@@ -115,7 +137,7 @@ export class LibraryClient {
     }
   }
   async close() {
-    if (!this.closed && this.writer) { try { await this.request('EXIT'); } catch {} }
+    if (!this.closed && this.writer && this.librarySession) { try { await this.request('EXIT'); } catch {} }
     this.closed = true;
     try { await this.reader?.cancel(); } catch {}
     await this.reading;

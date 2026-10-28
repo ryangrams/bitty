@@ -39,6 +39,15 @@ int main() {
     guards(); nativeCrop();
     assert(pixels[14 * width + 10] == BittyUi::Glow);
   }
+  // Four-row website mark: continuous left stem, open bowl, violet lower corners.
+  BittyUi::rect(pixels,width,height,0,0,width,height,BittyUi::Black);
+  BittyUi::mark(pixels,width,height,20,40,6,1);
+  for (int y = 40; y < 67; ++y) assert(pixels[y*width+20] == BittyUi::Glow);
+  assert(pixels[40*width+27] == BittyUi::Black);
+  assert(pixels[47*width+27] == BittyUi::Glow);
+  assert(pixels[54*width+27] == BittyUi::Black);
+  assert(pixels[61*width+27] == BittyUi::Glow);
+  assert(pixels[54*width+34] == BittyUi::Glow);
   std::vector<uint16_t> finished;
   assert(BittyUi::SplashMs == 2400);
   for (unsigned elapsed = 0; elapsed <= BittyUi::SplashMs + 100; elapsed += 10) {

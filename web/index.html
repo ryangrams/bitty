@@ -19,6 +19,12 @@
     <div><p class="eyebrow">01 / FIRST TIME HERE?</p><h2>Plug in. Put Bitty on it.</h2><p>Use a data-capable USB cable and a desktop browser with Web Serial. Check the model printed on your case before installing.</p><p class="notice">This build supports the original <strong>M5StickC Plus, ESP32, 4 MB</strong>. Plus2, StickC, Core and S3 boards need their own tested builds.</p></div>
     <div class="card"><h3>Install Bitty</h3><p class="notice">Development preview. The new USB library is awaiting its first complete hardware installation and transfer check. Read the <a href="https://github.com/ryangrams/bitty/blob/main/docs/RELEASE_STATUS.md">release status</a> before installing.</p><label class="check"><input type="checkbox" id="board"> I checked: this is an M5StickC Plus.</label><label class="check"><input type="checkbox" id="replace"> I understand installation replaces its current firmware. Erasing also removes saved settings and cartridges.</label><div id="installer"><button disabled>Checking the release…</button></div><p id="release-status" class="quiet" role="status"></p><p class="quiet">First installation may erase the device. Routine app updates can preserve the library. Close the USB library connection before using the installer.</p><a href="https://github.com/ryangrams/bitty/blob/main/docs/USB_LIBRARY.md">Recovery and USB help ↗</a></div>
   </section>
+  <section id="clock" class="card">
+    <h2>Set the clock over USB</h2>
+    <p>After installation, close the install dialog, then send this computer’s local time and date to your Stick. No Wi-Fi setup needed. Connecting your library also updates the clock.</p>
+    <button id="sync-clock">Use this computer’s time</button>
+    <p id="clock-status" role="status" class="quiet">Use this again after changing time zones or daylight saving time. A full power loss may require another sync.</p>
+  </section>
   <section id="library">
     <p class="eyebrow">02 / MAKE ROOM FOR A FAVORITE</p><div class="section-top"><div><h2>Your Stick. Your library.</h2><p>Cartridges go from this browser to your M5 over USB. The site never uploads your files.</p></div><button id="connect">Connect your M5</button><button id="disconnect" hidden>Disconnect</button></div>
     <p id="connection" role="status" class="status">Not connected. Connecting ends the current run and opens the USB library.</p>

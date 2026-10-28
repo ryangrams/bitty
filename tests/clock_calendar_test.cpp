@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <time.h>
 
 using namespace flappy;
 
@@ -30,10 +31,22 @@ static void calendarBoundaries() {
   ClockDate current = date(2000,1,1);
   for (unsigned day = 0; day < 36525; ++day) {
     assert(ClockCalendar::valid(current));
+    uint32_t encoded = 0;
+    assert(ClockCalendar::clockSeconds(current,23,59,58,encoded));
+    const time_t value = encoded;
+    struct tm civil = {}; assert(gmtime_r(&value,&civil));
+    assert(civil.tm_year + 1900 == current.year && civil.tm_mon + 1 == current.month && civil.tm_mday == current.day);
+    assert(civil.tm_hour == 23 && civil.tm_min == 59 && civil.tm_sec == 58);
     assert(ClockCalendar::weekDay(current) == (day + 6) % 7);
     current = ClockCalendar::addDays(current,1);
   }
   assert(current == date(2100,1,1));
+  uint32_t seconds = 0;
+  assert(ClockCalendar::clockSeconds(date(2000,1,1),0,0,0,seconds) && seconds == 946684800u);
+  assert(ClockCalendar::clockSeconds(date(2099,12,31),23,59,59,seconds) && seconds == 4102444799u);
+  assert(!ClockCalendar::clockSeconds(date(2100,1,1),0,0,0,seconds));
+  assert(!ClockCalendar::clockSeconds(date(2026,2,29),0,0,0,seconds));
+  assert(!ClockCalendar::clockSeconds(date(2026,1,1),24,0,0,seconds));
   char label[20];
   ClockCalendar::format(label,sizeof(label),date(2026,10,28));
   assert(std::string(label) == "WED OCT 28 2026");

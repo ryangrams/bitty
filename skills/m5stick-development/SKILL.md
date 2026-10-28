@@ -1,6 +1,6 @@
 ---
 name: m5stick-development
-description: Build and diagnose M5StickC and M5StickC Plus firmware, tiny-screen interfaces, Bluetooth input, piezo audio, sleep and flash storage. Use for actual M5Stick games or apps; verify other M5 models separately.
+description: Build and diagnose M5StickC, M5StickC Plus and StickS3 firmware, tiny-screen interfaces, Bluetooth input, piezo audio, sleep and flash storage. Use for actual M5Stick games or apps; verify other M5 models separately.
 ---
 
 # M5Stick development
@@ -9,7 +9,7 @@ Identify the hardware before assigning pins. An ESP32 family name or M5 USB ID d
 
 For this project, read [hardware and verification](references/hardware.md). For a new board, establish equivalent evidence from its schematic and a minimal probe before reusing those settings.
 
-In Bitty, every game opens on a portrait animated clock home. A short left tap cycles available games, front M5 starts play, and holding right opens the shared menu. Keep Set clock in that menu and return through Game home. Clock simulation must leave scores, rewards and saved progress untouched. Read the repository's [game-home contract](https://github.com/ryangrams/bitty/blob/main/docs/GAME_HOMES.md) and [authoring guide](https://github.com/ryangrams/bitty/blob/main/docs/CREATING_GAMES.md) when adding a Bitty game. This is a Bitty convention; other M5 apps keep their requested interaction.
+In Bitty, every game opens on a portrait animated clock home. A short left tap cycles available games on the original Plus. On StickS3, configure the PMIC tap mode from the hardware reference before using its left key. Use a labeled right-tap fallback when configuration cannot be verified. Front M5 starts play, and holding right opens the shared menu on both models. Keep Set clock in that menu and return through Game home. Clock simulation must leave scores, rewards and saved progress untouched. Read the repository's [game-home contract](https://github.com/ryangrams/bitty/blob/main/docs/GAME_HOMES.md) and [authoring guide](https://github.com/ryangrams/bitty/blob/main/docs/CREATING_GAMES.md) when adding a Bitty game. This is a Bitty convention; other M5 apps keep their requested interaction.
 
 Separate simulation time, completed video transfers and input sampling. Measure all three on hardware. A 60 Hz loop counter cannot prove 60 displayed frames. Test alternating sprites so frame skipping cannot silently erase blinking actors. Use fixed simulation steps and bounded catch-up. Never speed a game up to improve a rendering metric.
 

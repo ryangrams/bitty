@@ -47,3 +47,11 @@ Keepalive requests prevent the 30-second idle management timeout. Holding right 
 ## Build-output cleanup
 
 Generated firmware, staging, browser dependencies, SDK bundles and test binaries under `.local` are reproducible caches. Remove them after retaining the release receipts and required recovery images. Recreate them with the setup, test and build commands above. Private reference extraction can be rebuilt from the owner's original inputs using the import tools.
+
+## Computer clock setup
+
+After installing, close the installer dialog and choose **Use this computer’s time**. Select the Stick’s USB port. The browser sends its current local year, month, day, hour, minute and second. Connecting the cartridge library also synchronizes the clock. A clock-only connection works with embedded-game builds, keeps the current game running and needs no cartridge partition or Wi-Fi.
+
+The device validates the complete date before changing the clock and replies with the accepted values. **Set clock** and **Set date** remain available on the device. The time uses the computer’s local zone at synchronization. Resync after travel or daylight saving changes. The internal ESP32 RTC timer keeps a synchronized clock through sleep and supported soft resets. Boards without a backed clock need another sync after full power loss. The firmware does not infer a time zone from USB location.
+
+The original CH552 bridge uses the verified 9600-to-115200 opening sequence with DTR and RTS low. StickS3 native USB opens once at 115200 with DTR high and RTS low. Applying the bridge’s control-line sequence to the S3 can reset it repeatedly.

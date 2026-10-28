@@ -1,10 +1,10 @@
 # Game clocks
 
-Select a game and its clock starts in portrait. Tap the left side button to move to the next available game. Press the front M5 button to play. Hold right for the menu. Choose **Game home** in the menu to return to the selected game's clock. **Game at Boot** chooses which clock appears after startup.
+Select a game and its clock starts in portrait. Tap the left side button to move to the next available game. Press the front M5 button to play. StickS3 startup configures its power key for taps and disables accidental single-tap reset and double-tap power-off. If its PMIC revision cannot be configured, the footer shows RIGHT NEXT as a fallback. Hold right for the menu on either model. Choose **Game home** in the menu to return to the selected game's clock. **Game at Boot** chooses which clock appears after startup.
 
 A paired controller can use Left for the next home, A or Start to play, and B or Menu for the menu. Gameplay keeps each game's existing controller assignments. The original Plus power key keeps its hardware long-hold function.
 
-**Set clock** is in the main menu for every game. **Time format** selects **12-hour** or **24-hour**. **Day / date** cycles through **None**, **Top** and **Bottom** for a shared weekday and date line, such as `WED OCT 28 2026`. Bottom uses the footer in place of the repeated button hint, leaving the native game area visible. **Set date** adjusts the year, month and day. Time and date use the RTC, and the display preferences survive restart. All clock scenes show hours above minutes without a colon.
+**Set clock** is in the main menu for every game. **Time format** selects **12-hour** or **24-hour**. **Day / date** cycles through **None**, **Top** and **Bottom** for a shared weekday and date line, such as `WED OCT 28 2026`. Bottom uses the footer in place of the repeated button hint, leaving the native game area visible. **Set date** adjusts the year, month and day. The USB loader can set the date and local time from the computer. Boards with an available RTC keep that clock; other boards may need another sync after full power loss. Display preferences survive restart. All clock scenes show hours above minutes without a colon.
 
 The clocks are quiet and do not award records, coins, missions or other saved progress. Battery inactivity sleep still applies. The default is 30 seconds; USB power keeps the clock awake.
 
