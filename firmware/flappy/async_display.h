@@ -264,7 +264,7 @@ class DisplayStripFifo {
   unsigned pending() const {
     const uint32_t completed = completed_.load(std::memory_order_acquire);
     const uint32_t count = written_.load(std::memory_order_acquire) - completed;
-    return count > Capacity ? Capacity : unsigned(count);
+    return count > Capacity ? unsigned(Capacity) : unsigned(count);
   }
 
  private:

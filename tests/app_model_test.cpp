@@ -624,6 +624,8 @@ static void jetpackSettingsAndRestart() {
   assert(d.app.menu.page == MenuPage::JetpackMissions && d.app.menuItemCount() == 5);
   assert(std::string(d.app.menuLabel(0)) == "Coins: 150 total" && std::string(d.app.menuValue(0)) == "75/150");
   assert(std::string(d.app.menuValue(1)) == "Complete" && std::string(d.app.menuValue(3)) == "Lv2 1/3 stars");
+  d.app.setJetpackRank(UINT16_MAX, UINT16_MAX, UINT16_MAX);
+  assert(std::string(d.app.menuValue(3)) == "Lv65535 65535/65535 stars");
   d.app.menu.selection = 4; d.tick(true);
   assert(d.app.menu.page == MenuPage::GameSettings);
   d.app.menu.selection = 0; d.tick(true);

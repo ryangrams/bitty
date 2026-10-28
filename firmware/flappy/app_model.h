@@ -964,7 +964,7 @@ class AppModel {
   bool jetpackMissionDone_[3] = {};
   uint16_t jetpackRank_ = 1, jetpackStars_ = 0, jetpackStarTarget_ = 3;
   mutable char labelBuffer_[24] = {};
-  mutable char valueBuffer_[24] = {};
+  mutable char valueBuffer_[32] = {};
 
   bool gameAvailable(GameTitle title) const {
     return title == GameTitle::FlappyBird || nativeArcadeGame(title) || (title == GameTitle::Nes && nesAvailable_) ||

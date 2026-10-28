@@ -373,7 +373,7 @@ static void scanPhaseQualificationAndBoundedGate() {
     const auto valid = scanProbe(16700, 13300, start);
     assert(valid.complete() && !valid.failed());
     assert(valid.periodUs() == 16700 && valid.lowUs() == 13300 && valid.highUs() == 3400);
-    for (const auto timing : {std::pair<uint32_t, uint32_t>{13800, 12600}, {20500, 18000},
+    for (const auto& timing : {std::pair<uint32_t, uint32_t>{13800, 12600}, {20500, 18000},
                                {16000, 12000}, {20000, 13000}, {16500, 16000}}) {
       const auto invalid = scanProbe(timing.first, timing.second, start);
       assert(invalid.failed() && !invalid.complete());
