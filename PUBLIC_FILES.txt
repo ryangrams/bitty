@@ -32,6 +32,7 @@ docs/JETPACK_IMPORT.md
 docs/JETPACK_PROGRESSION.md
 docs/JETPACK_RESEARCH.md
 docs/MARIO_CLOCK.md
+docs/MARIO_CAMERA.md
 docs/NES.md
 docs/RELEASE_STATUS.md
 docs/RIGHTS.md
