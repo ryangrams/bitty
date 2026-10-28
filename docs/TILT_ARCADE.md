@@ -31,4 +31,4 @@ Arkanoid has durable silver bricks, permanent gold bricks, paddle rebound angles
 
 ## Verification
 
-The portable checks cover deterministic gameplay, collisions, lives, score, stage changes, capture/rescue, power-up lifetimes, fast-ball collisions, guarded drawing buffers and input transitions. Hardware timing and direct tilt feel are separate checks. Both simulations use a fixed 60 Hz tick. The initial build uses 2,373,543 bytes of the 3,145,728-byte firmware partition, leaving about 754 KiB. Hardware timing, tilt feel, sound and controller play remain unverified.
+The portable checks cover deterministic gameplay, collisions, lives, score, stage changes, capture/rescue, power-up lifetimes, fast-ball collisions, guarded drawing buffers and input transitions. Both simulations use a fixed 60 Hz tick. On the later Jetpack release, automated input probes measured 500 completed SPI frame intervals in 8,333,429 microseconds for Galaga and 8,333,219 for Arkanoid. Both round to 60.00 FPS. These probes used volume Full with no controller connected. Physical tilt feel, sound and controller play remain unverified.

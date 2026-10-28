@@ -7,17 +7,18 @@
 namespace flappy {
 
 enum class GameTitle : uint8_t {
-  FlappyBird = 0, Nes = 1, Tetris = 2, TetrisZero = 3, GeometryDash = 4, Galaga = 5, Arkanoid = 6
+  FlappyBird = 0, Nes = 1, Tetris = 2, TetrisZero = 3, GeometryDash = 4, Galaga = 5, Arkanoid = 6,
+  JetpackJoyride = 7
 };
-constexpr uint8_t GameTitleCount = 7;
-constexpr uint8_t VisibleGameCount = 6;
+constexpr uint8_t GameTitleCount = 8;
+constexpr uint8_t VisibleGameCount = 7;
 
 inline bool nativeArcadeGame(GameTitle title) {
-  return title == GameTitle::Galaga || title == GameTitle::Arkanoid;
+  return title == GameTitle::Galaga || title == GameTitle::Arkanoid || title == GameTitle::JetpackJoyride;
 }
 
 inline GameTitle visibleGameTitle(uint8_t index) {
-  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid};
+  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride};
   return index < VisibleGameCount ? titles[index] : GameTitle(UINT8_MAX);
 }
 
@@ -30,6 +31,7 @@ inline uint8_t visibleGameIndex(GameTitle title) {
     case GameTitle::GeometryDash: return 3;
     case GameTitle::Galaga: return 4;
     case GameTitle::Arkanoid: return 5;
+    case GameTitle::JetpackJoyride: return 6;
     default: return UINT8_MAX;
   }
 }
@@ -78,6 +80,7 @@ struct Settings {
   uint8_t arcadeSensitivity = 1;
   bool arcadeAutoFire = false;
   uint8_t arcadeDifficulty = 1;
+  uint8_t jetpackDifficulty = 1;
 };
 
 struct MenuState {
@@ -208,9 +211,16 @@ class AppModel {
     settings.arcadeDifficulty = difficulty;
   }
 
+  void setJetpackDifficulty(uint8_t difficulty) {
+    if (difficulty > 2) difficulty = 1;
+    if (settings.jetpackDifficulty != difficulty) settingsDirty = true;
+    settings.jetpackDifficulty = difficulty;
+  }
+
   const char* gameLabel(GameTitle title) const {
     if (title == GameTitle::Galaga) return "Galaga";
     if (title == GameTitle::Arkanoid) return "Arkanoid";
+    if (title == GameTitle::JetpackJoyride) return "Jetpack Joyride";
     if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
     if (title == GameTitle::GeometryDash) return geometryDashAvailable_ ? "Geometry Dash" : "Geometry Dash: no ROM";
     if (title == GameTitle::Tetris || title == GameTitle::TetrisZero)
@@ -502,7 +512,11 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return VisibleGameCount + 1;
       case MenuPage::GameSettings:
-        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : currentGame == GameTitle::GeometryDash ? 3 : nativeArcadeGame(currentGame) ? 6 : 2;
+        if (currentGame == GameTitle::FlappyBird) return 5;
+        if (currentGame == GameTitle::Tetris) return 9;
+        if (currentGame == GameTitle::TetrisZero) return 8;
+        if (currentGame == GameTitle::GeometryDash || currentGame == GameTitle::JetpackJoyride) return 3;
+        return nativeArcadeGame(currentGame) ? 6 : 2;
       case MenuPage::GeometryLevel: return GeometryLevelCount + 1;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 4;
@@ -546,6 +560,7 @@ class AppModel {
           return labels[index];
         }
         if (currentGame == GameTitle::GeometryDash) return index == 0 ? "Level" : "Restart level";
+        if (currentGame == GameTitle::JetpackJoyride) return index == 0 ? "Restart game" : "Difficulty";
         if (nativeArcadeGame(currentGame)) {
           constexpr const char* labels[] = {"Restart game", "Zero tilt", "Sensitivity", "Auto fire", "Difficulty"};
           return labels[index];
@@ -645,6 +660,8 @@ class AppModel {
           if (index == 5) return settings.tetrisPlayers == 2 ? "6px (2P)" : settings.tetrisLarge ? "Large 11px" : "Native 8px";
         } else if (currentGame == GameTitle::GeometryDash) {
           if (index == 0) return geometryLevelLabel(settings.geometryLevel);
+        } else if (currentGame == GameTitle::JetpackJoyride) {
+          if (index == 1) return settings.jetpackDifficulty == 0 ? "Easy" : settings.jetpackDifficulty == 2 ? "Hard" : "Normal";
         } else if (nativeArcadeGame(currentGame)) {
           if (index == 1) return "Hold unit steady";
           if (index == 2) return settings.arcadeSensitivity == 0 ? "Fine" : settings.arcadeSensitivity == 2 ? "Fast" : "Normal";
@@ -907,6 +924,9 @@ class AppModel {
         } else if (currentGame == GameTitle::GeometryDash) {
           if (menu.selection == 0) openMenu(MenuPage::GeometryLevel);
           else requestGameRestart();
+        } else if (currentGame == GameTitle::JetpackJoyride) {
+          if (menu.selection == 0) requestGameRestart();
+          else if (menu.selection == 1) setJetpackDifficulty(uint8_t((settings.jetpackDifficulty + 1) % 3));
         } else if (nativeArcadeGame(currentGame)) {
           if (menu.selection == 0) requestGameRestart();
           else if (menu.selection == 1) ++arcadeCalibrateRequest;

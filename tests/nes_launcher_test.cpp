@@ -82,6 +82,7 @@ bool nativeBeginOk = false;
 void releaseNativeArcade() { ++nativeReleases; }
 bool beginNativeArcade() { ++nativeBegins; return nativeBeginOk; }
 bool nativeArcade() { return flappy::nativeArcadeGame(app.currentGame); }
+bool jetpackSelected() { return app.currentGame == flappy::GameTitle::JetpackJoyride; }
 bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird && !nativeArcade(); }
 void setNesDisplay(bool enabled) { landscape = enabled; }
 void nesVideo(void*, int, int, int, int, const uint16_t*) {}
@@ -176,7 +177,7 @@ static void checkGeometrySlot() {
 static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
   auto mario = cartridge(false, false, 0);
   FlappyRom::data = mario.data(); FlappyRom::length = mario.size();
-  for (const auto title : {flappy::GameTitle::Galaga, flappy::GameTitle::Arkanoid}) {
+  for (const auto title : {flappy::GameTitle::Galaga, flappy::GameTitle::Arkanoid, flappy::GameTitle::JetpackJoyride}) {
     app = flappy::AppModel();
     app.setNesAvailable(true);
     app.setCurrentGame(flappy::GameTitle::Nes);
@@ -187,7 +188,8 @@ static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
     const unsigned begins = nativeBegins, releases = nativeReleases;
     app.setCurrentGame(title);
     handleGameRequest();
-    assert(app.currentGame == title && !nes.ready() && !landscape);
+    assert(app.currentGame == title && !nes.ready());
+    assert(landscape == (title == flappy::GameTitle::JetpackJoyride));
     assert(!nativeMario && !nativeGeometry && !renderer->cacheEnabled);
     assert(nativeBegins == begins + 1 && nativeReleases == releases + 1);
     app.setCurrentGame(flappy::GameTitle::FlappyBird);

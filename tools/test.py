@@ -26,11 +26,12 @@ def main():
     flags = ["-std=c++11", "-Wall", "-Wextra", "-Werror"]
     if not args.no_sanitize:
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-    for name in ("game_core_test", "app_model_test", "arcade_support_test", "galaga_game_test", "arkanoid_game_test", "coop_protocol_test", "controller_input_test", "ble_radio_test", "nes_viewport_test", "nes_system_button_test", "nes_sound_events_test", "piezo_sound_test", "piezo_output_test", "mario_viewport_test", "rom_fingerprint_test", "geometry_input_test", "geometry_scene_test", "geometry_collision_test", "geometry_level_test", "geometry_renderer_test", "geometry_scanorder_test", "geometry_launcher_test", "tetris_input_test", "tetris_actions_test", "tetris_viewport_test", "tetris_zero_viewport_test", "menu_font_test", "display_damage_test", "async_display_test", "inactivity_test"):
+    for name in ("game_core_test", "app_model_test", "arcade_support_test", "galaga_game_test", "arkanoid_game_test", "jetpack_game_test", "jetpack_art_test", "jetpack_fairness_test", "coop_protocol_test", "controller_input_test", "ble_radio_test", "nes_viewport_test", "nes_system_button_test", "nes_sound_events_test", "piezo_sound_test", "piezo_output_test", "mario_viewport_test", "rom_fingerprint_test", "geometry_input_test", "geometry_scene_test", "geometry_collision_test", "geometry_level_test", "geometry_renderer_test", "geometry_scanorder_test", "geometry_launcher_test", "tetris_input_test", "tetris_actions_test", "tetris_viewport_test", "tetris_zero_viewport_test", "menu_font_test", "display_damage_test", "async_display_test", "inactivity_test"):
         if not (ROOT / "tests" / (name + ".cpp")).is_file():
             continue
         executable = target / (name + (".exe" if os.name == "nt" else ""))
-        subprocess.run([compiler] + flags + (["-pthread"] if name == "async_display_test" else []) + [str(ROOT / "tests" / (name + ".cpp")), "-o", str(executable)], check=True)
+        target_flags = flags + (["-O2"] if name == "jetpack_fairness_test" else [])
+        subprocess.run([compiler] + target_flags + (["-pthread"] if name == "async_display_test" else []) + [str(ROOT / "tests" / (name + ".cpp")), "-o", str(executable)], check=True)
         subprocess.run([str(executable)], check=True)
         if name == "async_display_test":
             alternate = target / "async_display_three_test"

@@ -125,3 +125,10 @@ tests/arcade_support_test.cpp
 tests/galaga_game_test.cpp
 tests/arkanoid_game_test.cpp
 docs/TILT_ARCADE.md
+docs/JETPACK.md
+docs/JETPACK_RESEARCH.md
+firmware/flappy/jetpack_game.h
+tests/jetpack_game_test.cpp
+tests/jetpack_fairness_test.cpp
+firmware/flappy/jetpack_art.h
+tests/jetpack_art_test.cpp
