@@ -1,0 +1,4 @@
+interface:
+  display_name: "Content to GitHub"
+  short_description: "Prepare a public hardware or software project for a content launch with reprod"
+  default_prompt: "Use $content-to-github to complete this task with verified evidence and reusable project files."

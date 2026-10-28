@@ -1162,7 +1162,45 @@ static void sharedWorldMap() {
   assert(first.worldTick() == 0);
 }
 
+static void cartridgeCatalogSelectionAndBoot() {
+  Driver d;
+  char title[] = "First cartridge";
+  d.app.addCartridgeChoice(8, title); title[0] = 'X';
+  d.app.addCartridgeChoice(27, "Second cartridge");
+  d.app.setNesAvailable(true);
+  assert(d.app.gameChoiceCount() == VisibleGameCount + 1);
+  assert(std::string(d.app.gameChoiceLabel(1)) == "First cartridge");
+  assert(d.app.gameChoiceCartridge(1) == 8);
+  assert(d.app.gameChoiceCartridge(VisibleGameCount) == 27);
+  assert(!d.app.gameChoiceAvailable(d.app.gameChoiceCount()));
+  d.app.openMenu(MenuPage::ChangeGame);
+  d.app.menu.selection = VisibleGameCount;
+  d.tick(true);
+  assert(!d.app.menuOpen() && d.app.currentGame == GameTitle::Nes && d.app.currentCartridge == 27);
+  const uint32_t request = d.app.gameRequest;
+  d.app.openMenu(MenuPage::ChangeGame);
+  d.app.menu.selection = 1;
+  d.tick(true);
+  assert(!d.app.menuOpen() && d.app.currentCartridge == 8 && d.app.gameRequest > request);
+  d.app.openMenu(MenuPage::BootGame);
+  d.app.menu.selection = VisibleGameCount;
+  d.tick(true);
+  assert(d.app.settings.bootGame == GameTitle::Nes && d.app.settings.bootCartridge == 27);
+  assert(d.app.currentCartridge == 8);
+  assert(std::string(d.app.menuValue(VisibleGameCount)) == "*");
+  d.app.clearCartridgeChoices();
+  d.app.setNesAvailable(false);
+  assert(d.app.currentGame == GameTitle::FlappyBird && !d.app.chooseCartridge(27));
+  assert(d.app.gameChoiceCount() == VisibleGameCount);
+  d.app.restoreBootGame();
+  assert(d.app.currentGame == GameTitle::FlappyBird);
+  for (uint8_t id = 1; id < 20; ++id) d.app.addCartridgeChoice(id, "Stored cartridge");
+  assert(d.app.gameChoiceCount() == VisibleGameCount + 11);
+  assert(d.app.gameChoiceCartridge(d.app.gameChoiceCount() - 1) == 12);
+}
+
 int main() {
+  cartridgeCatalogSelectionAndBoot();
   menuEdgesAndPause();
   everyMenuHasBack();
   volumeSettingsAndMenuNavigation();

@@ -1,0 +1,4 @@
+interface:
+  display_name: "M5Stick game fidelity"
+  short_description: "Audit a tiny-screen game port against a user-provided reference, including pla"
+  default_prompt: "Use $m5stick-game-fidelity to complete this task with verified evidence and reusable project files."

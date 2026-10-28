@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@material/web": "2.2.0",
+    "esbuild": "0.28.2",
+    "esp-web-tools": "10.4.0"
+  },
+  "name": "bitty-installer",
+  "private": true,
+  "type": "module"
+}

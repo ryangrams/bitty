@@ -58,6 +58,7 @@ inline const char* geometryLevelLabel(uint8_t index) {
 
 struct Settings {
   GameTitle bootGame = GameTitle::FlappyBird;
+  uint8_t bootCartridge = 0;
   Mode mode = Mode::Original;
   uint8_t brightnessIndex = 1;
   uint8_t sleepIndex = 0;
@@ -187,6 +188,39 @@ class AppModel {
   }
 
   const char* nesTitle() const { return nesTitle_; }
+
+  struct CartridgeChoice { uint8_t id = 0; char title[33] = {}; };
+  uint8_t currentCartridge = 0;
+  void clearCartridgeChoices() { cartridgeCount_ = 0; }
+  void addCartridgeChoice(uint8_t id, const char* title) {
+    if (!id || cartridgeCount_ >= 12) return;
+    auto& choice = cartridgeChoices_[cartridgeCount_++];
+    choice.id = id;
+    snprintf(choice.title, sizeof(choice.title), "%s", title && *title ? title : "NES");
+  }
+  uint8_t gameChoiceCount() const { return VisibleGameCount + (cartridgeCount_ ? cartridgeCount_ - 1 : 0); }
+  GameTitle gameChoiceTitle(uint8_t index) const { return index < VisibleGameCount ? visibleGameTitle(index) : GameTitle::Nes; }
+  uint8_t gameChoiceCartridge(uint8_t index) const {
+    const unsigned slot = index == 1 ? 0 : index >= VisibleGameCount ? index - VisibleGameCount + 1 : 12;
+    return slot < cartridgeCount_ ? cartridgeChoices_[slot].id : 0;
+  }
+  const char* gameChoiceLabel(uint8_t index) const {
+    const unsigned slot = index == 1 ? 0 : index >= VisibleGameCount ? index - VisibleGameCount + 1 : 12;
+    return slot < cartridgeCount_ ? cartridgeChoices_[slot].title : gameLabel(gameChoiceTitle(index));
+  }
+  bool gameChoiceAvailable(uint8_t index) const {
+    if (index >= gameChoiceCount()) return false;
+    const auto title = gameChoiceTitle(index);
+    return title == GameTitle::Tetris ? tetrisAvailable_ || tetrisZeroAvailable_ : gameAvailable(title);
+  }
+  bool chooseCartridge(uint8_t id) {
+    for (unsigned i = 0; i < cartridgeCount_; ++i) if (cartridgeChoices_[i].id == id) {
+      if (currentCartridge != id) { currentCartridge = id; ++gameRequest; }
+      setNesTitle(cartridgeChoices_[i].title);
+      return true;
+    }
+    return id == 0;
+  }
 
   bool geometryDashAvailable() const { return geometryDashAvailable_; }
 
@@ -574,7 +608,7 @@ class AppModel {
     switch (menu.page) {
       case MenuPage::Home: return 8;
       case MenuPage::BootGame:
-      case MenuPage::ChangeGame: return VisibleGameCount + 1;
+      case MenuPage::ChangeGame: return gameChoiceCount() + 1;
       case MenuPage::GameSettings:
         if (currentGame == GameTitle::FlappyBird) return 5;
         if (currentGame == GameTitle::Tetris) return 9;
@@ -613,7 +647,7 @@ class AppModel {
         return labels[index];
       }
       case MenuPage::BootGame:
-      case MenuPage::ChangeGame: return gameLabel(visibleGameTitle(index));
+      case MenuPage::ChangeGame: return gameChoiceLabel(index);
       case MenuPage::GameSettings:
         if (currentGame == GameTitle::FlappyBird) {
           constexpr const char* labels[] = {"Mode", "Skins", "Set clock", "Co-op link"};
@@ -799,8 +833,12 @@ class AppModel {
         if (index == 2) return "Hold unit steady";
         break;
       case MenuPage::Controller: return index == 0 ? controllerStatus : "";
-      case MenuPage::BootGame: return index == visibleGameIndex(settings.bootGame) ? "*" : "";
-      case MenuPage::ChangeGame: return index == visibleGameIndex(currentGame) ? "*" : "";
+      case MenuPage::BootGame: return (gameChoiceTitle(index) == settings.bootGame ||
+          (gameChoiceTitle(index) == GameTitle::Tetris && settings.bootGame == GameTitle::TetrisZero)) &&
+          (settings.bootGame != GameTitle::Nes || gameChoiceCartridge(index) == settings.bootCartridge) ? "*" : "";
+      case MenuPage::ChangeGame: return (gameChoiceTitle(index) == currentGame ||
+          (gameChoiceTitle(index) == GameTitle::Tetris && currentGame == GameTitle::TetrisZero)) &&
+          (currentGame != GameTitle::Nes || gameChoiceCartridge(index) == currentCartridge) ? "*" : "";
       case MenuPage::Modes: return index == uint8_t(settings.mode) ? "*" : "";
       case MenuPage::Brightness: return index == settings.brightnessIndex ? "*" : "";
       case MenuPage::Volume: return index == settings.volumeIndex ? "*" : "";
@@ -903,6 +941,8 @@ class AppModel {
   char tetrisZeroTitle_[64] = "Tetris Zero";
   char tetrisTitle_[64] = "Tetris";
   char nesTitle_[64] = "NES";
+  CartridgeChoice cartridgeChoices_[12];
+  uint8_t cartridgeCount_ = 0;
   uint32_t randomState_;
   uint32_t menuPressMs_ = 0;
   uint32_t clockBaseMs_ = 0;
@@ -1021,9 +1061,16 @@ class AppModel {
         openMenu(destinations[menu.selection]);
         break;
       }
-      case MenuPage::BootGame: setBootGame(visibleGameTitle(menu.selection)); break;
+      case MenuPage::BootGame:
+        if (gameChoiceAvailable(menu.selection) && setBootGame(gameChoiceTitle(menu.selection))) {
+          const uint8_t cartridge = gameChoiceCartridge(menu.selection);
+          if (settings.bootCartridge != cartridge) settingsDirty = true;
+          settings.bootCartridge = cartridge;
+        }
+        break;
       case MenuPage::ChangeGame: {
-        const GameTitle title = visibleGameTitle(menu.selection);
+        const GameTitle title = gameChoiceTitle(menu.selection);
+        if (title == GameTitle::Nes && !chooseCartridge(gameChoiceCartridge(menu.selection))) break;
         if (title == GameTitle::Tetris ? activateTetris() : setCurrentGame(title)) closeMenu();
         break;
       }

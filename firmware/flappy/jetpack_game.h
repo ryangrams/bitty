@@ -1,6 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#ifdef M5FLAP_JETPACK_IMPORTED
+#include "jetpack_imported.h"
+#endif
 #include "arcade_support.h"
 #include "jetpack_art.h"
 #include "jetpack_progression.h"
@@ -12,8 +15,8 @@
 #include "jetpack_time_step.h"
 #include "jetpack_rocket_time.h"
 #include "jetpack_rocket_course.h"
+#include "jetpack_placement.h"
 #ifdef M5FLAP_JETPACK_IMPORTED
-#include "jetpack_imported.h"
 static_assert(flappy::JetpackImported::MaxPatternPoints <= 512, "Imported coin group exceeds collection mask");
 #endif
 
@@ -27,12 +30,13 @@ class JetpackGame {
          MissileCount = 24, AttractedCoinCount = 48, RocketChoiceCount = 6 };
   enum class Phase : uint8_t { Ready, Running, Crashing, Over, Spin };
   enum class Vehicle : uint8_t { None, Armor, Gravity, Hog, Mech, Bird, Teleporter, Dragon, SAM, Random };
-  struct ImportedGroup { int32_t x = 0; int16_t pattern = -1; uint8_t step = 0, top = 0, collected[64] = {}; };
+  struct ImportedGroup { int32_t x = 0; int16_t pattern = -1, pitchQ8 = 0, topQ8 = 0; uint8_t step = 0, top = 0, collected[64] = {}; };
   enum class Power : uint8_t { None, Shield, Magnet, DoubleCoins, CashDash, Boost, RocketTime, Count };
   struct Bonus { int32_t x = 0; int16_t y = 0; Power kind = Power::None; bool active = false; };
   struct Token { int32_t x = 0; int16_t y = 0; uint8_t kind = 0; bool active = false; };
   struct Scientist { int32_t x = 0; int16_t y = 0, velocity = 0; uint8_t state = 0, age = 0; bool active = false; };
-  struct Rotator { int32_t x = 0; int16_t y = 0; uint8_t angle = 0; bool active = false; };
+  struct Rotator { int32_t x = 0; int16_t y = 0; uint8_t angle = 0; bool active = false;
+    uint16_t period = 112, clock = 0, lengthQ8 = 32 * Unit; bool clockwise = true; };
   struct Laser { int16_t y = 0; uint16_t ticks = 0; bool active = false; };
   struct Zap {
     int32_t x = 0;
@@ -80,6 +84,9 @@ class JetpackGame {
     y_ = Floor * FlightUnit;
     velocity_ = 0;
     progression_.reset(seed_ ^ 0x6a09e667u);
+#ifdef M5FLAP_JETPACK_PLACEMENT
+    progression_.setSourceSpacing(true);
+#endif
     crashTicks_ = 0;
     immune_ = 0;
     vehicleHint_ = 0;
@@ -575,6 +582,9 @@ class JetpackGame {
     unsigned freeCoins = 0;
     for (const Coin& coin : coinField_) freeCoins += !coin.active;
     context.coinSlot = freeCoins >= 40;
+#ifdef M5FLAP_JETPACK_IMPORTED
+    context.coinSlot = false;
+#endif
     for (const ImportedGroup& group : importedGroups_) if (group.pattern < 0) context.coinSlot = true;
     context.zapSlot = !missilePresent() && !laser_.active;
     bool freeZap = false; for (const Zap& zap : zaps_) freeZap |= !zap.active;
@@ -595,11 +605,12 @@ class JetpackGame {
       uint32_t span = 0;
       switch (event.kind) {
         case Kind::Coins: spawnCoins(); span = coinSpanNative(); break;
-        case Kind::Zap: spawnZap(); span = 84; break;
+        case Kind::Zap: spawnZap(); span = zapSpawnSpan_; break;
         case Kind::RotatingZap:
           for (Rotator& rotator : rotators_) if (!rotator.active) {
             rotator.active = true; rotator.x = 265 * Unit;
-            rotator.y = int16_t(48 + random() % 42); rotator.angle = uint8_t(random() % 112); break;
+            rotator.y = int16_t(48 + random() % 42); rotator.clock = uint16_t(random() % rotator.period);
+            rotator.angle = uint8_t(unsigned(rotator.clock) * 256 / rotator.period); break;
           }
           span = 90; break;
         case Kind::Missile:
@@ -643,17 +654,64 @@ class JetpackGame {
     }
   }
   uint32_t coinSpanNative() const {
-    int32_t right = 250 * Unit;
-    for (const Coin& coin : coinField_) if (coin.active && coin.x > right) right = coin.x;
-#ifdef M5FLAP_JETPACK_IMPORTED
-    for (const ImportedGroup& group : importedGroups_) if (group.pattern >= 0) {
-      const int32_t end = group.x + int32_t(JetpackImported::CoinPatterns[group.pattern].width) * group.step * Unit;
-      if (end > right) right = end;
+    return coinSpawnSpan_;
+  }
+#ifdef M5FLAP_JETPACK_OBSTACLES
+  unsigned obstacleWeight(unsigned index, uint8_t profile, uint32_t meters, bool rotatingSlot) const {
+    const auto& record = JetpackImported::Obstacles[index];
+    if (record.profile != profile || meters < record.start || (record.period && !rotatingSlot)) return 0;
+    for (unsigned i = 0; i < JetpackImported::ObstacleCount; ++i) {
+      const auto& newer = JetpackImported::Obstacles[i];
+      if (newer.profile == profile && newer.templateId == record.templateId &&
+          newer.start > record.start && newer.start <= meters) return 0;
+    }
+    return record.weight;
+  }
+#endif
+  void spawnZap() {
+    zapSpawnSpan_ = 84;
+#ifdef M5FLAP_JETPACK_OBSTACLES
+    const uint8_t profile = vehicle_ == Vehicle::Gravity ? 2 : vehicle_ == Vehicle::Hog ? 3 :
+        vehicle_ == Vehicle::Mech ? 4 : vehicle_ == Vehicle::Dragon ? 7 : 0;
+    const uint32_t meters = progression_.streakMeters(nativeDistance());
+    unsigned total = 0;
+    bool rotatingSlot = false;
+    for (const Rotator& r : rotators_) rotatingSlot |= !r.active;
+    for (unsigned i = 0; i < JetpackImported::ObstacleCount; ++i) {
+      total += obstacleWeight(i, profile, meters, rotatingSlot);
+    }
+    if (total) {
+      unsigned choice = random() % total;
+      for (unsigned i = 0; i < JetpackImported::ObstacleCount; ++i) {
+        const auto& record = JetpackImported::Obstacles[i];
+        const unsigned weight = obstacleWeight(i, profile, meters, rotatingSlot);
+        if (choice >= weight) { choice -= weight; continue; }
+        const unsigned scaleQ8 = record.minimum * Unit + random() % ((record.maximum - record.minimum) * Unit + 1u);
+        const int lengthQ8 = JetpackPlacement::screenQ8(scaleQ8);
+        const unsigned phase = unsigned(record.angle) * 256 / 360;
+        const int sine = JetpackPlacement::sine(phase), cosine = JetpackPlacement::sine(phase + 64);
+        const unsigned extent = record.period ? record.maximum : unsigned(abs(sine) * record.maximum / 1024);
+        const JetpackPlacement::Weights weights = {record.top, record.bottom, record.topHalf, record.bottomHalf};
+        const int centerY = 68 - JetpackPlacement::screenQ8(JetpackPlacement::verticalOffset(extent, weights, random(), random())) / Unit;
+        zapSpawnSpan_ = scaleQ8 / Unit;
+        if (record.period) {
+          for (Rotator& rotator : rotators_) if (!rotator.active) {
+            rotator = Rotator{}; rotator.active = true;
+            rotator.x = 258 * Unit + lengthQ8 / 2; rotator.y = int16_t(centerY);
+            rotator.angle = uint8_t(phase); rotator.period = record.period;
+            rotator.clock = uint16_t(phase * record.period / 256);
+            rotator.lengthQ8 = uint16_t(lengthQ8); rotator.clockwise = (record.flags & 1) != 0;
+            return;
+          }
+        } else for (Zap& zap : zaps_) if (!zap.active) {
+          const int dx = cosine * lengthQ8 / (1024 * Unit), dy = -sine * lengthQ8 / (1024 * Unit);
+          zap.active = true; zap.x = 258 * Unit; zap.y = int16_t(centerY - dy / 2);
+          zap.dx = int16_t(dx); zap.dy = int16_t(dy);
+          return;
+        }
+      }
     }
 #endif
-    return JetpackProgression::nativeDistance(uint32_t(right - 250 * Unit));
-  }
-  void spawnZap() {
     for (Zap& zap : zaps_) if (!zap.active) {
       zap.active = true;
       zap.x = 258 * Unit;
@@ -677,12 +735,14 @@ class JetpackGame {
   }
   bool putCoin(int x, int y, uint8_t value = 1) {
     for (Coin& coin : coinField_) if (!coin.active) {
+      if (x > coinSpawnRight_) coinSpawnRight_ = x;
       coin.x = x * Unit; coin.y = int16_t(bounded(y, 27, 110)); coin.active = true; coin.value = value; return true;
     }
     return false;
   }
   void spawnCoins() {
     if (startImported()) return;
+    coinSpawnRight_ = 250;
     const int cy = int(43 + random() % 42);
     const unsigned pattern = random() % 8;
     if (pattern == 0) {
@@ -703,6 +763,7 @@ class JetpackGame {
     } else {
       for (int i = 0; i < 6; ++i) { putCoin(250 + i * 10, cy); putCoin(290 + i * 8, cy - i * 5); putCoin(290 + i * 8, cy + i * 5); }
     }
+    coinSpawnSpan_ = JetpackProgression::nativeDistance(uint32_t(coinSpawnRight_ - 250 + 10) * Unit);
   }
   void collect() {
     for (Coin& coin : coinField_) if (coin.active) {
@@ -1070,8 +1131,11 @@ class JetpackGame {
     if (token_.active) { token_.x -= advance; if (token_.x < -12 * Unit) token_.active = false; }
     if (samToken_.active) { samToken_.x -= advance; if (samToken_.x < -12 * Unit) samToken_.active = false; }
     for (Rotator& rotator : rotators_) if (rotator.active) {
-      rotator.x -= advance; rotator.angle = uint8_t((unsigned(rotator.angle) + 1) % 112);
-      if (rotator.x < -35 * Unit) rotator.active = false;
+      rotator.x -= advance;
+      rotator.clock = uint16_t((rotator.clock + 1) % rotator.period);
+      const unsigned phase = unsigned(rotator.clock) * 256 / rotator.period;
+      rotator.angle = uint8_t(rotator.clockwise ? phase : 256u - phase);
+      if (rotator.x < -int32_t(rotator.lengthQ8)) rotator.active = false;
     }
     if (laser_.active) {
       if (laser_.ticks > 80) laser_.y = int16_t(playerY());
@@ -1157,9 +1221,8 @@ class JetpackGame {
     }
   }
   void rotatorEnds(const Rotator& rotator, int& x, int& y, int& dx, int& dy) const {
-    static const int8_t cosine[16] = {16,15,11,6,0,-6,-11,-15,-16,-15,-11,-6,0,6,11,15};
-    const unsigned angle = (rotator.angle / 7u) & 15u;
-    const int rx = cosine[angle], ry = cosine[(angle + 12) & 15u];
+    const int rx = JetpackPlacement::sine(unsigned(rotator.angle) + 64) * rotator.lengthQ8 / (2048 * Unit);
+    const int ry = JetpackPlacement::sine(rotator.angle) * rotator.lengthQ8 / (2048 * Unit);
     x = int(rotator.x / Unit) - rx; y = rotator.y - ry; dx = rx * 2; dy = ry * 2;
   }
   void tickCrash(bool press) {
@@ -1279,7 +1342,7 @@ class JetpackGame {
     for (ImportedGroup& group : importedGroups_) if (group.pattern >= 0) {
       group.x -= advance;
       const auto& pattern = JetpackImported::CoinPatterns[unsigned(group.pattern)];
-      if (group.x + int32_t(pattern.width) * group.step * Unit < -8 * Unit) group.pattern = -1;
+      if (group.x + int32_t(pattern.width) * (group.pitchQ8 ? group.pitchQ8 : group.step * Unit) < -8 * Unit) group.pattern = -1;
     }
 #else
     (void)advance;
@@ -1304,12 +1367,11 @@ class JetpackGame {
         vehicle_ == Vehicle::Teleporter ? JetpackImported::ProfileTeleporter :
         (vehicle_ == Vehicle::Hog || progression_.streak() == JetpackProgression::Streak::Coins) ? JetpackImported::ProfileCoinStreak : JetpackImported::ProfileDefault;
     const uint32_t meters = progression_.streakMeters(nativeDistance());
-    unsigned weight = 0; bool found = false;
+    unsigned weight = 0;
     for (unsigned i = 0; i < JetpackImported::ProfileWeightCount; ++i) {
       const auto& record = JetpackImported::ProfileWeights[i];
       if (record.profile != profile || record.pattern != index) continue;
-      if (!found || record.startMeters <= meters) weight = record.weight;
-      found = true;
+      if (record.startMeters <= meters) weight = record.weight;
     }
     return weight;
 #else
@@ -1325,24 +1387,40 @@ class JetpackGame {
     unsigned total = 0;
     for (unsigned i = 0; i < JetpackImported::PatternCount; ++i)
       if (validImported(i)) total += importedWeight(i);
-    if (!total) return false;
+    if (!total) { coinSpawnSpan_ = JetpackPlacement::coinSpan(0, speed()); return true; }
     unsigned choice = random() % total;
     for (unsigned i = 0; i < JetpackImported::PatternCount; ++i) {
       if (!validImported(i)) continue;
       const unsigned weight = importedWeight(i);
       if (choice >= weight) { choice -= weight; continue; }
       coinPattern_ = int16_t(i);
+      coinSpawnSpan_ = JetpackPlacement::coinSpan(JetpackImported::CoinPatterns[i].width, speed());
       if (!JetpackImported::CoinPatterns[i].count) return true;
       const auto& pattern = JetpackImported::CoinPatterns[i];
       *slot = ImportedGroup{}; slot->pattern = int16_t(i); slot->x = 252 * Unit;
-      const unsigned fit = pattern.height ? 80u / pattern.height : 5;
-      slot->step = uint8_t(fit > 5 ? 5 : fit < 2 ? 2 : fit);
-      const unsigned extent = pattern.height * slot->step;
-      slot->top = uint8_t(extent < 90 ? 23 + (90 - extent) / 2 : 23);
+      slot->pitchQ8 = int16_t(JetpackPlacement::screenQ8(16 * Unit));
+      JetpackPlacement::Weights placement = {0,0,0,0};
+#ifdef M5FLAP_JETPACK_PLACEMENT
+      const uint8_t profile = vehicle_ == Vehicle::SAM ? 2 : vehicle_ == Vehicle::Gravity ? 4 :
+          vehicle_ == Vehicle::Mech ? 5 : vehicle_ == Vehicle::Teleporter ? 1 :
+          (vehicle_ == Vehicle::Hog || progression_.streak() == JetpackProgression::Streak::Coins) ? 3 : 0;
+      for (unsigned p = 0; p < JetpackImported::CoinPlacementCount; ++p) {
+        const auto& record = JetpackImported::CoinPlacements[p];
+        if (record.profile == profile) placement = {record.top,record.bottom,record.topHalf,record.bottomHalf};
+      }
+#endif
+      const uint32_t placementChoice = random(), placementPosition = random();
+      slot->topQ8 = int16_t(JetpackPlacement::coinTopQ8(pattern.height, placement, placementChoice, placementPosition));
       return true;
     }
 #endif
     return false;
+  }
+  static int importedX(const ImportedGroup& group, uint16_t point) {
+    return int((group.x + int32_t(point & 255) * (group.pitchQ8 ? group.pitchQ8 : group.step * Unit)) / Unit);
+  }
+  static int importedY(const ImportedGroup& group, uint16_t point) {
+    return group.pitchQ8 ? (group.topQ8 + int32_t(point >> 8) * group.pitchQ8) / Unit : group.top + int(point >> 8) * group.step;
   }
   void collectImported() {
 #ifdef M5FLAP_JETPACK_IMPORTED
@@ -1353,9 +1431,9 @@ class JetpackGame {
       for (unsigned i = 0; i < pattern.count; ++i) {
         if (group.collected[i / 8] & (1u << (i & 7))) continue;
         const uint16_t point = JetpackImported::CoinPoints[pattern.offset + i];
-        const int x = int(group.x / Unit) + int(point & 255) * group.step;
+        const int x = importedX(group, point);
         if (x > PlayerX + radius || x < PlayerX - radius) continue;
-        const int y = group.top + int(point >> 8) * group.step;
+        const int y = importedY(group, point);
         const int dx = x - PlayerX, dy = y - coinTargetY();
         const int squared = dx * dx + dy * dy;
         if (sweptCoinContact(x,y)) {
@@ -1374,11 +1452,10 @@ class JetpackGame {
       for (unsigned i = 0; i < pattern.count; ++i) {
         if (group.collected[i / 8] & (1u << (i & 7))) continue;
         const uint16_t point = JetpackImported::CoinPoints[pattern.offset + i];
-        const int x = int(group.x / Unit) + int(point & 255) * group.step;
+        const int x = importedX(group, point);
         if (x < -3 || x > Width + 2) continue;
-        const int y = group.top + int(point >> 8) * group.step;
-        c.rect(x, y - 1, group.step > 2 ? 2 : 1, 3, rgb(220, 165, 53));
-        c.pixel(x, y - 1, rgb(255, 237, 139));
+        const int y = importedY(group, point);
+        drawCoin(c, x, y);
       }
     }
 #else
@@ -1445,6 +1522,8 @@ class JetpackGame {
   }
 
   ImportedGroup importedGroups_[2];
+  uint32_t coinSpawnSpan_ = 0, zapSpawnSpan_ = 84;
+  int coinSpawnRight_ = 250;
   JetpackProgression progression_;
   JetpackVehiclePhysics::State vehiclePhysics_;
   JetpackSpin spinPresentation_;

@@ -1,0 +1,37 @@
+name: Game or app request
+description: Suggest something that belongs on a tiny screen.
+title: '[Request] '
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Game or app
+      description: Original ideas are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: appeal
+    attributes:
+      label: What makes it worth playing or using?
+      description: Describe the mechanics and the smallest version that would still feel right.
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: Controls and device
+      description: How could it use the buttons, tilt or Bluetooth controller? Which device?
+  - type: textarea
+    id: source
+    attributes:
+      label: Source and reference
+      description: Link to the original project, its license, developer documentation or reference videos. For commercial games, describe a local import workflow. Keep ROMs, APKs and extracted artwork out of the issue.
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing requests.
+          required: true
+        - label: I have kept commercial game files and private information out of this issue.
+          required: true

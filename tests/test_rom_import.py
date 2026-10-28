@@ -324,6 +324,27 @@ class RomImportTests(unittest.TestCase):
         for directory, rom, _ in imports:
             self.assertEqual((directory / 'source' / 'rom.nes').read_bytes(), rom)
 
+    def test_public_build_ignores_private_defaults_and_rejects_explicit_inputs(self):
+        project, assets = self.make_build_project()
+        for name in ('nes-rom', 'tetris-rom', 'tetris-zero-rom', 'geometry-rom'):
+            importer.generate(fixture(), project / '.local' / name, 'PRIVATE INPUT', rights_acknowledged=True)
+        private_jetpack = project / '.local/jetpack/imported'
+        private_jetpack.mkdir(parents=True)
+        (private_jetpack / 'jetpack_imported.h').write_text('// PRIVATE INPUT\n')
+        firmware = project / 'firmware/flappy'
+        (firmware / 'partitions.csv').write_bytes((ROOT / 'firmware/flappy/partitions.csv').read_bytes())
+        with mock.patch.object(build, 'ROOT', project):
+            target = build.prepare_sketch(assets, display='stickc-plus', public=True, library=True)
+            for name in ('generated_rom.h', 'generated_tetris_rom.h', 'generated_zero_rom.h', 'generated_geometry_rom.h'):
+                self.assertIn('length = 0', (target / name).read_text())
+                self.assertNotIn('PRIVATE INPUT', (target / name).read_text())
+            self.assertFalse((target / 'jetpack_imported.h').exists())
+            self.assertIn('M5FLAP_USB_LIBRARY', (target / 'build_display.h').read_text())
+            self.assertTrue((target / 'partitions.csv').exists())
+            for option in ('skins', 'rom', 'tetris', 'zero', 'geometry', 'jetpack'):
+                with self.subTest(option=option), self.assertRaises(SystemExit):
+                    build.prepare_sketch(assets, public=True, **{option: self.directory})
+
     def test_missing_explicit_rom_or_tetris_preserves_existing_staged_sketch(self):
         project, assets = self.make_build_project()
         with mock.patch.object(build, 'ROOT', project):
@@ -423,7 +444,8 @@ class RomImportTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             build.main()
         prepare.assert_called_once_with()
-        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None, None)
+        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None, None,
+                                     public=False, library=False)
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index('--library') + 1], str(library))
         self.assertEqual(command[-1], str(sketch))

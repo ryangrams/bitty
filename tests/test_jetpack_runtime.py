@@ -47,6 +47,8 @@ namespace flappy {
 struct JetpackTestAccess {
   static bool start(JetpackGame& game) { return game.startImported(); }
   static int pattern(const JetpackGame& game, unsigned slot=0) { return game.importedGroups_[slot].pattern; }
+  static int pitch(const JetpackGame& game) { return game.importedGroups_[0].pitchQ8; }
+  static int pointY(const JetpackGame& game, uint16_t point) { return game.importedY(game.importedGroups_[0], point); }
   static void cash(JetpackGame& game, bool on) { game.powerTicks_[unsigned(JetpackGame::Power::CashDash)] = on ? 100 : 0; }
   static void doubleCoins(JetpackGame& game) { game.powerTicks_[unsigned(JetpackGame::Power::DoubleCoins)] = 100; }
   static void group(JetpackGame& game, unsigned slot, int pattern, int x=JetpackGame::PlayerX, int step=5, int top=28) {
@@ -102,13 +104,11 @@ static void selectionAndFit() {
     const int expected=random%400<100 ? 0 : 1;
     assert(Access::pattern(game)==expected);
     const Pattern& p=CoinPatterns[unsigned(expected)];
-    const unsigned step=p.height ? 80/p.height : 5;
-    const unsigned pitch=step>5 ? 5 : step<2 ? 2 : step;
-    const unsigned extent=p.height*pitch;
-    const unsigned top=extent<90 ? 23+(90-extent)/2 : 23;
+    assert(Access::pitch(game)==flappy::JetpackPlacement::screenQ8(16*Game::Unit));
     for (unsigned i=0; i<p.count; ++i) {
-      const int y=int(top+(CoinPoints[p.offset+i]>>8)*pitch);
-      assert(y>=Game::Ceiling && y<=Game::Floor);
+      const int y=Access::pointY(game,CoinPoints[p.offset+i]);
+      // Coins can sit nearer the walls than the player's center can move.
+      assert(y>=18 && y<=118);
     }
     Game cash; cash.reset(seed); Access::cash(cash,true);
     assert(Access::start(cash) && Access::pattern(cash)==3);
@@ -167,6 +167,10 @@ static void drawingGuards() {
 int main() {
 #if defined(M5FLAP_JETPACK_IMPORTED) && !defined(TEST_UNMATCHED)
   selectionAndFit(); fullMasksWithoutPoolTruncation(); ringEmptyAndSlots();
+#elif defined(TEST_UNMATCHED)
+  // An imported profile with no eligible formations intentionally stays empty.
+  Game game; assert(Access::start(game)); Access::spawn(game);
+  assert(Access::ordinaryCount(game)==0 && Access::groupsReset(game));
 #else
   Game game; assert(!Access::start(game)); Access::spawn(game);
   assert(Access::ordinaryCount(game)>0 && Access::groupsReset(game));

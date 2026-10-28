@@ -334,3 +334,27 @@ class JetpackImportTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PlacementConfigTests(unittest.TestCase):
+    def test_vertical_weights_and_synthetic_obstacle_records(self):
+        placement_weights, obstacle_records, header, ImportError = importer.placement_weights, importer.obstacle_records, importer.header, importer.ImportError
+        self.assertEqual(placement_weights({'TopWeight': {'value': '25'}}), [25,0,0,0])
+        for bad in (-1, 101, 'NaN', '2.5', 'abc'):
+            with self.assertRaises(ImportError):
+                placement_weights({'TopWeight': {'value': bad}})
+        children = [{'tag': k, 'attrs': {'value': v}} for k,v in
+                    [('minScale','48'), ('maxScale','84'), ('startAngle','45'), ('rotateTime','120')]]
+        children.append({'tag':'probability','attrs':{'value':'7','startDistance':'20'}})
+        records = obstacle_records([{'tag':'obstacle_pattern_file','children':[
+            {'tag':'BottomWeight','attrs':{'value':'75'}},
+            {'tag':'obstacle_pattern','children':children}]}], 3)
+        self.assertEqual(records[0]['minimum'], 48)
+        self.assertEqual(records[0]['maximum'], 84)
+        self.assertEqual(records[0]['placement'], [0,75,0,0])
+        self.assertEqual(records[0]['weight'], 700)
+        self.assertEqual(records[0]['start'], 20)
+        source = header([dict(offset=0,count=1,width=1,height=1,weight=1,flags=1)], [0], [],
+                        placements=[[0,0,75,0,0]], obstacles=records)
+        self.assertIn('M5FLAP_JETPACK_OBSTACLES', source)
+        self.assertIn('{48,84,45,120,20,700,3,3,0,0,75,0,0}', source)

@@ -86,6 +86,17 @@ class DistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(DistributionError, "executable"):
             audit(self.root)
 
+    def test_browser_sources_and_partition_config_keep_binary_checks(self):
+        for name in ['web/index.html', 'web/style.css', 'web/app.mjs', 'firmware/flappy/partitions.csv',
+                     'web/package.json', 'web/package-lock.json']:
+            with self.subTest(name=name):
+                self.write(name, b'Synthetic source\n')
+                self.manifest(['PUBLIC_FILES.txt', 'README.md', name])
+                self.assertIn(name, audit(self.root))
+                self.write(name, bytes.fromhex('7f454c46') + b'private executable')
+                with self.assertRaisesRegex(DistributionError, 'executable'):
+                    audit(self.root)
+
     def test_rejects_listed_json_atlas_manifests(self):
         for name in ["atlas.json", "assets/atlas.json", "assets/ATLAS.JSON"]:
             with self.subTest(name=name):

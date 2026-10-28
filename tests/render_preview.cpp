@@ -30,8 +30,12 @@ int main(int argc, char** argv) {
     std::vector<const char*> names;
     for (uint8_t index = 0; index < flappy::Renderer::skinCount(); ++index) names.push_back(flappy::Renderer::skinName(index));
     app.setSkinNames(names.data(), uint8_t(names.size()));
-    app.openMenu(flappy::MenuPage::Skins);
-    app.menu.selection = state == 3 ? 0 : state == 4 ? 10 : app.skinCount();
+    app.openMenu(state >= 6 ? flappy::MenuPage::ChangeGame : flappy::MenuPage::Skins);
+    if (state >= 6) {
+      app.addCartridgeChoice(1, "Mario"); app.addCartridgeChoice(2, "My homebrew");
+      app.setNesAvailable(true); app.setTetrisAvailable(true);
+      app.menu.selection = state == 6 ? 0 : 6;
+    } else app.menu.selection = state == 3 ? 0 : state == 4 ? 10 : app.skinCount();
     flappy::RenderOptions options;
     options.nowMs = state == 4 ? 120 : 0;
     render.draw(app, options);

@@ -6,6 +6,61 @@
 
 using flappy::MarioViewport;
 
+namespace flappy {
+struct MarioCartridgeTestAccess {
+  static void enable(MarioCartridge& cartridge) { cartridge.supported_ = true; }
+};
+}
+
+static void stableBodyCamera() {
+  struct Runtime {
+    uint8_t ram[2048] = {};
+    bool ready() const { return true; }
+    uint8_t readRam(unsigned address) const { return ram[address]; }
+  } runtime;
+  flappy::MarioCartridge cartridge;
+  runtime.ram[0x770] = 1;
+  runtime.ram[0x772] = 3;
+  runtime.ram[0x0e] = 8;
+  runtime.ram[0xb5] = 1;
+  runtime.ram[0xce] = 96;
+  runtime.ram[0x3ad] = 60;
+  assert(!cartridge.sample(runtime).valid);
+  flappy::MarioCartridgeTestAccess::enable(cartridge);
+  MarioViewport view;
+  view.configure(240, 135);
+  // No OAM or pattern data exists in this fixture. Tracking survives blinking.
+  for (int frame = 0; frame < 60; ++frame) {
+    runtime.ram[0x79e] = frame;
+    const auto player = cartridge.sample(runtime);
+    assert(player.valid && player.playing && player.x == 60);
+    assert(player.y == 97 && player.height == 32);
+    view.trackPlayer(player);
+    assert(view.worldTop() == 91);
+  }
+  runtime.ram[0x754] = 1;
+  assert(cartridge.sample(runtime).y == 113 && cartridge.sample(runtime).height == 16);
+  runtime.ram[0x754] = 0;
+  runtime.ram[0x714] = 1;
+  assert(cartridge.sample(runtime).y == 105 && cartridge.sample(runtime).height == 24);
+  runtime.ram[0x714] = 0;
+  runtime.ram[0xce] = 106;
+  view.trackPlayer(cartridge.sample(runtime));
+  assert(view.worldTop() == 101);
+  runtime.ram[0x770] = 2;
+  assert(cartridge.sample(runtime).valid); // Flag and victory descent.
+  runtime.ram[0x0e] = 6;
+  assert(!cartridge.sample(runtime).valid);
+  runtime.ram[0x0e] = 11;
+  assert(!cartridge.sample(runtime).valid);
+  runtime.ram[0x0e] = 8;
+  runtime.ram[0xb5] = 2;
+  assert(!cartridge.sample(runtime).valid);
+  runtime.ram[0xb5] = 1;
+  runtime.ram[0x770] = 0;
+  assert(!cartridge.sample(runtime).valid);
+}
+
 static void pixelsAndBounds() {
   MarioViewport viewport;
   assert(!viewport.configure(239, 135));
@@ -210,6 +265,7 @@ static void guardedLauncher() {
 }
 
 int main() {
+  stableBodyCamera();
   pixelsAndBounds();
   cameraAndPartialRectangles();
   guardedLauncher();

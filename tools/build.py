@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import json
+import hashlib
 import shutil
 import subprocess
 from setup import ROOT, FQBN, arduino_cli, ensure_config
@@ -37,32 +38,39 @@ def resolve_display_profile(display=None):
     return saved
 
 
-def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None, jetpack=None):
+def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None, jetpack=None, public=False, library=False):
+    (ROOT / ".local" / "build" / "public-origin.json").unlink(missing_ok=True)
+    if public:
+        if any(value is not None and value is not False for value in (skins, rom, tetris, zero, geometry, jetpack)):
+            raise SystemExit("Public builds accept only project-created inputs")
+        from starter_assets import generate
+        assets = generate(ROOT / ".local" / "starter-assets")
+        jetpack = False
     missing = [name for name in HEADERS if not (assets / name).is_file()]
     if missing:
         raise SystemExit("Import your local assets first. Missing: " + ", ".join(missing) +
                          "\nSee assets/README.md for the local atlas or APK import command.")
     if skins is not None and not (skins / "generated_skins.h").is_file():
         raise SystemExit("Generate your custom skins first. Missing: generated_skins.h in " + str(skins))
-    if rom is None:
+    if rom is None and not public and not library:
         default_rom = ROOT / ".local" / "nes-rom"
         if (default_rom / "generated_rom.h").is_file():
             rom = default_rom
     if rom is not None and not (rom / "generated_rom.h").is_file():
         raise SystemExit("Import your local ROM first. Missing: generated_rom.h in " + str(rom))
-    if tetris is None:
+    if tetris is None and not public and not library:
         default_tetris = ROOT / ".local" / "tetris-rom"
         if (default_tetris / "generated_rom.h").is_file():
             tetris = default_tetris
     if tetris is not None and not (tetris / "generated_rom.h").is_file():
         raise SystemExit("Import your patched Tetris ROM first. Missing: generated_rom.h")
-    if zero is None:
+    if zero is None and not public and not library:
         default_zero = ROOT / ".local" / "tetris-zero-rom"
         if (default_zero / "generated_rom.h").is_file():
             zero = default_zero
     if zero is not None and not (zero / "generated_rom.h").is_file():
         raise SystemExit("Import your Tetris Zero ROM first. Missing: generated_rom.h")
-    if geometry is None:
+    if geometry is None and not public and not library:
         default_geometry = ROOT / ".local" / "geometry-rom"
         if (default_geometry / "generated_rom.h").is_file():
             geometry = default_geometry
@@ -90,6 +98,8 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
     for path in (ROOT / "firmware" / "flappy").iterdir():
         if path.suffix in (".h", ".ino"):
             shutil.copy2(path, target / path.name)
+    if library:
+        shutil.copy2(ROOT / "firmware" / "flappy" / "partitions.csv", target / "partitions.csv")
     for name in HEADERS:
         shutil.copy2(assets / name, target / name)
     if skins is None:
@@ -113,6 +123,7 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
         (target / "jetpack_imported.h").write_text(jetpack_header, encoding="utf-8")
     (target / "build_display.h").write_text(
         "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n" +
+        ("#define M5FLAP_USB_LIBRARY 1\n" if library else "") +
         ("#define M5FLAP_JETPACK_IMPORTED 1\n" if jetpack_header is not None else ""),
         encoding="utf-8")
     now = datetime.now()
@@ -138,13 +149,16 @@ def main():
     parser.add_argument("--display", choices=tuple(DISPLAY_PROFILES),
                         help="LCD profile, saved privately for later builds (default: saved profile or auto)")
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
+    parser.add_argument("--public", action="store_true", help="Build exclusively from project-created assets, with no local ROM or APK discovery")
+    parser.add_argument("--library", action="store_true", help="Use the USB cartridge partition instead of embedded ROMs")
     args = parser.parse_args()
     sketch = prepare_sketch(args.assets_dir.resolve(), args.skins_dir.resolve() if args.skins_dir else None,
                             args.rom_dir.resolve() if args.rom_dir else None, args.display,
                             args.tetris_dir.resolve() if args.tetris_dir else None,
                             args.zero_dir.resolve() if args.zero_dir else None,
                             args.geometry_dir.resolve() if args.geometry_dir else None,
-                            False if args.no_jetpack_import else args.jetpack_dir.resolve() if args.jetpack_dir else None)
+                            False if args.no_jetpack_import else args.jetpack_dir.resolve() if args.jetpack_dir else None,
+                            public=args.public, library=args.library)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return
@@ -154,6 +168,13 @@ def main():
     subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", FQBN,
                     "--build-property", "compiler.optimization_flags=-O2 -mno-fix-esp32-psram-cache-issue",
                     "--build-path", str(build), "--library", str(library), str(sketch)], check=True)
+    if args.public:
+        image = build / "flappy.ino.bin"
+        origin = {"public": True, "library": args.library, "display": resolve_display_profile(),
+                  "image_sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                  "sketch_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                    for p in sorted(sketch.iterdir()) if p.is_file()}}
+        (build / "public-origin.json").write_text(json.dumps(origin, indent=2) + "\n")
     print("Firmware is in .local/build. Keep asset-bearing firmware private.")
 
 

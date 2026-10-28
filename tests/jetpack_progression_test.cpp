@@ -67,6 +67,18 @@ static void nativeUnitsAndManagerTargets() {
   assert(!find(occupied, Kind::Power) && !find(occupied, Kind::Vehicle));
 }
 
+static void sourceSpacingPreservesCourseGaps() {
+  Policy authored, source;
+  authored.reset(123); source.reset(123); source.setSourceSpacing(true);
+  Access::due(authored, 100000, 100000); Access::due(source, 100000, 100000);
+  Policy::Context context; context.speedQ8 = 4300;
+  context.scientistSlot = context.samSlot = context.spinSlot = false;
+  assert(authored.step(context).count && source.step(context).count);
+  authored.completeContent(0,84,4300); source.completeContent(0,84,4300);
+  assert(authored.nextContent() >= Policy::safeGapNative(4300));
+  assert(source.nextContent() >= 364 && source.nextContent() <= 554);
+}
+
 static void vehicleHistoryAndRecovery() {
   std::array<unsigned, 6> counts{};
   Policy p; p.reset(7193);
@@ -198,6 +210,7 @@ static void poweredCoinEligibility() {
 }
 
 int main() {
+  sourceSpacingPreservesCourseGaps();
   nativeUnitsAndManagerTargets(); vehicleHistoryAndRecovery(); eligibilityAndFamilies(); rareStreaksAndFullTrace(); poweredCoinEligibility();
   std::cout << "Jetpack progression tests passed\n";
 }

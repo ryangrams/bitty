@@ -627,7 +627,73 @@ class Renderer {
     rect(6, 230, 132, 16, back ? gold : card);
     menuCentered("Back", 232, 1, back ? rgb(30, 36, 46) : 0xffff);
   }
+  void drawGamePicker(const AppModel& app) {
+    rect(2, 10, 140, 233, rgb(17, 23, 36));
+    menuCentered(app.menuTitle(), 19, 1, rgb(255, 224, 103));
+    const unsigned first = (app.menu.selection / 6) * 6;
+    const unsigned count = app.menuItemCount();
+    char page[8]; snprintf(page, sizeof(page), "%u/%u", first / 6 + 1, (count + 5) / 6);
+    menuText(page, 116, 19, 1, rgb(166, 224, 232), 3);
+    for (unsigned tile = 0; tile < 6 && first + tile < count; ++tile) {
+      const unsigned index = first + tile;
+      const bool selected = index == app.menu.selection, back = index + 1 == count;
+      const bool available = back || app.gameChoiceAvailable(index);
+      const int x = 8 + int(tile % 2) * 66, y = 43 + int(tile / 2) * 54;
+      const uint16_t fill = selected ? rgb(239, 199, 91) : rgb(35, 45, 63);
+      const uint16_t ink = selected ? rgb(17, 23, 36) : available ? rgb(228, 239, 240) : rgb(116, 130, 150);
+      rect(x, y, 62, 50, fill);
+      const int cx = x + 30, cy = y + 13;
+      const auto title = app.gameChoiceTitle(index);
+      if (back) { menuText("<", cx - 3, cy - 5, 1, ink, 1); }
+      else if (title == GameTitle::FlappyBird) {
+        rect(cx - 9, cy - 5, 15, 10, ink); rect(cx - 12, cy, 7, 3, ink);
+        rect(cx + 6, cy, 5, 3, ink); rect(cx + 2, cy - 3, 2, 2, fill);
+      } else if (title == GameTitle::Tetris) {
+        for (int i = 0; i < 4; ++i) rect(cx - 9 + (i ? (i - 1) * 6 : 6), cy - 5 + (i ? 6 : 0), 5, 5, ink);
+      } else if (title == GameTitle::Galaga) {
+        rect(cx - 2, cy - 7, 4, 12, ink); rect(cx - 9, cy, 18, 4, ink);
+        rect(cx - 7, cy - 4, 2, 9, ink); rect(cx + 5, cy - 4, 2, 9, ink);
+      } else if (title == GameTitle::Arkanoid) {
+        rect(cx - 12, cy + 5, 24, 3, ink); rect(cx + 3, cy - 4, 3, 3, ink);
+        for (int i = 0; i < 4; ++i) rect(cx - 13 + i * 7, cy - 10, 6, 3, ink);
+      } else if (title == GameTitle::JetpackJoyride) {
+        rect(cx - 3, cy - 7, 6, 5, ink); rect(cx - 5, cy - 1, 10, 8, ink);
+        rect(cx - 10, cy, 4, 6, ink); rect(cx - 10, cy + 7, 3, 4, ink);
+      } else if (title == GameTitle::GeometryDash) {
+        rect(cx - 11, cy - 6, 12, 12, ink); rect(cx - 8, cy - 3, 2, 2, fill);
+        rect(cx - 3, cy - 3, 2, 2, fill); rect(cx + 7, cy + 2, 8, 4, ink);
+        rect(cx + 9, cy - 2, 4, 4, ink); rect(cx + 10, cy - 5, 2, 3, ink);
+      } else {
+        rect(cx - 14, cy - 5, 28, 12, ink); rect(cx - 9, cy - 3, 3, 8, fill);
+        rect(cx - 12, cy, 9, 2, fill); rect(cx + 4, cy + 1, 3, 3, fill);
+        rect(cx + 9, cy - 2, 3, 3, fill);
+      }
+      const char* label = !available && title == GameTitle::GeometryDash ? "Geometry Dash" :
+          !available && title == GameTitle::Tetris ? "Tetris" :
+          !available && title == GameTitle::Nes ? "NES" : app.menuLabel(index);
+      // Two static lines preserve a native six-pixel advance without a marquee.
+      char line[11] = {}; unsigned n = 0;
+      while (label[n] && n < 10) { line[n] = label[n]; ++n; }
+      unsigned split = n;
+      if (label[n]) for (unsigned j = n; j > 0; --j) if (line[j - 1] == ' ') { split = j - 1; break; }
+      line[split] = 0;
+      menuText(line, x + 3, y + 26, 1, ink, 10);
+      if (label[split]) {
+        const char* rest = label + split; if (*rest == ' ') ++rest;
+        menuText(rest, x + 3, y + 37, 1, ink, 10);
+      }
+      if (!back && *app.menuValue(index)) rect(x + 54, y + 3, 4, 4, ink);
+    }
+    const bool available = app.menu.selection + 1 == count || app.gameChoiceAvailable(app.menu.selection);
+    menuCentered(available ? "A SELECT  MENU NEXT" : "ADD ROM VIA USB", 215, 1, rgb(166, 224, 232));
+    menuCentered("HOLD MENU TO EXIT", 231, 1);
+  }
+
   void drawMenu(const AppModel& app, const RenderOptions& opt) {
+    if (app.menu.page == MenuPage::ChangeGame || app.menu.page == MenuPage::BootGame) {
+      drawGamePicker(app);
+      return;
+    }
     // The opaque panel covers its interior, so dim only the exposed border.
     for (int y = 0; y < PixelHeight; ++y) {
       uint16_t* row = pixels_ + y * PixelWidth;

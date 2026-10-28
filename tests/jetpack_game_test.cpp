@@ -726,8 +726,13 @@ static void deterministicProgressionAndRenderBounds() {
     assert(a.playerY() >= Game::Ceiling && a.playerY() <= Game::Floor);
     for (unsigned j = 0; j < Game::ZapCount; ++j) if (a.zap(j).active) {
       const auto& zap = a.zap(j); ++zaps;
+#ifdef M5FLAP_JETPACK_OBSTACLES
+      assert(zap.y >= 18 && zap.y <= 118 && zap.y + zap.dy >= 18 && zap.y + zap.dy <= 118);
+      assert(int32_t(zap.dx) * zap.dx + int32_t(zap.dy) * zap.dy <= 100 * 100);
+#else
       assert(zap.y >= Game::Ceiling && zap.y <= Game::Floor && zap.y + zap.dy >= Game::Ceiling && zap.y + zap.dy <= Game::Floor);
       assert(zap.dx <= 32 && zap.dy >= -39 && zap.dy <= 47);
+#endif
     }
     for (unsigned j = 0; j < Game::MissileCount; ++j) warnings += a.missile(j).warning > 0;
     pickups += a.pickup().active;

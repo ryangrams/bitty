@@ -1,3 +1,4 @@
+#include "build_display.h"
 #include <M5Unified.h>
 #include <Preferences.h>
 #include <driver/rtc_io.h>
@@ -14,10 +15,8 @@
 #include "nes_viewport.h"
 #include "mario_viewport.h"
 #include "rom_fingerprint.h"
-#include "generated_rom.h"
-#include "generated_tetris_rom.h"
-#include "generated_zero_rom.h"
-#include "generated_geometry_rom.h"
+#include "runtime_cartridges.h"
+#include "usb_library.h"
 #include "geometry_input.h"
 #include "geometry_scene.h"
 #include "geometry_level.h"
@@ -45,6 +44,11 @@
 #include "jetpack_game.h"
 
 flappy::AppModel app;
+#ifdef M5FLAP_USB_LIBRARY
+void initializeLibrary();
+void refreshCartridgeViews();
+bool serviceLibrary();
+#endif
 flappy::GalagaGame* galagaGame = nullptr;
 flappy::ArkanoidGame* arkanoidGame = nullptr;
 flappy::JetpackGame* jetpackGame = nullptr;
@@ -494,6 +498,7 @@ void loadSettings() {
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   const uint8_t boot = preferences.getUChar("bootgame", 0);
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
+  app.settings.bootCartridge = preferences.getUChar("bootcart", 0);
   app.setTetrisLevel(preferences.getUChar("tetlevel", 0));
   app.setTetrisGameType(preferences.getUChar("tettype", 0));
   app.setTetrisControls(preferences.getUChar("tetctrl", 0));
@@ -520,6 +525,7 @@ void loadSettings() {
 
 void saveSettings() {
   if (!app.settingsDirty) return;
+  preferences.putUChar("bootcart", app.settings.bootCartridge);
   preferences.putUChar("mode", uint8_t(app.settings.mode));
   preferences.putUChar("brightness", app.settings.brightnessIndex);
   preferences.putUChar("volume", app.settings.volumeIndex);
@@ -1346,6 +1352,10 @@ void handleGameRequest() {
   timingProbe = false;
 #endif
   stopGameAudio();
+  nes.unload();
+#ifdef M5FLAP_USB_LIBRARY
+  refreshCartridgeViews();
+#endif
   releaseNativeArcade();
   invalidateDisplay();
   pendingNesButtons = pendingControllerNesButtons = 0;
@@ -1904,7 +1914,7 @@ void setup() {
     return;
   }
   auto cfg = M5.config();
-#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+#if defined(M5FLAP_STARTUP_DIAGNOSTICS) || defined(M5FLAP_USB_LIBRARY)
   cfg.serial_baudrate = 115200;
 #else
   cfg.serial_baudrate = 0;
@@ -1953,6 +1963,9 @@ void setup() {
       M5.Display.width() >= 135 && M5.Display.height() >= 240);
   app.setTetrisZeroTitle(TetrisZeroRom::title);
   loadSettings();
+#ifdef M5FLAP_USB_LIBRARY
+  initializeLibrary();
+#endif
   syncJetpackMenus();
   app.restoreBootGame();
   handleGameRequest();
@@ -2313,7 +2326,12 @@ void serviceDiagnostics() {
 }
 #endif
 
+#include "library_service.h"
+
 void loop() {
+#ifdef M5FLAP_USB_LIBRARY
+  if (serviceLibrary()) return;
+#endif
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   serviceDiagnostics();
 #endif

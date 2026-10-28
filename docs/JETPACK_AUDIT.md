@@ -2,15 +2,17 @@
 
 Magnet coins now travel toward the runner, Boost keeps coin formations in play, and Cash Dash ends with falling coins you still have to catch. The current source also adds the recovered vehicle controls, a complete Rocket Time sequence and animated Final Spin reels.
 
-This audit describes the current vehicle and bonus changes. The current firmware passed new device timing and sequence checks. Twelve active-gameplay probes averaged 59.9667 completed LCD transfers per second across 6,000 intervals. See [verification details](JETPACK.md#verification) for test conditions and limits.
+The previous vehicle and bonus firmware passed device timing and sequence checks. Twelve active-gameplay probes averaged 59.9667 completed LCD transfers per second across 6,000 intervals. The newer placement and USB-library changes still need a fresh hardware run. See [verification details](JETPACK.md#verification) for the earlier test conditions and limits, and [release status](RELEASE_STATUS.md) for the current boundary.
 
 ## Evidence and limits
 
-The behavioral reference is the user's Android 1.104.2 package. Its packaged settings and static behavior analysis supplied the control equations, timing and reward values. No live Android trajectory comparison has been performed. The M5 uses independently written code and authored pixel art.
+The behavioral reference is the user's Android 1.104.2 package. Its packaged settings and static behavior analysis supplied the control equations, timing and reward values. The package also runs in an isolated offline Android emulator. Its onboarding and revive pauses prevent treating that first run as a normal course-frequency sample. No controlled live trajectory or full-run frequency comparison has been completed. The M5 uses independently written code and authored pixel art.
 
 The public source contains behavioral findings, tests and import tools. Package files, extracted artwork, missile formations, decoded settings and native analysis remain private. A [local import](JETPACK_IMPORT.md) can supply original formations. Source builds retain authored fallback patterns.
 
 ## Coins and pickups
+
+The placement audit corrected four differences: formations were squeezed according to height, new groups inherited spacing from unrelated groups still on screen, initial distance-gated weights applied too early, and a global safety gap overrode imported course spacing. Imported groups now keep a constant grid, profile-weighted vertical positions, their own width and quarter-second speed margin, and genuine blank sections. Imported obstacle choices now use the current vehicle and distance record, their configured length and angle, and their own rotation period. Rotating beams use an interpolated phase instead of sixteen discrete directions.
 
 - **Magnet:** nearby coins enter a visible attraction pool. Credit occurs on contact with the runner. An imported formation keeps its point available until collection or successful transfer into that pool. A full pool therefore leaves the point in the formation. The 65-pixel attraction radius is an M5 fit; the original default radius remains unresolved.
 - **Boost:** ordinary coin formations continue spawning while hazards remain cleared. Collection checks swept horizontal contact during fast scrolling. Existing coins also survive Rocket Time activation.

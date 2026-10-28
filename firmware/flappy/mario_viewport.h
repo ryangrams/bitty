@@ -14,7 +14,7 @@ struct MarioPlayer {
   bool valid = false;
 };
 
-// The RAM and OAM layout was checked with normal NES input on this cartridge.
+// The RAM layout was checked with normal NES input on these cartridges.
 class MarioCartridge {
  public:
   enum class Screen : uint8_t { Other, Title, GameOver, Playing };
@@ -55,41 +55,19 @@ class MarioCartridge {
     player.playing = mode == 1 && runtime.readRam(0x772) == 3;
     const bool cameraEligible = player.playing || mode == 2;
     if (!cameraEligible || runtime.readRam(0xb5) != 1 || engine == 6 || engine == 11) return player;
-    const auto* core = runtime.core();
-    if (!core) return player;
     player.x = runtime.readRam(0x3ad);
-    int top = 240, bottom = -1;
-    // OAM entries 1..8 contain the player's two-column, four-row sprite block.
-    // Empty tiles in that block are excluded from the camera's visible bounds.
-    for (unsigned i = 1; i <= 8; ++i) {
-      const auto& sprite = core->nes_ppu.sprite_info[i];
-      if (sprite.y >= 239 || (sprite.x != player.x && sprite.x != uint8_t(player.x + 8))) continue;
-      const unsigned height = core->nes_ppu.CTRL_H ? 16u : 8u;
-      const unsigned base = height == 16u ? (sprite.tile_index_number & 1u) * 4u :
-                            (core->nes_ppu.CTRL_S ? 4u : 0u);
-      for (unsigned row = 0; row < height; ++row) {
-        const unsigned patternRow = sprite.flip_v ? height - 1u - row : row;
-        const unsigned tile = height == 16u ? (sprite.tile_index_number & 254u) + patternRow / 8u :
-                              sprite.tile_index_number;
-        const uint8_t* bank = core->nes_ppu.pattern_table[base + tile / 64u];
-        if (!bank) continue;
-        const uint8_t* pattern = bank + (tile % 64u) * 16u + patternRow % 8u;
-        if (!(pattern[0] | pattern[8])) continue;
-        const int y = int(sprite.y) + 1 + int(row);
-        if (y >= 240) continue;
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
-      }
-    }
-    if (top <= bottom) {
-      player.y = top;
-      player.height = bottom - top + 1;
-      player.valid = true;
-    }
+    // Player_Y_Position anchors a 32-row body. Small Mario uses the lower
+    // 16 rows and crouching big Mario uses the lower 24 rows. Animation ink and
+    // hidden invincibility OAM must never change the camera position or make
+    // another actor its tracking target.
+    player.height = runtime.readRam(0x754) != 0 ? 16 : runtime.readRam(0x714) != 0 ? 24 : 32;
+    player.y = int(runtime.readRam(0xce)) + 33 - player.height;
+    player.valid = player.y < 240;
     return player;
   }
 
  private:
+  friend struct MarioCartridgeTestAccess;
   bool supported_ = false;
 };
 

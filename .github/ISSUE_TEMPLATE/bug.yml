@@ -1,0 +1,27 @@
+name: Bug report
+description: Help reproduce a device or installer problem.
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Bitty version or commit
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Exact board and controller model
+      description: Include the model printed on the case. Keep serial numbers private.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps, expected result and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Useful context
+      description: Game adapter, ROM checksum (no ROM attachment), input method, browser/OS, power source and relevant logs. Redact private paths and identifiers.

@@ -74,4 +74,8 @@ Jetpack Joyride identifies Halfbrick Studios' original game. The native M5 game 
 
 The optional [Jetpack importer](docs/JETPACK_IMPORT.md) reconstructs coin formations and, when explicitly selected, a small runner sprite pack from a package supplied locally by the builder. Those generated derivatives and firmware containing them stay private. The importer ships no original game data and downloads none. Its acknowledgement records the builder's confirmation and grants no rights to the source package or its contents.
 
-Flappy Bird identifies the original game and compatible asset format. M5Stack and ESP32 identify supported hardware and dependencies. M5 Flap is independently maintained and claims no affiliation with or endorsement by those projects or their rights holders. The project license grants no rights to third-party trademarks or branding.
+Flappy Bird identifies the original game and compatible asset format. M5Stack and ESP32 identify supported hardware and dependencies. Bitty is independently maintained and claims no affiliation with or endorsement by those projects or their rights holders. The project license grants no rights to third-party trademarks or branding.
+
+## Browser installer
+
+The generated installer bundles ESP Web Tools 10.4.0 (Apache-2.0), esptool-js and their locked browser dependencies. Their notices and available license texts accompany the built site. The source package carries the dependency lock and build procedure. The flasher uses preconfigured ESP32 image headers and a manifest that leaves Wi-Fi provisioning disabled. See https://github.com/esphome/esp-web-tools and https://github.com/espressif/esptool-js.

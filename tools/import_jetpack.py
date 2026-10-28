@@ -34,6 +34,9 @@ PROFILE_CONFIGS = ((0, 'Default', BASE_CONFIG),
                    (3, 'CoinStreak', 'Configs/coins_patterns/Streaks_CoinStreak_1.json'),
                    (4, 'Gravity', 'Configs/coins_patterns/Streaks_GRAVCoins_1.json'),
                    (5, 'Mech', 'Configs/coins_patterns/Streaks_MECHCoins_1.json'))
+OBSTACLE_CONFIGS = ((0, 'xml/ObstaclePatterns.xml'), (2, 'xml/Streaks/GRAVObstacles.xml'),
+                    (3, 'xml/Streaks/HOGObstacles.xml'), (4, 'xml/Streaks/MECHObstacles.xml'),
+                    (7, 'xml/Streaks/DRAGObstacles.xml'))
 RUNNER_SOURCES = ('textures/Characters/Jetpacks/jetpackDefault.tex',
                   'textures/Characters/Barry/defaultBody.tex',
                   'textures/Characters/Barry/defaultHead.tex')
@@ -356,7 +359,66 @@ def rocket_waves(roots):
         raise ImportError('Invalid Rocket Time pattern config') from error
 
 
-def header(patterns, points, frames, profile_records=None, rocket=None):
+def placement_decimal(raw):
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError, TypeError) as error:
+        raise ImportError('Invalid numeric placement field') from error
+
+
+def placement_weights(node):
+    result = []
+    for key in ('TopWeight', 'BottomWeight', 'TopHalfWeight', 'BottomHalfWeight'):
+        raw = node.get(key, {}).get('value', 0)
+        value = placement_decimal(raw)
+        if not value.is_finite() or not 0 <= value <= 100 or value != int(value):
+            raise ImportError('Placement percentages must be integers from 0 to 100')
+        result.append(int(value))
+    return result
+
+
+def obstacle_records(roots, profile):
+    if len(roots) != 1 or roots[0].get('tag') != 'obstacle_pattern_file':
+        raise ImportError('Invalid obstacle config root')
+    children = roots[0].get('children', [])
+    weights = placement_weights({child['tag']: child.get('attrs', {}) for child in children if child['tag'] != 'obstacle_pattern'})
+    records = []
+    template_id = 0
+    for node in children:
+        if node['tag'] != 'obstacle_pattern':
+            continue
+        values = {child['tag']: child.get('attrs', {}) for child in node.get('children', []) if child['tag'] != 'probability'}
+        def number(key, default, low, high):
+            value = placement_decimal(values.get(key, {}).get('value', default))
+            if not value.is_finite() or value != int(value) or not low <= value <= high:
+                raise ImportError('Invalid obstacle field: ' + key)
+            return int(value)
+        minimum = number('minScale', 32, 1, 512)
+        maximum = number('maxScale', minimum, minimum, 512)
+        angle = number('startAngle', 0, 0, 359)
+        period = number('rotateTime', 0, 0, 3600)
+        clockwise = values.get('clockwise', {}).get('value', 'true')
+        allowed = values.get('allowedWithLasers', {}).get('value', 'true')
+        if clockwise not in ('true', 'false') or allowed not in ('true', 'false'):
+            raise ImportError('Invalid obstacle boolean')
+        for probability in node.get('children', []):
+            if probability['tag'] != 'probability':
+                continue
+            attrs = probability.get('attrs', {})
+            weight = placement_decimal(attrs.get('value', 0))
+            start = placement_decimal(attrs.get('startDistance', 0))
+            if not weight.is_finite() or not 0 <= weight <= 655 or not start.is_finite() or start != int(start) or not 0 <= start <= 65535:
+                raise ImportError('Invalid obstacle probability')
+            records.append(dict(profile=profile, template=template_id, minimum=minimum, maximum=maximum, angle=angle, period=period,
+                                flags=int(clockwise == 'true') | (int(allowed == 'true') << 1),
+                                start=int(start), weight=int(weight * 100), placement=weights))
+        template_id += 1
+    if len(records) > 64:
+        raise ImportError('Too many obstacle records')
+    return records
+
+
+def header(patterns, points, frames, profile_records=None, rocket=None, placements=None, obstacles=None):
     lines = ['#pragma once', '#include <stdint.h>', '// Private imported data. Rebuild from your own source package.',
              'namespace flappy { namespace JetpackImported {',
              'struct Pattern { uint16_t offset, count, width, height, weight; uint8_t flags; };',
@@ -396,6 +458,20 @@ def header(patterns, points, frames, profile_records=None, rocket=None):
                   'static const unsigned RocketMissileCount = %d;' % len(rocket['missiles']),
                   'static const uint16_t RocketMissileSpeedQ8 = %d;' % rocket['missileSpeedQ8'],
                   'static const uint16_t RocketChaseSpeedQ8 = %d;' % rocket['chaseSpeedQ8']]
+    if placements is not None:
+        lines[2:2] = ['#define M5FLAP_JETPACK_PLACEMENT 1']
+        lines += ['struct CoinPlacement { uint8_t profile, top, bottom, topHalf, bottomHalf; };',
+                  'static const CoinPlacement CoinPlacements[] = {']
+        lines += ['  {%d,%d,%d,%d,%d},' % tuple(record) for record in placements]
+        lines += ['};', 'static const unsigned CoinPlacementCount = %d;' % len(placements)]
+    if obstacles:
+        lines[2:2] = ['#define M5FLAP_JETPACK_OBSTACLES 1']
+        lines += ['struct Obstacle { uint16_t minimum, maximum, angle, period, start, weight; uint8_t profile, flags, templateId, top, bottom, topHalf, bottomHalf; };',
+                  'static const Obstacle Obstacles[] = {']
+        lines += ['  {%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d},' %
+                  (tuple(record[key] for key in ('minimum','maximum','angle','period','start','weight','profile','flags','template')) + tuple(record['placement']))
+                  for record in obstacles]
+        lines += ['};', 'static const unsigned ObstacleCount = %d;' % len(obstacles)]
     lines += ['static const bool HasRunner = %s;' % ('true' if frames else 'false'),
               'static const unsigned FrameCount = %d;' % len(frames),
               'static const uint16_t RunnerPixels[][300] = {']
@@ -419,6 +495,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
         for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b''):
             digest.update(chunk)
     evidence, patterns, points, configs, rocket = [], [], [], {}, None
+    placements, obstacles = [], []
     try:
         with game_archive(source) as (archive, entries, prefix, containers):
             def read(name, limit=MAX_TEXT):
@@ -426,6 +503,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
                 evidence.append({'path': name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
                 return data
             base_config = parse_json(read(BASE_CONFIG))
+            placements.append([0] + placement_weights(base_config['coin_pattern_file']))
             weights = base_weights(base_config)
             profile_records = profile_weights(base_config, 0)
             profile_configs = [0]
@@ -433,6 +511,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
                 if prefix + name in entries:
                     config = parse_json(read(name))
                     configs[name] = config
+                    placements.append([profile] + placement_weights(config['coin_pattern_file']))
                     profile_records.extend(profile_weights(config, profile))
                     profile_configs.append(profile)
                     if len(profile_records) > MAX_PROFILE_WEIGHTS:
@@ -468,6 +547,11 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
             for name in ('xml/settings.xml', 'xml/LevelPacing.xml', 'xml/ObstaclePatterns.xml', 'xml/MissileProbability.xml', 'xml/vehicleProbability.xml'):
                 if prefix + name in entries:
                     configs[name] = BinaryXML(read(name)).decode()
+            for profile, name in OBSTACLE_CONFIGS:
+                if prefix + name in entries:
+                    if name not in configs:
+                        configs[name] = BinaryXML(read(name)).decode()
+                    obstacles.extend(obstacle_records(configs[name], profile))
             if prefix + ROCKET_CONFIG in entries:
                 configs[ROCKET_CONFIG] = BinaryXML(read(ROCKET_CONFIG)).decode()
                 rocket = rocket_waves(configs[ROCKET_CONFIG])
@@ -478,7 +562,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
             frames, art = runner_frames(read) if original_runner else ([], None)
     except (zipfile.BadZipFile, OSError, RuntimeError, struct.error, RecursionError) as error:
         raise ImportError('Invalid or unreadable source archive') from error
-    generated = header(patterns, points, frames, imported_profile_records, rocket)
+    generated = header(patterns, points, frames, imported_profile_records, rocket, placements, obstacles)
     receipt = {'format_version': 2, 'source_sha256': digest.hexdigest(), 'source_bytes': source.stat().st_size,
                'rights_acknowledged': True, 'containers': containers, 'patterns': patterns, 'point_count': len(points),
                'base_pattern_count': sum(bool(pattern['flags'] & 1) for pattern in patterns),

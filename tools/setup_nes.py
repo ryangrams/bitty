@@ -354,6 +354,15 @@ static void nes_render_sprite_line(nes_t* nes,const sprite_line_t* sprite_line,n
                              NES_WIDTH - 1, nes->scanline, nes->nes_draw_data);
                     NES_PROF_END(nes, NES_PROF_DRAW);
                 }""" + text[draw_stop:]
+        # Keep the blanking loop in flash, leaving scarce instruction RAM for
+        # visible scanlines. It preserves every CPU budget and dot remainder.
+        blank_start = text.index("        for(uint8_t i = 0; i < nes->timing.vblank_lines; i++){")
+        blank_stop = text.index("        nes->nes_ppu.ppu_status = 0;", blank_start)
+        blank_loop = text[blank_start:blank_stop]
+        text = text[:blank_start] + "        dot_remainder = nes_blank_lines(nes, dot_remainder);\n" + text[blank_stop:]
+        text = replace_once(text, "void NES_FRAME_CODE nes_run_frame(nes_t* nes){",
+                            "static __attribute__((noinline)) uint8_t nes_blank_lines(nes_t* nes, uint8_t dot_remainder) {\n" +
+                            blank_loop + "    return dot_remainder;\n}\n\nvoid NES_FRAME_CODE nes_run_frame(nes_t* nes){")
         changed = True
     elif relative == "src/nes_apu.c":
         text = replace_once(text, "    for (uint16_t i = sample_start; i < sample_end; i++) {",

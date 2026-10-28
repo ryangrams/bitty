@@ -1,0 +1,4 @@
+interface:
+  display_name: "M5Stick development"
+  short_description: "Build and diagnose M5StickC and M5StickC Plus firmware, tiny-screen interfaces"
+  default_prompt: "Use $m5stick-development to complete this task with verified evidence and reusable project files."

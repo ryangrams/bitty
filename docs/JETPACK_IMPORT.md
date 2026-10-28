@@ -11,7 +11,7 @@ The importer supports the observed APKM install pack, an APK containing `assets/
 
 The default output is `.local/jetpack/imported/`. Keep this folder private and out of Git. It contains:
 
-- `jetpack_imported.h`: packed coin coordinates, formation metadata and optional Rocket Time waves for the firmware.
+- `jetpack_imported.h`: packed coin coordinates, profile placement weights, distance-dependent obstacle choices and optional Rocket Time waves for the firmware.
 - `receipt.json`: source and selected-file hashes, formation counts, dimensions, and import options.
 - `reference-config.json`: decoded settings and vehicle configuration for private reference. Importing these values does not automatically change the game's physics.
 
@@ -19,13 +19,17 @@ The build uses this default folder when its header exists. Pass `--no-jetpack-im
 
 ## Coin layouts
 
-The importer preserves every `1` in each supported ASCII formation. A `0` or space is an empty cell, and blank rows keep their vertical spacing. Coordinates are sorted by column and then row so the game can draw the visible part of a large formation. The original grid dimensions remain in the header. The game chooses the on-screen grid spacing for this display.
+The importer preserves every `1` in each supported ASCII formation. A `0` or space is an empty cell, and blank rows keep their vertical spacing. Coordinates are sorted by column and then row so the game can draw the visible part of a large formation. The original grid dimensions remain in the header. Every imported formation uses the same native 16-unit grid, mapped to about 6.13 screen pixels with fixed-point coordinates. Formation height no longer changes its spacing. Profile weights place groups near the ceiling, floor, either half, or a random vertical position. Each formation advances the scheduler by its own width and the source quarter-second speed margin. A blank choice preserves an empty interval.
 
 Classic eligibility and relative weights come from the package's base coin configuration. The receipt reports missing file references without guessing filename aliases. Those references do not enter the classic selection. Event-tagged formations remain in the private data without entering the ordinary classic selection. Cash Dash and onboarding filenames receive separate flags. Including a formation in the header does not enable every original event or vehicle sequence.
 
 When the package includes Teleporter, SAM, Coin Streak, Gravity Suit or Mech coin profiles, the importer also preserves their selection weights and distance steps. Empty formations remain valid blank choices. The firmware uses the current profile's distance when selecting these layouts. The receipt lists which profiles were found and reports missing references separately. These records select layouts; they do not import the original program or enable unrelated events.
 
-The importer rejects oversized archives, duplicate or unsafe paths, unsupported cells, malformed configuration, and invalid dimensions. Patterns are limited to 256 columns, 40 rows, and 512 occupied cells each, with a combined maximum of 65,535 occupied cells. The row limit keeps every coin within the display's vertical play area at an integer pixel pitch. It reports unsupported data and preserves an existing import when validation fails.
+The importer rejects oversized archives, duplicate or unsafe paths, unsupported cells, malformed configuration, and invalid dimensions. Patterns are limited to 256 columns, 40 rows, and 512 occupied cells each, with a combined maximum of 65,535 occupied cells. These are storage limits. Oversized formations retain their geometry and are clipped at the screen edges. It reports unsupported data and preserves an existing import when validation fails.
+
+## Obstacle placement
+
+Supported default, Gravity, Hog, Mech and Dragon configurations retain their distance-dependent obstacle weights, lengths, angles, rotation periods and vertical placement weights. A later distance record replaces its earlier weight. The renderer uses an interpolated rotation phase, including the imported rotation period, so diagonal zappers move through intermediate angles. Missing optional placement metadata retains the authored fallback behavior.
 
 ## Optional Rocket Time waves
 

@@ -61,6 +61,7 @@ class JetpackProgression {
   }
 
   void setEnabled(bool enabled) { enabled_ = enabled; }
+  void setSourceSpacing(bool enabled) { sourceSpacing_ = enabled; }
   bool enabled() const { return enabled_; }
   uint32_t serial() const { return serial_; }
   bool event(uint32_t serial, Event& result) const {
@@ -175,7 +176,7 @@ class JetpackProgression {
     if (streak_ == Streak::Coins || protectedRun) minimum = maximum = 0;
     const uint32_t interval = minimum + roll(uint32_t(maximum - minimum));
     uint32_t gap = span + interval;
-    if (!protectedRun && streak_ != Streak::Coins) {
+    if (!sourceSpacing_ && !protectedRun && streak_ != Streak::Coins) {
       const uint32_t safe = safeGapNative(speedQ8);
       if (gap < safe) gap = safe;
     }
@@ -279,7 +280,13 @@ class JetpackProgression {
     unsigned choice = roll(total);
     if (choice < coins) return Kind::Coins;
     choice -= coins;
-    if (choice < gates) return meters >= 400 && roll(10) == 0 ? Kind::RotatingZap : Kind::Zap;
+    if (choice < gates) {
+#ifdef M5FLAP_JETPACK_OBSTACLES
+      return Kind::Zap; // Imported templates choose their own rotation and weights.
+#else
+      return meters >= 400 && roll(10) == 0 ? Kind::RotatingZap : Kind::Zap;
+#endif
+    }
     choice -= gates;
     if (choice < missiles) return Kind::Missile;
     return Kind::Laser;
@@ -321,6 +328,7 @@ class JetpackProgression {
   uint8_t vehicleMultiplier_[6] = {4,4,4,4,4,4}, spinCount_ = 0, streakRemaining_ = 0, currentVehicle_ = 0;
   Streak streak_ = Streak::Default;
   bool enabled_ = true, waiting_ = false, firstPower_ = true, firstVehicle_ = true, historyInitialized_ = false;
+  bool sourceSpacing_ = false;
 };
 
 }  // namespace flappy

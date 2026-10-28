@@ -1,12 +1,18 @@
-# M5 Flap
+# Bitty
 
-A small game launcher for ESP32-based M5StickC devices. Play Flappy Bird modes, connect a Bluetooth LE controller, or load local NES, Tetris and Geometry Dash cartridges. Flappy Bird starts by default. Original mode uses compatible artwork that you supply locally. Game and menu cues are synthesized by the firmware.
+Tiny games and apps for the original M5StickC Plus. Flappy Bird starts by default. The public starter build includes project-created art and native games. You supply any commercial cartridges or compatible original assets locally.
 
-The public package contains project source, two project-created procedural themes, tools, synthetic test fixtures, and upstream license notices. Imported artwork, sounds, logos, ROMs, generated headers, screenshots, and firmware containing imported material stay private. The NES core is fetched separately at a pinned revision. This is an independent project with no affiliation with the original games' creators or M5Stack.
+[Preview the USB installer and library](https://ryangrams.github.io/bitty/), or read the [USB library and recovery instructions](docs/USB_LIBRARY.md). The browser manager implements cartridge installation and removal, flash-space reporting, game launch and game-at-boot selection. Multiple generic NES cartridges appear in the device game picker. No Wi-Fi setup or desktop app is required. Additional hardware support is planned.
+
+The USB library is a development preview. Its first complete hardware installation and transfer check is pending. See [release status](docs/RELEASE_STATUS.md) for verified checks and open work.
+
+The source package excludes commercial ROMs, APKs, original art/music, private reference data and firmware containing those inputs. Public firmware is built from authored starter assets in a clean workflow. The pinned NES core is fetched separately. This independent project is unaffiliated with the owners of referenced games or M5Stack.
+
+Contributors and original game ideas are welcome. See [contributing](CONTRIBUTING.md), [request a game or app](https://github.com/ryangrams/bitty/issues/new?template=port-request.yml), or [support future builds on GitHub](https://github.com/sponsors/ryangrams). If you enjoy Bitty, a voluntary [GitHub star](https://github.com/ryangrams/bitty) is welcome.
 
 For the IINE Gamebrick Mini, start with **H mode**, its yellow-light keyboard profile named **IINE-keyboard**. Hold its Pairing button for three seconds, then select **Controller > Pair controller** on the M5. H-mode pairing, reconnect after flashing, Tetris movement and both rotations have been physically confirmed. Mario's A jump, B+Right run, and A jump while B+Right stays held also work. The IINE profile maps the captured Space and Enter reports to game A and B. Complete controller playthroughs and power-cycle coverage remain pending. See [controller setup and controls](docs/CONTROLLERS.md).
 
-## Build your copy
+## Build a private asset-based copy
 
 Use Python 3.11 or newer, [Arduino CLI](https://arduino.github.io/arduino-cli/latest/installation/), and a C++ compiler for host tests. Optional audio conversion requires FFmpeg. The native importer also requires Python with Tkinter and a desktop display.
 
