@@ -132,3 +132,8 @@ tests/jetpack_game_test.cpp
 tests/jetpack_fairness_test.cpp
 firmware/flappy/jetpack_art.h
 tests/jetpack_art_test.cpp
+tools/import_jetpack.py
+tests/test_import_jetpack.py
+tests/test_build_jetpack.py
+tests/test_jetpack_runtime.py
+docs/JETPACK_IMPORT.md

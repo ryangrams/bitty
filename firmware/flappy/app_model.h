@@ -81,6 +81,9 @@ struct Settings {
   bool arcadeAutoFire = false;
   uint8_t arcadeDifficulty = 1;
   uint8_t jetpackDifficulty = 1;
+  uint8_t jetpackRide = 0;
+  uint8_t jetpackGadget = 0;
+  bool jetpackHeadstart = false;
 };
 
 struct MenuState {
@@ -215,6 +218,23 @@ class AppModel {
     if (difficulty > 2) difficulty = 1;
     if (settings.jetpackDifficulty != difficulty) settingsDirty = true;
     settings.jetpackDifficulty = difficulty;
+  }
+
+  void setJetpackRide(uint8_t ride) {
+    if (ride > 8) ride = 0;
+    if (settings.jetpackRide != ride) settingsDirty = true;
+    settings.jetpackRide = ride;
+  }
+
+  void setJetpackGadget(uint8_t gadget) {
+    if (gadget > 2) gadget = 0;
+    if (settings.jetpackGadget != gadget) settingsDirty = true;
+    settings.jetpackGadget = gadget;
+  }
+
+  void setJetpackHeadstart(bool enabled) {
+    if (settings.jetpackHeadstart != enabled) settingsDirty = true;
+    settings.jetpackHeadstart = enabled;
   }
 
   const char* gameLabel(GameTitle title) const {
@@ -515,7 +535,8 @@ class AppModel {
         if (currentGame == GameTitle::FlappyBird) return 5;
         if (currentGame == GameTitle::Tetris) return 9;
         if (currentGame == GameTitle::TetrisZero) return 8;
-        if (currentGame == GameTitle::GeometryDash || currentGame == GameTitle::JetpackJoyride) return 3;
+        if (currentGame == GameTitle::GeometryDash) return 3;
+        if (currentGame == GameTitle::JetpackJoyride) return 6;
         return nativeArcadeGame(currentGame) ? 6 : 2;
       case MenuPage::GeometryLevel: return GeometryLevelCount + 1;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
@@ -560,7 +581,10 @@ class AppModel {
           return labels[index];
         }
         if (currentGame == GameTitle::GeometryDash) return index == 0 ? "Level" : "Restart level";
-        if (currentGame == GameTitle::JetpackJoyride) return index == 0 ? "Restart game" : "Difficulty";
+        if (currentGame == GameTitle::JetpackJoyride) {
+          constexpr const char* labels[] = {"Restart game", "Difficulty", "Starting ride", "Gadget", "Headstart"};
+          return labels[index];
+        }
         if (nativeArcadeGame(currentGame)) {
           constexpr const char* labels[] = {"Restart game", "Zero tilt", "Sensitivity", "Auto fire", "Difficulty"};
           return labels[index];
@@ -662,6 +686,12 @@ class AppModel {
           if (index == 0) return geometryLevelLabel(settings.geometryLevel);
         } else if (currentGame == GameTitle::JetpackJoyride) {
           if (index == 1) return settings.jetpackDifficulty == 0 ? "Easy" : settings.jetpackDifficulty == 2 ? "Hard" : "Normal";
+          if (index == 2) {
+            constexpr const char* rides[] = {"On foot", "Gravity suit", "Hog", "Stomper", "Bird", "Teleporter", "Dragon", "S.A.M.", "Random"};
+            return rides[settings.jetpackRide <= 8 ? settings.jetpackRide : 0];
+          }
+          if (index == 3) return settings.jetpackGadget == 1 ? "Coin magnet" : settings.jetpackGadget == 2 ? "Double coins" : "Off";
+          if (index == 4) return settings.jetpackHeadstart ? "On" : "Off";
         } else if (nativeArcadeGame(currentGame)) {
           if (index == 1) return "Hold unit steady";
           if (index == 2) return settings.arcadeSensitivity == 0 ? "Fine" : settings.arcadeSensitivity == 2 ? "Fast" : "Normal";
@@ -927,6 +957,9 @@ class AppModel {
         } else if (currentGame == GameTitle::JetpackJoyride) {
           if (menu.selection == 0) requestGameRestart();
           else if (menu.selection == 1) setJetpackDifficulty(uint8_t((settings.jetpackDifficulty + 1) % 3));
+          else if (menu.selection == 2) setJetpackRide(uint8_t((settings.jetpackRide + 1) % 9));
+          else if (menu.selection == 3) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 3));
+          else if (menu.selection == 4) setJetpackHeadstart(!settings.jetpackHeadstart);
         } else if (nativeArcadeGame(currentGame)) {
           if (menu.selection == 0) requestGameRestart();
           else if (menu.selection == 1) ++arcadeCalibrateRequest;

@@ -55,7 +55,7 @@ def path_problem(name: str) -> str | None:
         return "private or generated directory"
     if parts[:2] == ["assets", "source"]:
         return "local asset source directory"
-    if "generated" in path.name.casefold() or path.name.casefold() in {"atlas.txt", "atlas.json"}:
+    if "generated" in path.name.casefold() or path.name.casefold() in {"atlas.txt", "atlas.json", "jetpack_imported.h"}:
         return "generated asset data or original asset manifest"
     if path.suffix.casefold() == ".json" and name not in METADATA_JSON_PATHS:
         return "JSON is limited to the reviewed skin source catalog"

@@ -59,7 +59,7 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(archive.read("README.md"), b"# Synthetic source fixture\n")
 
     def test_rejects_private_and_generated_paths(self):
-        for name in [".local/source/atlas.txt", "assets/source/atlas.txt", "firmware/flappy/generated_assets.h", "artifacts/log.txt"]:
+        for name in [".local/source/atlas.txt", "assets/source/atlas.txt", "firmware/flappy/generated_assets.h", "firmware/flappy/jetpack_imported.h", "artifacts/log.txt"]:
             with self.subTest(name=name):
                 self.manifest(["PUBLIC_FILES.txt", name])
                 self.write(name, b"placeholder\n")

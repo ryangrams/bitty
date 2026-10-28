@@ -2,7 +2,7 @@
 
 This native adaptation imagines Jetpack Joyride as a small SNES-style game. It fills the M5StickC Plus's 240 by 135 landscape screen with original shaded pixel art and tile-based lab scenery. The camera stays fixed while the lab scrolls past. Each game pixel maps directly to a display pixel.
 
-The [Flipper remake](https://github.com/timstrasser/flipper-jetpack-game) provided a reference for the compact composition and low-resolution character. Halfbrick's game provided the gameplay reference. The M5 version uses new code and artwork. No Flipper source, sprites, original mobile assets or audio are bundled. See the [research notes](JETPACK_RESEARCH.md) for sources and the boundary between references and this implementation.
+The [Flipper remake](https://github.com/timstrasser/flipper-jetpack-game) provided a reference for the compact composition and low-resolution character. Halfbrick's game provided the gameplay reference. The M5 version uses new code and artwork. No Flipper source, sprites, original mobile assets or audio are bundled in the public source. A private rebuild can import coin formations and optional runner art from a package supplied by the user. See the [research notes](JETPACK_RESEARCH.md) for sources and the boundary between references and this implementation.
 
 Choose **Jetpack Joyride** under **Change Game** to play immediately. It is also available under **Game at Boot**. Flappy Bird remains the initial boot default. This game needs no ROM or separate asset import.
 
@@ -19,25 +19,54 @@ Choose **Jetpack Joyride** under **Change Game** to play immediately. It is also
 | Front M5 while paused | Resume |
 | Fresh action on the title or game-over screen | Start or retry |
 
-Release the action button after closing a menu or waking the screen before using it again. Holding the button through a crash cannot automatically restart the game. The Gravity Suit changes the action to **tap to flip gravity** and displays that hint while equipped. The armored jetpack keeps the usual hold-to-fly control. Tilt is unused in this game.
+Release the action button after closing a menu, waking the screen or changing vehicles before using a fresh tap action. Holding through a crash cannot automatically restart the run. Tilt is unused.
+
+| Ride | Action |
+| --- | --- |
+| Gravity suit | Tap to reverse gravity, retaining momentum |
+| Hog | Tap to jump from the floor, hold for a longer jump |
+| Stomper | Tap to jump, hold to extend the boost and soften descent |
+| Bird | Tap repeatedly to flap |
+| Teleporter | Tap to teleport to the moving target |
+| Dragon | Hold to dive, release to rise |
+| S.A.M. | Hold to raise the blocking fist, release to lower it |
+
+Vehicle boxes choose among the six standard rides. Collect S, A and M tokens to assemble S.A.M. It faces a missile-blocking sequence and can take multiple hits. The M5 version permits offline activation without a daily lock. Each vehicle acquisition clears hazards and provides a recovery window. Losing a vehicle ejects the runner back into normal flight.
 
 ## Rules and settings
 
-Collect coin trails and avoid electrical zappers and missiles. Missile warnings appear before the launch. Running speed increases with distance. Vehicle pickups absorb a collision, then return you to the normal jetpack with a short recovery window. This version includes the armored jetpack and Gravity Suit. Its course, physics and art are project-created adaptations.
+Collect coin formations and avoid static and rotating zappers, warned missiles and laser lanes. Scientists walk, flee, react to the exhaust, offer high-fives and tumble when struck by vehicles. They cannot kill the player.
 
-**Game Settings** contains **Restart game**, **Difficulty** and **Back**. Difficulty offers Easy, Normal and Hard, applies on the next run and is saved separately from Galaga and Arkanoid. The device saves the best distance. Volume and battery sleep use the shared device settings. The buzzer uses short event cues for thrust, coins, vehicle pickups and crashes.
+The four power-ups change the run:
+
+- **Shield** absorbs a collision.
+- **Boost** gives protected high-speed travel for 100 meters.
+- **Cash Dash** clears hazards and supplies coin trails for 60 meters.
+- **Rocket Time** slows incoming missiles for seven seconds.
+
+Coin Magnet and Double Coins are also available as bonuses or a starting gadget. Spin tokens feed the end-of-run reward sequence: bonus coins, a second chance, a blast, a headstart for the next run or Double Coins for the next run. Results remain visible before play continues. A crash keeps scrolling while the runner tumbles, bounces and slides. A fresh action during the crash fires one final blast. The body must settle before the run ends. The best-distance record includes distance gained during the crash.
+
+**Game Settings** contains **Restart game**, **Difficulty**, **Starting ride**, **Gadget**, **Headstart** and **Back**. Starting ride offers On foot, each standard ride, S.A.M. or Random. Gadget offers Off, Coin Magnet or Double Coins. Headstart gives 500 meters of protected boost. These choices apply on the next run and persist independently of other games. The initial settings are Normal, On foot, gadget Off and headstart Off.
+
+The default source build includes eight authored formation families. A [private package import](JETPACK_IMPORT.md) can rebuild the supplied APK's original coin layouts. The package inspected during development yielded 147 layouts, including 28 verified classic-base formations, plus separate cash and onboarding layouts. Runtime collection masks retain every point of a dense formation. Event layouts are retained privately without enabling the original events. The default import keeps this project's sprites.
+
+Volume and battery sleep use the shared device settings. The GPIO2 buzzer plays short event cues. Original mobile music and audio are excluded.
 
 ## Verification
 
 The simulation advances at a fixed 60 ticks per second. Drawing uses the existing shared framebuffer and DMA display queue. Only the selected native game's state is allocated. Gameplay and drawing allocate no memory per frame.
 
-Normal flight follows the gravity, thrust, drag and running-speed behavior recovered from a privately supplied Android reference. The vertical travel range is fitted to this screen. Normal running speed rises from about 67.08 to 184 screen pixels per second over 2,250 meters. The Gravity Suit retains momentum while a tap reverses its gravity, following the recovered gravity and drag model. Easy and Hard change horizontal pacing. The obstacle layouts and safety spacing are project-created. See [the reference boundary and coordinate fit](JETPACK_RESEARCH.md#provenance).
+Normal flight follows the gravity, thrust, drag and running-speed behavior recovered from a privately supplied Android reference. The vertical travel range is fitted to this screen. Normal running speed rises from about 67.08 to 184 screen pixels per second over 2,250 meters. The Gravity Suit retains momentum while a tap reverses its gravity, following the recovered gravity and drag model. Easy and Hard change horizontal pacing. The other rides share this course-speed curve and use M5 control and collision adaptations informed by recovered configuration. Their complete phone state machines have not been reproduced. The obstacle layouts and safety spacing are project-created. See [the reference boundary and coordinate fit](JETPACK_RESEARCH.md#provenance).
 
-Portable tests cover deterministic movement, acceleration, speed limits, coins, obstacle geometry, missile warnings, vehicle ejection, retry input and guarded display buffers. The source ZIP also passes these checks without imported assets. The firmware was uploaded to the M5StickC Plus and its flash hash verified.
+Portable tests cover deterministic movement, acceleration, speed limits, each ride and power-up, SAM fist overlap, vehicle body collision, laser separation, immediate Cash Dash trails, scientist interactions, every spin reward, crash settling, fresh input and guarded display buffers. A protected pool stress check runs 54,000 ticks across nine ride IDs. Separate natural-run fuzz checks cover death and retry. The state occupies 1,796 bytes and allocates no memory per frame.
 
-The device measured 500 completed SPI frame intervals in 8,333,343 microseconds during Jetpack play, or 60.00 FPS. With the IINE controller connected in H mode and volume Full, a second 500-interval probe measured 8,332,242 microseconds, or 60.01 FPS. The simulation remained on its fixed 60 Hz clock. Automated checks also verified pause, portrait menu rotation, landscape return and preservation of high scores. The device was left at the Jetpack start screen with the controller connected and diagnostic inputs disabled.
+The source-only importer checks use synthetic packages. A separate synthetic runtime suite tests all 512 cells in a dense formation, overlapping groups, selection weights, cash-only selection, Double Coins, reset, optional runner rendering and fallback. The privately supplied package was also checked by rendering all 147 formations and collecting all 10,628 cells without truncation. These private inputs remain outside the source ZIP.
 
-These measurements cover completed LCD transfers. Physical inspection of tearing, controller feel, sound and a full playthrough remains open.
+The expanded firmware was flashed to the M5StickC Plus and its flash hash verified. Nine hardware probes started on foot, in each of the seven rides, and with headstart plus magnet. Each measured 500 completed SPI frame intervals. The 4,500 intervals averaged **59.9963 FPS**, with individual probes from **59.9825 to 60.0004 FPS**. The simulation reported 60 Hz in each probe. Volume was Full. The early probes included Bluetooth scanning. No controller was available to reconnect during this test.
+
+Pause froze the simulation counter, the menu rotated to portrait and returned to landscape, and automatic testing preserved all native-game high scores. Diagnostic input and loadout overrides were cleared. The device was left at the Jetpack start screen with ordinary settings restored and the serial connection closed.
+
+These are completed LCD transfer measurements. They do not measure the panel's scan phase. Physical inspection of tearing, sound, controller feel for the new rides and a full playthrough remains open.
 
 Independent motion checks compare the fixed-point implementation with a double-precision reference calculation, including sustained flight, release, midair input changes and Gravity Suit reversals. The normal model reaches the ceiling in 57 ticks and the floor in 70 at starting speed. At full speed those checks take 40 and 48 ticks. These are analytical reference comparisons, separate from hardware or Android runtime measurements.
 

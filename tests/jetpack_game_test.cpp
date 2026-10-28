@@ -14,11 +14,21 @@ struct JetpackTestAccess {
     for (auto& coin : game.coinField_) coin = JetpackGame::Coin{};
     for (auto& missile : game.missiles_) missile = JetpackGame::Missile{};
     game.pickup_ = JetpackGame::Pickup{};
+    game.bonus_ = JetpackGame::Bonus{}; game.token_ = JetpackGame::Token{}; game.laser_ = JetpackGame::Laser{};
+    for (auto& npc : game.scientists_) npc = JetpackGame::Scientist{};
+    for (auto& rotator : game.rotators_) rotator = JetpackGame::Rotator{};
+    for (auto& group : game.importedGroups_) group = JetpackGame::ImportedGroup{};
+    for (auto& power : game.powerTicks_) power = 0;
+    game.distanceToBonus_ = game.distanceToToken_ = game.distanceToScientist_ = game.distanceToLaser_ = 100000000;
+    game.spinTokens_ = 0;
     game.distanceToHazard_ = game.distanceToCoins_ = game.distanceToVehicle_ = 100000000;
     game.missileGap_ = false;
   }
   static void player(JetpackGame& game, int y, int velocity = 0) {
     game.y_ = y * JetpackGame::FlightUnit; game.velocity_ = velocity * 256;
+  }
+  static void quietExtras(JetpackGame& game) {
+    game.distanceToBonus_ = game.distanceToToken_ = game.distanceToScientist_ = game.distanceToLaser_ = 100000000;
   }
   static void running(JetpackGame& game) {
     game.phase_ = JetpackGame::Phase::Running; game.armed_ = true;
@@ -58,8 +68,45 @@ struct JetpackTestAccess {
   static bool near(int px, int py, int x, int y, int dx, int dy, int radius = 6) {
     return JetpackGame::nearSegment(px, py, x, y, dx, dy, radius);
   }
+  static void equip(JetpackGame& game, JetpackGame::Vehicle vehicle) { game.equip(vehicle); }
+  static void power(JetpackGame& game, JetpackGame::Power power) { game.activatePower(power); }
+  static void laser(JetpackGame& game, unsigned ticks, int y) { game.laser_.active = true; game.laser_.ticks = uint16_t(ticks); game.laser_.y = int16_t(y); }
+  static void npc(JetpackGame& game) { game.scientists_[0].active = true; game.scientists_[0].x = 45 * JetpackGame::Unit; game.scientists_[0].y = 114 * JetpackGame::Unit; }
+  static void missileAt(JetpackGame& game, int x, int y) { missile(game, 0); game.missiles_[0].x = x * JetpackGame::Unit; game.missiles_[0].y = int16_t(y); }
+  static void token(JetpackGame& game, unsigned kind) { game.token_.active = true; game.token_.x = 44 * JetpackGame::Unit; game.token_.y = int16_t(game.playerY()); game.token_.kind = uint8_t(kind); }
+  static void spin(JetpackGame& game, unsigned value) {
+    game.phase_ = JetpackGame::Phase::Spin; game.spinTokens_ = 1; game.spinTicks_ = 0; game.spinResult_ = false;
+    for (uint32_t seed = 1; ; ++seed) {
+      uint32_t r = seed; r ^= r << 13; r ^= r >> 17; r ^= r << 5;
+      if (r % 12 == value) { game.random_ = seed; break; }
+    }
+  }
+  static uint8_t reward(const JetpackGame& game) { return game.reward_; }
+  static uint8_t pendingRewards(const JetpackGame& game) { return game.pendingRewards_; }
+  static bool body(const JetpackGame& game, int x, int y, int dx, int dy) { return game.hitsBodySegment(x,y,dx,dy); }
+  static void moveObjects(JetpackGame& game, int advance) { game.updateObjects(advance); }
+  static void rotator(JetpackGame& game) { game.rotators_[0].active = true; game.rotators_[0].x = 44 * JetpackGame::Unit; game.rotators_[0].y = 70; game.rotators_[0].angle = 0; }
+  static void spawnExtras(JetpackGame& game) { game.spawnExtras(0); }
+  static void spawnLaserNow(JetpackGame& game) { game.distanceToLaser_ = 0; }
+#ifdef M5FLAP_JETPACK_IMPORTED
+  static void pattern(JetpackGame& game, unsigned index) {
+    for (auto& group : game.importedGroups_) group = JetpackGame::ImportedGroup{};
+    auto& group = game.importedGroups_[0]; const auto& pattern = JetpackImported::CoinPatterns[index];
+    group.pattern = int16_t(index); group.step = uint8_t(std::max(2u, std::min(5u, 80u / pattern.height)));
+    group.top = uint8_t(23 + (90 - pattern.height * group.step) / 2); group.x = 40 * JetpackGame::Unit;
+  }
+  static void collectPattern(JetpackGame& game, unsigned index) {
+    auto& group = game.importedGroups_[0]; const auto& pattern = JetpackImported::CoinPatterns[index];
+    for (unsigned i = 0; i < pattern.count; ++i) {
+      const uint16_t point = JetpackImported::CoinPoints[pattern.offset + i];
+      group.x = (JetpackGame::PlayerX - int(point & 255) * group.step) * JetpackGame::Unit;
+      game.y_ = (group.top + int(point >> 8) * group.step) * JetpackGame::FlightUnit;
+      game.collectImported();
+    }
+  }
+#endif
   static unsigned coinCount(const JetpackGame& game) {
-    unsigned count = 0; for (const auto& coin : game.coinField_) count += coin.active; return count;
+    unsigned count = 0; for (const auto& coin : game.coinField_) count += coin.active; for (const auto& group : game.importedGroups_) count += group.pattern >= 0; return count;
   }
 };
 }
@@ -76,7 +123,7 @@ static void start(Game& game) { game.tick(Input{}); game.tick(press()); assert(g
 
 static void timingFlightAndRearming() {
   Game game;
-  assert(sizeof(game) < 6144 && game.phase() == Phase::Ready && game.score() == 0);
+  assert(sizeof(game) < 4096 && game.phase() == Phase::Ready && game.score() == 0);
   for (int i = 0; i < 60; ++i) game.tick(hold());
   game.tick(press());
   assert(game.phase() == Phase::Ready);
@@ -94,7 +141,7 @@ static void timingFlightAndRearming() {
   assert(game.speed() == oldSpeed);
   Access::hit(game);
   assert(game.phase() == Phase::Crashing && game.takeCue() == Cue::Death);
-  for (int i = 0; i < 64; ++i) game.tick(hold());
+  for (int i = 0; i < 150; ++i) game.tick(hold());
   assert(game.gameOver());
   for (int i = 0; i < 100; ++i) game.tick(hold());
   game.tick(press()); assert(game.gameOver());
@@ -230,6 +277,7 @@ static void vehiclesAbsorbAndChangePhysics() {
   Game armor; start(armor); Access::clear(armor); Access::player(armor, 70);
   armor.takeCue(); Access::pickup(armor, Vehicle::Armor); armor.tick(Input{});
   assert(armor.vehicle() == Vehicle::Armor && armor.takeCue() == Cue::Win);
+  armor.tick(Input{});
   for (int i = 0; i < 10; ++i) armor.tick(hold());
   assert(Access::velocity(armor) < 0);
   Access::immunity(armor, 0); Access::player(armor, 70);
@@ -297,6 +345,120 @@ static void missilesTrackThenLock() {
   assert(approach >= 35 && approach < 60);
 }
 
+static void expandedRidesAndFreshControls() {
+  for (uint8_t ride = 2; ride <= 8; ++ride) {
+    Game game; game.setNextLoadout(ride, 0, false); start(game); Access::clear(game);
+    assert(uint8_t(game.vehicle()) == ride);
+    for (unsigned i = 0; i < 8; ++i) game.tick(hold());
+    if (ride == 2) assert(!game.gravityUp());
+    if (ride == 3 || ride == 4) assert(game.playerY() == Game::Floor);
+    if (ride == 6) assert(game.playerY() == Game::Floor);
+    game.tick(Input{}); Access::player(game, ride == 3 || ride == 4 ? Game::Floor : 70);
+    game.tick(press());
+    if (ride == 2) assert(game.gravityUp());
+    if (ride == 3 || ride == 4 || ride == 5 || ride == 8) assert(Access::velocity(game) < 0);
+    if (ride == 6) assert(game.playerY() == game.teleportTargetY());
+    if (ride == 7) assert(Access::velocity(game) > 0);
+    game.setNextLoadout(0, 2, true);
+    assert(uint8_t(game.vehicle()) == ride);
+  }
+  Game bird; bird.setNextLoadout(5, 0, false); start(bird); Access::clear(bird); bird.tick(Input{});
+  for (unsigned i = 0; i < 15; ++i) {
+    Access::player(bird, 70); bird.tick(press()); assert(Access::velocity(bird) < 0); bird.tick(Input{});
+  }
+  Game pickup; start(pickup); Access::clear(pickup); Access::zap(pickup, 44, 40, 0, 50);
+  Access::missileAt(pickup, 70, 70); Access::laser(pickup, 30, 70);
+  Access::equip(pickup, Vehicle::Mech);
+  assert(!pickup.zap(0).active && !pickup.missile(0).active && !pickup.laser().active);
+  Access::player(pickup, 70);
+  assert(Access::body(pickup, 15, 61, 60, 0));
+  Access::equip(pickup, Vehicle::None); Access::player(pickup, 70);
+  assert(!Access::body(pickup, 15, 61, 60, 0));
+}
+
+static void allPowerupsAndNpcInteractions() {
+  using Power = Game::Power;
+  Game game; start(game); Access::clear(game); Access::player(game, 70);
+  Access::power(game, Power::Shield); Access::hit(game);
+  assert(game.phase() == Phase::Running && game.powerTicks(Power::Shield) == 0);
+  Access::immunity(game, 0); Access::hit(game); assert(game.phase() == Phase::Crashing);
+  for (Power power : {Power::Boost, Power::CashDash}) {
+    Game protectedGame; start(protectedGame); Access::clear(protectedGame);
+    Access::zap(protectedGame, 45, 50, 0, 50); Access::power(protectedGame, power);
+    assert(!protectedGame.zap(0).active && protectedGame.powerTicks(power));
+    if (power == Power::Boost) assert(protectedGame.speed() == 3271);
+    else assert(Access::coinCount(protectedGame) > 0);
+    const unsigned duration = power == Power::Boost ? 100 : 60;
+    Access::meters(protectedGame, duration); protectedGame.tick(Input{});
+    assert(protectedGame.powerTicks(power) == 0);
+  }
+  Game coins; start(coins); Access::clear(coins); Access::player(coins, 70);
+  Access::power(coins, Power::DoubleCoins); Access::coin(coins, 44, 70); coins.tick(Input{});
+  assert(coins.coins() == 2);
+  Access::power(coins, Power::Magnet); Access::coin(coins, 90, 70);
+  for (unsigned i = 0; i < 20; ++i) { Access::player(coins, 70); coins.tick(Input{}); }
+  assert(coins.coins() == 4);
+  Game slow, fast; start(slow); start(fast); Access::clear(slow); Access::clear(fast);
+  Access::power(slow, Power::RocketTime); Access::missileAt(slow, 220, 40); Access::missileAt(fast, 220, 40);
+  for (unsigned i = 0; i < 10; ++i) { slow.tick(Input{}); fast.tick(Input{}); }
+  assert(slow.missile(0).x > fast.missile(0).x + 20 * Q);
+  Game npc; start(npc); Access::clear(npc); Access::npc(npc); npc.tick(Input{});
+  assert(npc.phase() == Phase::Running && npc.scientistInteractions() == 1 && npc.coins() == 1);
+  Game stomp; stomp.setNextLoadout(3, 0, false); start(stomp); Access::clear(stomp); Access::npc(stomp); stomp.tick(Input{});
+  assert(stomp.scientist(0).state == 2 && stomp.coins() == 2 && stomp.phase() == Phase::Running);
+}
+
+static void samVisibleBlocksAndLaserSeparation() {
+  Game sam; sam.setNextLoadout(8, 0, false); start(sam); Access::clear(sam); Access::player(sam, 70); Access::immunity(sam, 0);
+  Access::missileAt(sam, Game::PlayerX + 34, 79); Access::moveObjects(sam, 0);
+  assert(!sam.missile(0).active && sam.vehicleHits() == 3 && sam.coins() == 3);
+  Access::missileAt(sam, Game::PlayerX + 34, 80); Access::moveObjects(sam, 0);
+  assert(sam.missile(0).active && sam.coins() == 3);
+  for (unsigned i = 0; i < 5; ++i) Access::moveObjects(sam, 0);
+  assert(!sam.missile(0).active && sam.vehicleHits() == 2);
+  Game laser; start(laser); Access::clear(laser); Access::player(laser, 70);
+  Access::zap(laser, 258, 40, 0, 40); Access::spawnLaserNow(laser); Access::spawnExtras(laser);
+  assert(!laser.laser().active);
+  Access::clear(laser); Access::laser(laser, 140, 70);
+  for (unsigned i = 0; i < 99; ++i) { Access::player(laser, 70); laser.tick(Input{}); assert(laser.phase() == Phase::Running); }
+  Access::player(laser, 70); laser.tick(Input{}); assert(laser.phase() == Phase::Crashing);
+  Game rotating; start(rotating); Access::clear(rotating); Access::player(rotating, 70); Access::rotator(rotating);
+  rotating.tick(Input{}); assert(rotating.phase() == Phase::Crashing);
+  Game letters; start(letters); Access::clear(letters); Access::player(letters, 70);
+  for (unsigned kind = 1; kind <= 3; ++kind) { Access::token(letters, kind); letters.tick(Input{}); }
+  assert(letters.vehicle() == Vehicle::SAM && letters.samLetters() == 0 && letters.vehicleHits() == 3);
+}
+
+static void finalSpinAndCrashRewards() {
+  for (unsigned reward : {0u,1u,2u,3u,7u}) {
+    Game game; start(game); Access::clear(game); Access::spin(game, reward); game.tick(Input{});
+    assert(game.phase() == Phase::Spin);
+    const unsigned expected = reward == 0 ? 0 : reward == 1 ? 2 : reward == 2 ? 3 : reward == 3 ? 4 : 1;
+    assert(Access::reward(game) == expected);
+    for (unsigned i = 0; i < 59; ++i) game.tick(Input{});
+    assert(game.phase() == Phase::Spin);
+    game.tick(Input{});
+    if (reward == 0) assert(game.phase() == Phase::Running);
+    if (reward == 1) {
+      assert(game.phase() == Phase::Crashing); const uint32_t before = game.distance();
+      for(unsigned i=0;i<50;++i)game.tick(Input{}); assert(game.distance()>before);
+      for(unsigned i=0;i<400 && !game.gameOver();++i)game.tick(Input{});
+      assert(game.gameOver() && game.playerY() == Game::Floor && Access::velocity(game) == 0);
+    }
+    if (reward == 2 || reward == 3) {
+      assert(game.gameOver() && Access::pendingRewards(game)); game.tick(Input{}); game.tick(press());
+      assert(game.phase() == Phase::Running);
+      if (reward == 2) assert(game.powerTicks(Game::Power::Boost));
+      else assert(game.powerTicks(Game::Power::DoubleCoins));
+    }
+    if (reward == 7) assert(game.gameOver() && game.coins() > 0);
+  }
+  Game crash; start(crash); Access::clear(crash); Access::player(crash, 60); Access::hit(crash);
+  const uint32_t before = crash.distance();
+  for (unsigned i = 0; i < 150; ++i) crash.tick(Input{});
+  assert(crash.gameOver() && crash.crashBounces() >= 1 && crash.distance() > before);
+}
+
 static uint32_t checksum(const std::array<uint16_t, Game::Width * Game::Height>& pixels) {
   uint32_t h = 2166136261u;
   for (uint16_t pixel : pixels) { h ^= pixel; h *= 16777619u; }
@@ -312,6 +474,7 @@ static void deterministicProgressionAndRenderBounds() {
   for (unsigned i = 0; i < 60000; ++i) {
     Input in; in.action = (i / 35) % 2; in.pressed = i % 70 == 35;
     Access::immunity(a, 65000); Access::immunity(b, 65000);
+    Access::quietExtras(a); Access::quietExtras(b);
     a.tick(in); b.tick(in);
     assert(a.phase() == Phase::Running && b.phase() == Phase::Running);
     assert(a.score() == b.score() && a.playerY() == b.playerY());
@@ -359,10 +522,48 @@ static void randomizedRuns() {
     deaths += before == Phase::Running && game.phase() == Phase::Crashing;
     restarts += before == Phase::Over && game.phase() == Phase::Running;
     assert(game.playerY() >= Game::Ceiling && game.playerY() <= Game::Floor);
-    assert(game.speed() >= 243 && game.speed() <= 903);
+    assert(game.speed() >= 243 && game.speed() <= 3271);
     if (i % 211 == 0) game.draw(pixels.data());
   }
   assert(deaths > 50 && restarts > 50);
+}
+
+static void expandedPoolAndRenderStress() {
+  struct Guarded { uint32_t before = 0x18273645; std::array<uint16_t, Game::Width * Game::Height> pixels{}; uint32_t after = 0x56677889; } buffer;
+  for (uint8_t ride = 0; ride <= 8; ++ride) {
+    Game game; game.setNextLoadout(ride, uint8_t(ride % 3), false); start(game);
+    bool held = false;
+    for (unsigned i = 0; i < 6000; ++i) {
+      Access::immunity(game, 65000);
+      const bool next = (i / (13 + ride)) % 2;
+      Input in; in.action = next; in.pressed = next && !held; held = next;
+      game.tick(in);
+      assert(game.phase() == Phase::Running && game.playerY() >= Game::Ceiling && game.playerY() <= Game::Floor);
+      if (i % 91 == 0) {
+        game.draw(buffer.pixels.data(), 9000);
+        assert(buffer.before == 0x18273645 && buffer.after == 0x56677889);
+      }
+    }
+  }
+}
+
+static void importedGroupsKeepEveryCell() {
+#ifdef M5FLAP_JETPACK_IMPORTED
+  struct Guarded { uint32_t before = 0x143278ab; std::array<uint16_t, Game::Width * Game::Height> pixels{}; uint32_t after = 0x6789abcd; } buffer;
+  uint32_t cells = 0;
+  for (unsigned index = 0; index < flappy::JetpackImported::PatternCount; ++index) {
+    const auto& pattern = flappy::JetpackImported::CoinPatterns[index];
+    assert(pattern.count <= 512 && pattern.height <= 40);
+    Game game; start(game); Access::clear(game); Access::pattern(game, index);
+    game.draw(buffer.pixels.data());
+    assert(buffer.before == 0x143278ab && buffer.after == 0x6789abcd);
+    Access::collectPattern(game, index);
+    assert(game.coins() == pattern.count);
+    cells += pattern.count;
+  }
+  assert(cells == flappy::JetpackImported::CoinPointCount);
+  std::cout << "Imported cells retained and collected: " << cells << "\n";
+#endif
 }
 
 static void dumpScene(const char* path, int vehicle) {
@@ -388,7 +589,7 @@ static void dumpScene(const char* path, int vehicle) {
 
 int main(int argc, char** argv) {
   timingFlightAndRearming(); independentFlightAndDistance(); collisionGeometryAndCoins(); fatalCueWinsOverCoinCollection(); vehiclesAbsorbAndChangePhysics();
-  independentGravityFlight(); missilesTrackThenLock(); deterministicProgressionAndRenderBounds(); randomizedRuns();
+  independentGravityFlight(); missilesTrackThenLock(); expandedRidesAndFreshControls(); allPowerupsAndNpcInteractions(); samVisibleBlocksAndLaserSeparation(); finalSpinAndCrashRewards(); deterministicProgressionAndRenderBounds(); randomizedRuns(); expandedPoolAndRenderStress(); importedGroupsKeepEveryCell();
   if (argc > 1) dumpScene(argv[1], argc > 2 ? argv[2][0] - '0' : 0);
   std::cout << "Jetpack tests passed\n";
 }

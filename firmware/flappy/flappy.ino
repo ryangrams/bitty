@@ -61,6 +61,8 @@ bool arcadeScoresDirty = false;
 int16_t diagnosticArcadeMove = 0;
 bool diagnosticArcadeFire = false;
 bool diagnosticArcadeTesting = false;
+uint8_t diagnosticJetpackRide = 255, diagnosticJetpackGadget = 0;
+bool diagnosticJetpackHeadstart = false;
 #endif
 flappy::coop::BleLink coopLink;
 flappy::controller::BleController* bluetoothPad = nullptr;
@@ -475,6 +477,9 @@ void loadSettings() {
   app.setArcadeAutoFire(preferences.getBool("arcauto", false));
   app.setArcadeDifficulty(preferences.getUChar("arcdiff", 1));
   app.setJetpackDifficulty(preferences.getUChar("jetdiff", 1));
+  app.setJetpackRide(preferences.getUChar("jetride", 0));
+  app.setJetpackGadget(preferences.getUChar("jetgadget", 0));
+  app.setJetpackHeadstart(preferences.getBool("jethead", false));
   arcadeTilt.calibrate(preferences.getFloat("arcneutral", 0));
   arcadeBestGalaga = preferences.getUInt("galagabest", 0);
   arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
@@ -518,6 +523,9 @@ void saveSettings() {
   preferences.putBool("arcauto", app.settings.arcadeAutoFire);
   preferences.putUChar("arcdiff", app.settings.arcadeDifficulty);
   preferences.putUChar("jetdiff", app.settings.jetpackDifficulty);
+  preferences.putUChar("jetride", app.settings.jetpackRide);
+  preferences.putUChar("jetgadget", app.settings.jetpackGadget);
+  preferences.putBool("jethead", app.settings.jetpackHeadstart);
   preferences.putBool("clock24", app.settings.clock24Hour);
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
@@ -1135,11 +1143,26 @@ void releaseNativeArcade() {
 #endif
 }
 
+void configureJetpackLoadout() {
+  if (!jetpackGame) return;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  if (diagnosticJetpackRide != 255) {
+    jetpackGame->setNextLoadout(diagnosticJetpackRide, diagnosticJetpackGadget, diagnosticJetpackHeadstart);
+    return;
+  }
+#endif
+  jetpackGame->setNextLoadout(app.settings.jetpackRide ? app.settings.jetpackRide + 1 : 0,
+                              app.settings.jetpackGadget, app.settings.jetpackHeadstart);
+}
+
 void resetNativeArcade() {
   saveArcadeScores();
   if (galagaGame) galagaGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
   if (arkanoidGame) arkanoidGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
-  if (jetpackGame) jetpackGame->reset(nonzeroRandom(), app.settings.jetpackDifficulty);
+  if (jetpackGame) {
+    jetpackGame->reset(nonzeroRandom(), app.settings.jetpackDifficulty);
+    configureJetpackLoadout();
+  }
   arcadeFrames = 0;
   arcadePaused = arcadePauseRequested = false;
   arcadeControls.blockAction();
@@ -1202,6 +1225,7 @@ void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
   else if (arkanoidGame) arkanoidGame->tick(input);
   else {
     jetpackGame->setNextDifficulty(app.settings.jetpackDifficulty);
+    configureJetpackLoadout();
     jetpackGame->tick(input);
   }
   ++arcadeFrames;
@@ -1919,6 +1943,18 @@ void serviceDiagnostics() {
         pendingPadAction |= fire && !diagnosticArcadeFire;
         diagnosticArcadeFire = fire;
       }
+    } else if (!strncmp(command, "M5JETLOAD ", 10)) {
+      unsigned ride = 0, gadget = 0, headstart = 0;
+      if (!strcmp(command + 10, "CLEAR")) {
+        diagnosticJetpackRide = 255;
+        if (jetpackGame) resetNativeArcade();
+      } else if (sscanf(command + 10, "%u %u %u", &ride, &gadget, &headstart) == 3 &&
+                 ride <= 9 && gadget <= 2 && headstart <= 1) {
+        diagnosticJetpackRide = uint8_t(ride);
+        diagnosticJetpackGadget = uint8_t(gadget);
+        diagnosticJetpackHeadstart = headstart != 0;
+        if (jetpackGame) resetNativeArcade();
+      }
     } else if (!strcmp(command, "M5PAUSE")) {
       if (nativeArcade()) arcadePauseRequested = true;
     } else if (!strcmp(command, "M5MENU")) {
@@ -2092,6 +2128,15 @@ void serviceDiagnostics() {
           unsigned(jetpackGame->phase()), (unsigned long)jetpackGame->distance(),
           (unsigned long)jetpackGame->coins(), jetpackGame->playerY(),
           (long)jetpackGame->speed(), unsigned(jetpackGame->vehicle()));
+      if (jetpackGame) Serial.printf("JETPACK_EXTRA tokens=%u letters=%u interactions=%u bounces=%u state_bytes=%u ride_override=%u\n",
+          unsigned(jetpackGame->spinTokens()), unsigned(jetpackGame->samLetters()),
+          unsigned(jetpackGame->scientistInteractions()), unsigned(jetpackGame->crashBounces()),
+          unsigned(sizeof(flappy::JetpackGame)), unsigned(diagnosticJetpackRide));
+#ifdef M5FLAP_JETPACK_IMPORTED
+      Serial.printf("JETPACK_PACK patterns=%u points=%u original_runner=%u\n",
+          unsigned(flappy::JetpackImported::PatternCount), unsigned(flappy::JetpackImported::CoinPointCount),
+          unsigned(flappy::JetpackImported::HasRunner));
+#endif
       Serial.printf("ARCADE_RECORDS galaga=%lu arkanoid=%lu jetpack=%lu testing=%u\n",
           (unsigned long)arcadeBestGalaga, (unsigned long)arcadeBestArkanoid,
           (unsigned long)arcadeBestJetpack, unsigned(diagnosticArcadeTesting));

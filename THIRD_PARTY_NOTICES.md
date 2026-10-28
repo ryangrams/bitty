@@ -72,4 +72,6 @@ The launcher, `firmware/flappy/geometry_input.h`, `firmware/flappy/geometry_scen
 
 Jetpack Joyride identifies Halfbrick Studios' original game. The native M5 game uses project-created code and art. [timstrasser's Flipper remake](https://github.com/timstrasser/flipper-jetpack-game) is credited as a low-resolution visual and gameplay reference. At review, that repository declared no license. Its source and assets are excluded from this project. Halfbrick's original art, music and mobile application are also excluded. See [the reference notes](docs/JETPACK_RESEARCH.md).
 
+The optional [Jetpack importer](docs/JETPACK_IMPORT.md) reconstructs coin formations and, when explicitly selected, a small runner sprite pack from a package supplied locally by the builder. Those generated derivatives and firmware containing them stay private. The importer ships no original game data and downloads none. Its acknowledgement records the builder's confirmation and grants no rights to the source package or its contents.
+
 Flappy Bird identifies the original game and compatible asset format. M5Stack and ESP32 identify supported hardware and dependencies. M5 Flap is independently maintained and claims no affiliation with or endorsement by those projects or their rights holders. The project license grants no rights to third-party trademarks or branding.

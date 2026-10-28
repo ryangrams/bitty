@@ -37,7 +37,7 @@ def resolve_display_profile(display=None):
     return saved
 
 
-def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None):
+def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None, jetpack=None):
     missing = [name for name in HEADERS if not (assets / name).is_file()]
     if missing:
         raise SystemExit("Import your local assets first. Missing: " + ", ".join(missing) +
@@ -68,6 +68,19 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
             geometry = default_geometry
     if geometry is not None and not (geometry / "generated_rom.h").is_file():
         raise SystemExit("Import your Geometry Dash ROM first. Missing: generated_rom.h in " + str(geometry))
+    if jetpack is None:
+        default_jetpack = ROOT / ".local" / "jetpack" / "imported"
+        if (default_jetpack / "jetpack_imported.h").is_file():
+            jetpack = default_jetpack
+    jetpack_header = None
+    if jetpack is not None and jetpack is not False:
+        path = jetpack / "jetpack_imported.h"
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            raise SystemExit("Import your Jetpack reference pack first. Missing or oversized: jetpack_imported.h")
+        try:
+            jetpack_header = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise SystemExit("Cannot read private Jetpack import header: " + str(exc)) from exc
     selected_display = resolve_display_profile(display)
     target = ROOT / ".local" / "sketch" / "flappy"
     target.mkdir(parents=True, exist_ok=True)
@@ -96,8 +109,11 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
     (target / "generated_zero_rom.h").write_text(zero_header.replace("namespace FlappyRom", "namespace TetrisZeroRom"), encoding="utf-8")
     geometry_header = (geometry / "generated_rom.h").read_text(encoding="utf-8") if geometry else rom_header(None, "Geometry Dash")
     (target / "generated_geometry_rom.h").write_text(geometry_header.replace("namespace FlappyRom", "namespace GeometryRom"), encoding="utf-8")
+    if jetpack_header is not None:
+        (target / "jetpack_imported.h").write_text(jetpack_header, encoding="utf-8")
     (target / "build_display.h").write_text(
-        "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n",
+        "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n" +
+        ("#define M5FLAP_JETPACK_IMPORTED 1\n" if jetpack_header is not None else ""),
         encoding="utf-8")
     now = datetime.now()
     clock = ["// Generated from the build host's local clock.", "#pragma once", "namespace FlappyBuild {"]
@@ -116,6 +132,9 @@ def main():
     parser.add_argument("--tetris-dir", type=Path, help="Private patched Tetris import folder (default: .local/tetris-rom when present)")
     parser.add_argument("--zero-dir", type=Path, help="Private Tetris Zero import folder (default: .local/tetris-zero-rom when present)")
     parser.add_argument("--geometry-dir", type=Path, help="Private Geometry Dash import folder (default: .local/geometry-rom when present)")
+    jetpack_group = parser.add_mutually_exclusive_group()
+    jetpack_group.add_argument("--jetpack-dir", type=Path, help="Private Jetpack import folder (default: .local/jetpack/imported when present)")
+    jetpack_group.add_argument("--no-jetpack-import", action="store_true", help="Use project-created Jetpack coin formations and artwork")
     parser.add_argument("--display", choices=tuple(DISPLAY_PROFILES),
                         help="LCD profile, saved privately for later builds (default: saved profile or auto)")
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
@@ -124,7 +143,8 @@ def main():
                             args.rom_dir.resolve() if args.rom_dir else None, args.display,
                             args.tetris_dir.resolve() if args.tetris_dir else None,
                             args.zero_dir.resolve() if args.zero_dir else None,
-                            args.geometry_dir.resolve() if args.geometry_dir else None)
+                            args.geometry_dir.resolve() if args.geometry_dir else None,
+                            False if args.no_jetpack_import else args.jetpack_dir.resolve() if args.jetpack_dir else None)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return

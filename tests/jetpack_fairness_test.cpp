@@ -11,10 +11,13 @@ struct JetpackTestAccess {
   static JetpackGame::Zap sample(JetpackGame& game, int& spacing) {
     for (auto& zap : game.zaps_) zap = JetpackGame::Zap{};
     for (auto& missile : game.missiles_) missile = JetpackGame::Missile{};
-    game.distanceToHazard_ = 0;
     game.distanceToCoins_ = game.distanceToVehicle_ = 100000000;
-    game.missileGap_ = false;
-    game.spawnObjects(0);
+    for (unsigned attempt = 0; attempt < 64 && !game.zaps_[0].active; ++attempt) {
+      for (auto& rotator : game.rotators_) rotator = JetpackGame::Rotator{};
+      game.distanceToHazard_ = 0;
+      game.missileGap_ = false;
+      game.spawnObjects(0);
+    }
     spacing = game.distanceToHazard_ / JetpackGame::Unit;
     assert(game.zaps_[0].active);
     return game.zaps_[0];
@@ -25,6 +28,7 @@ struct JetpackTestAccess {
     game.world_ = uint32_t(uint64_t(meters) * JetpackGame::Unit * 69 / 10);
     game.phase_ = JetpackGame::Phase::Running;
     game.distanceToHazard_ = game.distanceToCoins_ = game.distanceToVehicle_ = 100000000;
+    game.distanceToBonus_ = game.distanceToToken_ = game.distanceToScientist_ = game.distanceToLaser_ = 100000000;
     for (unsigned i = 0; i < zaps.size(); ++i) game.zaps_[i] = zaps[i];
   }
   static void stage(JetpackGame& game, unsigned meters) {
@@ -39,7 +43,10 @@ struct JetpackTestAccess {
     if (a.velocity_ < 0) return a.y_ < b.y_ || (a.y_ == b.y_ && a.velocity_ < b.velocity_);
     return a.y_ > b.y_ || (a.y_ == b.y_ && a.velocity_ > b.velocity_);
   }
-  static bool unprotected(const JetpackGame& game) { return !game.immune_ && game.vehicle_ == JetpackGame::Vehicle::None; }
+  static bool unprotected(const JetpackGame& game) {
+    for (uint16_t ticks : game.powerTicks_) if (ticks) return false;
+    return !game.immune_ && game.vehicle_ == JetpackGame::Vehicle::None;
+  }
   static bool near(int px, int py, int x, int y, int dx, int dy, int radius) {
     return JetpackGame::nearSegment(px, py, x, y, dx, dy, radius);
   }

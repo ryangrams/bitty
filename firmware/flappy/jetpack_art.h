@@ -1,6 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#ifdef M5FLAP_JETPACK_IMPORTED
+#include "jetpack_imported.h"
+#endif
 
 namespace flappy { namespace JetpackArt {
 
@@ -14,7 +17,8 @@ enum Ink : uint8_t {
   MetalShade, Metal, MetalLight, BrassShade, Brass, BrassLight,
   FireShade, Fire, FireLight, ArmorShade, Armor, ArmorLight,
   GravityShade, Gravity, GravityLight, WallShade, Wall, WallLight,
-  PanelShade, Panel, PanelLight, LampShade, Lamp, LampLight, Screen, InkCount
+  PanelShade, Panel, PanelLight, LampShade, Lamp, LampLight, Screen,
+  RedShade, Red, RedLight, BlueShade, Blue, BlueLight, Fur, FurLight, InkCount
 };
 
 inline uint16_t color(Ink ink) {
@@ -30,7 +34,10 @@ inline uint16_t color(Ink ink) {
     rgb(62, 48, 105), rgb(128, 96, 185), rgb(211, 180, 239),
     rgb(16, 29, 43), rgb(23, 41, 57), rgb(30, 50, 64),
     rgb(20, 35, 49), rgb(35, 55, 69), rgb(49, 71, 82),
-    rgb(76, 86, 84), rgb(121, 133, 118), rgb(183, 187, 146), rgb(57, 108, 106)
+    rgb(76, 86, 84), rgb(121, 133, 118), rgb(183, 187, 146), rgb(57, 108, 106),
+    rgb(113, 39, 52), rgb(195, 58, 65), rgb(249, 119, 97),
+    rgb(29, 63, 120), rgb(48, 116, 193), rgb(135, 207, 238),
+    rgb(205, 174, 97), rgb(252, 236, 178)
   };
   return colors[ink < InkCount ? ink : Outline];
 }
@@ -52,6 +59,20 @@ template<class Canvas> class RunnerBrush {
 template<class Canvas>
 void drawRunner(Canvas& canvas, int x, int y, uint32_t frame, bool thrust,
                 bool onFloor, bool crash, uint8_t suit, bool gravityUp) {
+#ifdef M5FLAP_JETPACK_IMPORTED
+  if (JetpackImported::HasRunner && !crash && suit <= 2 && JetpackImported::FrameCount >= 6) {
+    const unsigned pose = onFloor ? unsigned(frame / 6u) % 4u : 4u + unsigned(frame / 7u) % 2u;
+    if (pose < JetpackImported::FrameCount) {
+      for (unsigned row = 0; row < 15; ++row)
+        for (unsigned col = 0; col < 20; ++col) {
+          const uint16_t pixel = JetpackImported::RunnerPixels[pose][row * 20 + col];
+          if (pixel != 0xf81f) canvas.pixel(x - 11 + int(col),
+              y - 7 + (suit == 2 && gravityUp ? 14 - int(row) : int(row)), pixel);
+        }
+      return;
+    }
+  }
+#endif
   RunnerBrush<Canvas> p(canvas, x, y, suit == 2 && gravityUp && !crash);
   const Ink clothDark = suit == 1 ? ArmorShade : suit == 2 ? GravityShade : ShirtShade;
   const Ink cloth = suit == 1 ? Armor : suit == 2 ? Gravity : Shirt;
@@ -229,6 +250,337 @@ void drawZap(Canvas& c, int x0, int y0, int x1, int y1, uint32_t frame) {
     c.rect(x - 1, y - 1, 3, 3, color(FireLight));
     c.pixel(x - 2, y - 3, color(MetalLight));
     c.pixel(x + 2, y + 3, color(BrassShade));
+  }
+}
+
+template<class Canvas>
+void disc(Canvas& c, int x, int y, int radius, Ink ink) {
+  for (int dy = -radius; dy <= radius; ++dy)
+    for (int dx = -radius; dx <= radius; ++dx)
+      if (dx * dx + dy * dy <= radius * radius) c.pixel(x + dx, y + dy, color(ink));
+}
+
+template<class Canvas>
+void wheel(Canvas& c, int x, int y, uint32_t frame) {
+  disc(c, x, y, 3, Outline); disc(c, x, y, 2, MetalShade);
+  c.line(x - 1, y - 1, x + 1, y + 1, color(MetalLight));
+  c.pixel(x, y, color(Brass));
+  c.pixel(x + int(frame & 1u) * 2 - 1, y - 2, color(Metal));
+}
+
+template<class Canvas>
+void riderFace(Canvas& c, int x, int y, bool goggles = false) {
+  c.rect(x - 3, y - 3, 6, 2, color(HairShade));
+  c.rect(x - 2, y - 3, 4, 1, color(HairLight));
+  c.rect(x - 3, y - 1, 2, 3, color(Hair));
+  c.rect(x - 1, y - 1, 4, 4, color(SkinShade));
+  c.rect(x - 1, y - 1, 4, 2, color(Skin));
+  c.pixel(x, y - 1, color(SkinLight));
+  c.rect(x + 1, y, 2, 1, color(goggles ? BlueLight : Eye));
+  c.pixel(x + 2, y, color(Outline)); c.pixel(x + 3, y + 1, color(SkinLight));
+}
+
+template<class Canvas>
+void drawVehicle(Canvas& c, int x, int y, uint32_t frame, uint8_t vehicle,
+                 bool activeInput, bool onFloor) {
+  const int stride = int(frame / 5u & 1u);
+  if (vehicle <= 2) {
+    drawRunner(c, x, y, frame, activeInput, onFloor, false, vehicle, false);
+    return;
+  }
+  if (vehicle == 3) {
+    // Low chrome chassis, round tires and forward handlebars distinguish the bike.
+    wheel(c, x - 10, y + 4, frame); wheel(c, x + 10, y + 4, frame);
+    c.line(x - 10, y + 3, x - 4, y - 2, color(Metal));
+    c.line(x - 4, y - 2, x + 4, y + 3, color(MetalLight));
+    c.line(x + 4, y + 3, x + 10, y + 3, color(Metal));
+    c.line(x + 10, y + 3, x + 8, y - 4, color(MetalLight));
+    c.rect(x - 11, y - 3, 13, 4, color(Outline));
+    c.rect(x - 10, y - 3, 11, 2, color(Red));
+    c.rect(x - 9, y - 3, 8, 1, color(RedLight));
+    c.rect(x - 4, y, 7, 3, color(MetalShade));
+    c.line(x - 3, y + 1, x + 1, y + 1, color(MetalLight));
+    c.rect(x - 12, y - 5, 7, 2, color(TrousersShade));
+    c.line(x + 7, y - 4, x + 12, y - 4, color(MetalLight));
+    c.rect(x + 11, y - 3, 3, 2, color(BrassLight));
+    c.rect(x - 4, y - 6, 5, 4, color(Shirt));
+    c.pixel(x - 3, y - 6, color(ShirtLight));
+    c.line(x, y - 4, x + 7, y - 4, color(Skin));
+    riderFace(c, x - 1, y - 9, true);
+    c.rect(x - 3, y - 1, 4, 3, color(Trousers));
+    c.rect(x - 1, y + 1, 4, 1, color(Boot));
+    if (activeInput && !onFloor) {
+      c.line(x - 13, y + 1, x - 17, y + 2, color(Fire));
+      c.pixel(x - 18 + stride, y + 3, color(BrassLight));
+    }
+  } else if (vehicle == 4) {
+    // The stomper has independent piston legs and heavy asymmetric fists.
+    const int left = onFloor ? stride : 0, right = onFloor ? 1 - stride : 1;
+    c.rect(x - 9, y, 5, 5 + left, color(Outline));
+    c.rect(x - 8, y, 3, 4 + left, color(Metal));
+    c.rect(x - 7, y + 1, 1, 3, color(MetalLight));
+    c.rect(x + 4, y, 5, 5 + right, color(Outline));
+    c.rect(x + 5, y, 3, 4 + right, color(MetalShade));
+    c.rect(x - 12, y + 5 + left, 9, 2, color(MetalShade));
+    c.rect(x + 3, y + 5 + right, 9, 2, color(MetalShade));
+    c.rect(x - 11, y + 5 + left, 7, 1, color(MetalLight));
+    c.rect(x + 4, y + 5 + right, 7, 1, color(Metal));
+    c.rect(x - 10, y - 10, 20, 12, color(Outline));
+    c.rect(x - 9, y - 9, 18, 10, color(BrassShade));
+    c.rect(x - 8, y - 9, 16, 3, color(Brass));
+    c.rect(x - 7, y - 9, 13, 1, color(BrassLight));
+    c.rect(x - 5, y - 8, 10, 7, color(MetalShade));
+    c.rect(x - 4, y - 7, 8, 5, color(Screen));
+    riderFace(c, x, y - 7, true);
+    c.rect(x - 8, y - 3, 3, 3, color(Metal));
+    c.rect(x + 5, y - 3, 3, 3, color(Metal));
+    c.rect(x - 15, y - 6, 5, 5, color(Outline));
+    c.rect(x - 14, y - 5, 4, 3, color(Brass));
+    c.rect(x - 17, y - 1 + stride, 7, 5, color(MetalShade));
+    c.rect(x - 16, y - 1 + stride, 5, 2, color(MetalLight));
+    c.rect(x + 10, y - 7, 5, 6, color(Outline));
+    c.rect(x + 10, y - 6, 4, 4, color(Brass));
+    c.rect(x + 11, y - 1 - stride, 7, 5, color(MetalShade));
+    c.rect(x + 12, y - 1 - stride, 5, 2, color(Metal));
+    if (activeInput) c.pixel(x + 16, y - 1 - stride, color(BrassLight));
+  } else if (vehicle == 5) {
+    // Broad feather clusters and an oversized beak make the flapper read as a bird.
+    disc(c, x, y + 1, 6, Outline); disc(c, x, y, 5, Brass);
+    c.rect(x - 3, y - 3, 6, 7, color(FurLight));
+    c.rect(x - 2, y + 4, 4, 1, color(Fur));
+    c.line(x - 6, y - 1, x - 13, y - 4, color(BrassShade));
+    c.line(x - 6, y, x - 14, y - 1, color(Brass));
+    c.line(x - 7, y + 1, x - 12, y + 3, color(BrassLight));
+    disc(c, x + 7, y - 4, 4, Outline); disc(c, x + 7, y - 4, 3, Brass);
+    c.rect(x + 7, y - 6, 2, 3, color(Eye)); c.pixel(x + 8, y - 5, color(Outline));
+    c.rect(x + 10, y - 3, 6, 2, color(Fire));
+    c.rect(x + 10, y - 1, 4, 1, color(FireShade));
+    const int wing = activeInput ? (stride ? -4 : -8) : 1;
+    c.line(x - 3, y - 1, x - 10, y + wing, color(BrassShade));
+    c.line(x - 2, y - 1, x - 9, y + wing, color(BrassLight));
+    c.line(x - 2, y, x - 7, y + wing + 2, color(FurLight));
+    c.line(x - 2, y + 5, x - 4 - stride, y + 7, color(Fire));
+    c.line(x + 2, y + 5, x + 5 - stride, y + 7, color(Fire));
+    riderFace(c, x - 1, y - 9);
+    c.rect(x - 4, y - 6, 5, 2, color(Shirt));
+  } else if (vehicle == 6) {
+    // A glass capsule and four energized brackets surround the seated pilot.
+    disc(c, x, y - 1, 8, Outline); disc(c, x, y - 1, 7, GravityShade);
+    disc(c, x, y - 2, 5, BlueShade);
+    c.line(x - 3, y - 6, x + 2, y - 6, color(BlueLight));
+    c.rect(x - 3, y - 2, 6, 4, color(Gravity));
+    riderFace(c, x, y - 4, true);
+    c.rect(x - 6, y + 3, 12, 3, color(MetalShade));
+    c.rect(x - 5, y + 3, 10, 1, color(MetalLight));
+    for (int side = -1; side <= 1; side += 2) {
+      c.rect(x + side * 9 - 1, y - 6, 3, 11, color(Gravity));
+      c.rect(x + side * 9, y - 5, 1, 9, color(GravityLight));
+      c.pixel(x + side * 12, y - 3 + stride * 3, color(BlueLight));
+      if (activeInput) {
+        c.line(x + side * 12, y - 8, x + side * 16, y - 8, color(GravityLight));
+        c.line(x + side * 12, y + 6, x + side * 15, y + 6, color(Blue));
+      }
+    }
+  } else if (vehicle == 7) {
+    // Long snout, curled tail and contrasting membrane identify the dragon.
+    c.line(x - 5, y + 1, x - 14, y + 4, color(ArmorShade));
+    c.line(x - 14, y + 4, x - 17, y, color(Armor));
+    c.pixel(x - 18, y - 2, color(ArmorLight));
+    disc(c, x - 1, y, 5, Outline); disc(c, x - 1, y - 1, 4, Armor);
+    c.rect(x - 3, y + 1, 6, 3, color(ArmorLight));
+    c.rect(x + 2, y - 4, 4, 6, color(ArmorShade));
+    c.rect(x + 5, y - 7, 7, 6, color(Outline));
+    c.rect(x + 6, y - 6, 6, 5, color(Armor));
+    c.rect(x + 10, y - 4, 7, 3, color(Armor));
+    c.line(x + 10, y - 1, x + 16, y - 1, color(ArmorShade));
+    c.rect(x + 8, y - 6, 2, 2, color(Eye)); c.pixel(x + 9, y - 5, color(Outline));
+    c.pixel(x + 15, y - 3, color(Outline));
+    c.line(x + 6, y - 7, x + 5, y - 10, color(FurLight));
+    c.line(x + 10, y - 7, x + 11, y - 9, color(Fur));
+    const int wingY = activeInput ? y - 2 : y - 11 + stride;
+    c.line(x - 1, y - 2, x - 10, wingY, color(GravityShade));
+    c.line(x - 2, y - 1, x - 12, wingY + 3, color(Gravity));
+    c.line(x - 3, y, x - 7, wingY + 4, color(GravityLight));
+    c.line(x - 10, wingY, x - 12, wingY + 3, color(ArmorLight));
+    c.line(x - 2, y + 4, x - 3 - stride, y + 7, color(ArmorShade));
+    c.line(x + 2, y + 3, x + 4 + stride, y + 6, color(Armor));
+    riderFace(c, x - 2, y - 7);
+    c.rect(x - 5, y - 4, 5, 2, color(Shirt));
+    if (activeInput && frame & 4u) c.pixel(x + 17, y, color(Fire));
+  } else if (vehicle == 8) {
+    const int body = 105;
+    // This floor robot keeps its silhouette planted while the blocking fist moves.
+    c.rect(x - 10, body + 6, 7, 9, color(Outline));
+    c.rect(x + 3, body + 6, 7, 9, color(Outline));
+    c.rect(x - 9, body + 7, 5, 6, color(Blue));
+    c.rect(x + 4, body + 7, 5, 6, color(BlueShade));
+    c.rect(x - 13, body + 13, 10, 4, color(MetalShade));
+    c.rect(x + 3, body + 13, 11, 4, color(MetalShade));
+    c.rect(x - 12, body + 13, 8, 1, color(MetalLight));
+    c.rect(x + 4, body + 13, 9, 1, color(Metal));
+    c.rect(x - 12, body - 12, 24, 20, color(Outline));
+    c.rect(x - 11, body - 11, 22, 17, color(BlueShade));
+    c.rect(x - 10, body - 11, 20, 5, color(Blue));
+    c.rect(x - 9, body - 11, 16, 1, color(BlueLight));
+    c.rect(x - 6, body - 8, 12, 10, color(MetalShade));
+    c.rect(x - 5, body - 7, 10, 8, color(Screen));
+    riderFace(c, x, body - 5, true);
+    c.rect(x - 5, body - 2, 9, 4, color(Shirt));
+    c.rect(x - 9, body + 3, 18, 2, color(Brass));
+    c.rect(x - 16, body - 7, 5, 13, color(MetalShade));
+    c.rect(x - 16, body - 7, 4, 3, color(MetalLight));
+    c.rect(x - 17, body + 1, 7, 6, color(BrassShade));
+    const int elbow = (102 + y) / 2;
+    for (int t = -2; t <= 2; ++t) {
+      c.line(x + 9 + t, 102, x + 14 + t, elbow, color(t == -2 ? BlueLight : MetalShade));
+      c.line(x + 14 + t, elbow, x + 16 + t, y, color(t == -2 ? MetalLight : Metal));
+    }
+    disc(c, x + 14, elbow, 3, BrassShade); disc(c, x + 14, elbow, 1, BrassLight);
+    c.rect(x + 12, y - 4, 10, 9, color(Outline));
+    c.rect(x + 13, y - 3, 8, 7, color(Brass));
+    c.rect(x + 13, y - 3, 7, 2, color(BrassLight));
+    c.rect(x + 14, y + 2, 6, 2, color(BrassShade));
+    for (int knuckle = 0; knuckle < 3; ++knuckle) c.pixel(x + 15 + knuckle * 2, y - 1, color(activeInput ? Eye : BrassShade));
+  }
+}
+
+template<class Canvas>
+void drawScientist(Canvas& c, int x, int y, uint32_t frame, uint8_t state) {
+  const int stride = int(frame / (state ? 4u : 8u) & 3u);
+  if (state == 2) {
+    const int flip = stride & 1;
+    c.line(x - 5, y + 2, x - 7 + stride, y - 2, color(Trousers));
+    c.rect(x - 4, y - 1, 7, 5, color(MetalShade));
+    c.rect(x - 4, y - 1, 6, 3, color(Eye));
+    c.rect(x - 3, y - 1, 4, 1, color(MetalLight));
+    riderFace(c, x + 4, y - 2 - flip, true);
+    c.line(x - 1, y + 3, x + 1 + stride, y + 6, color(Skin));
+    c.pixel(x - 7, y - 3, color(Outline));
+    return;
+  }
+  const int bob = stride & 1;
+  c.rect(x - 3, y - 7 + bob, 5, 4, color(LampShade));
+  c.rect(x - 2, y - 6 + bob, 5, 3, color(Skin));
+  c.rect(x - 2, y - 7 + bob, 4, 1, color(MetalLight));
+  c.rect(x, y - 5 + bob, 3, 1, color(BlueLight));
+  c.pixel(x + 2, y - 5 + bob, color(Outline));
+  c.rect(x - 3, y - 3 + bob, 6, 7 - bob, color(MetalShade));
+  c.rect(x - 3, y - 3 + bob, 5, 6 - bob, color(Eye));
+  c.rect(x - 2, y - 2 + bob, 1, 5 - bob, color(MetalLight));
+  c.rect(x, y - 2 + bob, 1, 3, color(BlueShade));
+  if (state == 1) {
+    c.line(x - 3, y - 2, x - 7, y - 5 + bob, color(Eye));
+    c.pixel(x - 8, y - 6 + bob, color(SkinLight));
+    c.line(x + 2, y - 2, x + 6, y - 6 + bob, color(Eye));
+    c.pixel(x + 7, y - 7 + bob, color(Skin));
+  } else {
+    c.rect(x + 2, y - 1 + bob, 3, 2, color(MetalLight));
+    c.pixel(x + 5, y - 1 + bob, color(Skin));
+  }
+  const int spread = stride == 0 ? 3 : stride == 2 ? -3 : 0;
+  c.line(x - 2, y + 3, x - 2 - spread, y + 6, color(Trousers));
+  c.line(x + 1, y + 3, x + 1 + spread, y + 6, color(TrousersShade));
+  c.rect(x - 3 - spread, y + 5, 3, 2, color(Outline));
+  c.rect(x + spread, y + 5, 3, 2, color(BootShade));
+}
+
+template<class Canvas>
+void drawCrash(Canvas& c, int x, int y, uint32_t frame, uint8_t roll, bool sliding) {
+  if (sliding) {
+    drawRunner(c, x, y, frame, false, false, true, 0, false);
+    c.pixel(x - 11, y + 6, color(Metal));
+    c.pixel(x - 8 - int(frame & 1u), y + 7, color(Brass));
+    return;
+  }
+  const unsigned pose = roll & 3u;
+  const int headX[] = {4, -3, -5, 3}, headY[] = {-3, -3, 2, 3};
+  c.rect(x - 4, y - 3, 8, 7, color(Outline));
+  c.rect(x - 3, y - 2, 6, 5, color(ShirtShade));
+  c.rect(x - 2, y - 2, 4, 3, color(Shirt));
+  c.pixel(x - 1, y - 2, color(ShirtLight));
+  riderFace(c, x + headX[pose], y + headY[pose]);
+  const int ax[] = {-7, 3, 7, -2}, ay[] = {-4, -6, 3, 6};
+  c.line(x, y, x + ax[pose], y + ay[pose], color(SkinShade));
+  c.pixel(x + ax[pose], y + ay[pose], color(SkinLight));
+  const int footX[] = {-6, 5, 5, -6}, footY[] = {5, 4, -5, -4};
+  c.line(x - 1, y + 2, x + footX[pose], y + footY[pose], color(Trousers));
+  c.rect(x + footX[pose] - 1, y + footY[pose], 3, 2, color(Boot));
+  c.line(x + 2, y + 1, x - footX[pose], y + footY[pose] - 1, color(TrousersShade));
+  c.pixel(x - footX[pose], y + footY[pose], color(Outline));
+  c.rect(x - 7, y - 1, 3, 4, color(MetalShade));
+  c.pixel(x - 7, y - 1, color(BrassLight));
+}
+
+template<class Canvas>
+void drawPickupIcon(Canvas& c, int x, int y, uint32_t frame, uint8_t kind) {
+  const Ink rim = kind == 0 ? Brass : kind == 1 ? Blue : kind == 2 ? Red : kind == 4 ? Gravity : Armor;
+  c.rect(x - 6, y - 8, 13, 17, color(Outline));
+  c.rect(x - 8, y - 6, 17, 13, color(Outline));
+  c.rect(x - 6, y - 7, 13, 15, color(MetalShade));
+  c.rect(x - 7, y - 5, 15, 11, color(MetalShade));
+  c.rect(x - 5, y - 6, 11, 13, color(PanelShade));
+  c.line(x - 5, y - 7, x + 5, y - 7, color(rim));
+  c.pixel(x - 7, y - 5, color(MetalLight));
+  c.pixel(x + 6, y + 6, color(frame & 8u ? Eye : rim));
+  if (kind == 0) {
+    c.rect(x - 4, y - 4, 9, 8, color(BrassShade));
+    c.rect(x - 3, y - 4, 7, 6, color(Brass));
+    c.rect(x - 2, y - 4, 2, 5, color(BrassLight));
+    c.rect(x - 1, y - 2, 2, 4, color(Outline)); c.pixel(x, y + 3, color(Eye));
+  } else if (kind == 1) {
+    c.rect(x - 4, y - 4, 9, 6, color(BlueShade));
+    c.rect(x - 3, y - 4, 7, 6, color(Blue));
+    c.line(x - 3, y + 1, x, y + 5, color(Blue));
+    c.line(x + 3, y + 1, x, y + 5, color(Blue));
+    c.rect(x - 2, y - 3, 2, 5, color(BlueLight));
+    c.pixel(x - 1, y + 3, color(Eye));
+  } else if (kind == 2) {
+    c.rect(x - 4, y - 4, 3, 8, color(Red)); c.rect(x + 2, y - 4, 3, 8, color(RedShade));
+    c.rect(x - 3, y + 2, 7, 3, color(Red));
+    c.rect(x - 4, y - 4, 3, 3, color(Eye)); c.rect(x + 2, y - 4, 3, 3, color(MetalLight));
+    c.pixel(x - 2, y + 3, color(RedLight));
+  } else if (kind == 3) {
+    drawCoin(c, x - 2, y + 1, 0); drawCoin(c, x + 2, y - 2, 6);
+    c.line(x - 4, y - 5, x + 4, y + 4, color(Eye));
+    c.line(x + 4, y - 5, x - 4, y + 4, color(Eye));
+  } else if (kind == 4) {
+    disc(c, x, y, 5, GravityShade); disc(c, x, y, 4, Gravity);
+    c.rect(x - 2, y - 2, 5, 5, color(GravityLight));
+    c.pixel(x, y - 3, color(Eye)); c.pixel(x, y + 3, color(GravityShade));
+    c.rect(x - 1, y - 1, 3, 3, color(GravityShade));
+  } else if (kind == 5) {
+    for (int i = -1; i <= 1; ++i) {
+      c.line(x - 4 + i * 2, y + 3, x + 2 + i * 2, y - 3, color(Brass));
+      c.pixel(x + 2 + i * 2, y - 3, color(BrassLight));
+    }
+    c.line(x - 4, y + 5, x + 4, y + 5, color(ArmorLight));
+  } else if (kind == 6) {
+    c.line(x - 4, y - 4, x, y, color(Fire)); c.line(x, y, x - 4, y + 4, color(Fire));
+    c.line(x, y - 4, x + 4, y, color(FireLight)); c.line(x + 4, y, x, y + 4, color(FireLight));
+    c.pixel(x - 5, y, color(Red));
+  } else {
+    disc(c, x, y, 5, Blue); disc(c, x, y, 4, Eye);
+    c.line(x, y, x, y - 3, color(BlueShade)); c.line(x, y, x + 3, y, color(Red));
+    c.rect(x - 1, y - 6, 3, 2, color(MetalLight));
+    c.pixel(x + 4, y - 4, color(BrassLight));
+  }
+}
+
+template<class Canvas>
+void drawExplosion(Canvas& c, int x, int y, uint32_t age, uint8_t kind = 0) {
+  if (age >= 32) return;
+  const int radius = 2 + int(age < 12 ? age / 2 : (31 - age) / 3);
+  const Ink outer = kind == 1 ? Blue : kind == 2 ? MetalShade : FireShade;
+  disc(c, x, y, radius, outer);
+  if (radius > 2) disc(c, x - 1, y - 1, radius - 2, kind == 1 ? BlueLight : Fire);
+  if (age < 18) disc(c, x, y - 1, radius > 3 ? radius - 3 : 1, kind == 1 ? Eye : FireLight);
+  const int8_t dx[] = {-8, -5, 2, 8, 6, -1, -7, 5};
+  const int8_t dy[] = {-3, -8, -9, -4, 5, 8, 6, 9};
+  for (unsigned i = 0; i < 8; ++i) {
+    const int px = x + dx[i] * int(age + 4) / 16;
+    const int py = y + dy[i] * int(age + 4) / 16 + int(age * age / 200);
+    c.pixel(px, py, color(kind == 2 ? (i & 1u ? Metal : Brass) : (i & 1u ? Fire : BrassLight)));
+    if (age < 12 && !(i & 1u)) c.pixel(px + 1, py, color(MetalLight));
   }
 }
 

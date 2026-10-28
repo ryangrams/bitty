@@ -423,7 +423,7 @@ class RomImportTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             build.main()
         prepare.assert_called_once_with()
-        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None)
+        stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None, None)
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index('--library') + 1], str(library))
         self.assertEqual(command[-1], str(sketch))

@@ -27,6 +27,10 @@ import_receipt.json
 *.wav
 *.mp3
 *.apk
+*.apkm
+*.apks
+*.tex
+jetpack_imported.h
 *.nes
 *.NES
 *.fds

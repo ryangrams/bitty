@@ -579,15 +579,15 @@ static void jetpackSettingsAndRestart() {
   assert(d.app.setCurrentGame(GameTitle::JetpackJoyride));
   const uint32_t request = d.app.gameRequest, rounds = d.app.roundsStarted;
   d.app.openMenu(MenuPage::GameSettings);
-  const char* labels[] = {"Restart game", "Difficulty", "Back"};
-  assert(d.app.menuItemCount() == 3 && std::string(d.app.menuTitle()) == "Game Settings");
-  for (uint8_t index = 0; index < 3; ++index) {
+  const char* labels[] = {"Restart game", "Difficulty", "Starting ride", "Gadget", "Headstart", "Back"};
+  assert(d.app.menuItemCount() == 6 && std::string(d.app.menuTitle()) == "Game Settings");
+  for (uint8_t index = 0; index < 6; ++index) {
     assert(std::string(d.app.menuLabel(index)) == labels[index]);
     assert(MenuFont::textWidth(d.app.menuLabel(index)) <= 128);
     assert(MenuFont::textWidth(d.app.menuValue(index)) <= 128);
   }
-  assert(std::string(d.app.menuLabel(3)).empty());
-  assert(std::string(d.app.menuValue(0)).empty() && std::string(d.app.menuValue(2)).empty());
+  assert(std::string(d.app.menuLabel(6)).empty());
+  assert(std::string(d.app.menuValue(0)).empty() && std::string(d.app.menuValue(5)).empty());
   assert(std::string(d.app.menuValue(1)) == "Normal");
   const uint8_t choices[] = {2, 0, 1};
   const char* values[] = {"Hard", "Easy", "Normal"};
@@ -600,8 +600,27 @@ static void jetpackSettingsAndRestart() {
     assert(d.app.settings.arcadeDifficulty == 1 && d.app.settings.arcadeSensitivity == 1 && !d.app.settings.arcadeAutoFire);
     assert(d.app.arcadeCalibrateRequest == 0 && d.app.gameRestartRequest == 0);
   }
+  const char* rides[] = {"On foot", "Gravity suit", "Hog", "Stomper", "Bird", "Teleporter", "Dragon", "S.A.M.", "Random"};
+  for (uint8_t ride = 1; ride <= 9; ++ride) {
+    d.app.settingsDirty = false;
+    d.app.menu.selection = 2; d.tick(true);
+    assert(d.app.settings.jetpackRide == ride % 9 && d.app.settingsDirty);
+    assert(std::string(d.app.menuValue(2)) == rides[ride % 9]);
+    assert(MenuFont::textWidth(d.app.menuValue(2)) <= 128);
+    assert(d.app.gameRestartRequest == 0);
+  }
+  const char* gadgets[] = {"Off", "Coin magnet", "Double coins"};
+  for (uint8_t gadget = 1; gadget <= 3; ++gadget) {
+    d.app.menu.selection = 3; d.tick(true);
+    assert(d.app.settings.jetpackGadget == gadget % 3);
+    assert(std::string(d.app.menuValue(3)) == gadgets[gadget % 3]);
+  }
+  d.app.menu.selection = 4; d.tick(true);
+  assert(d.app.settings.jetpackHeadstart && std::string(d.app.menuValue(4)) == "On");
+  d.tick(true);
+  assert(!d.app.settings.jetpackHeadstart && std::string(d.app.menuValue(4)) == "Off");
   d.app.settingsDirty = false;
-  d.app.menu.selection = 2; d.tick(true);
+  d.app.menu.selection = 5; d.tick(true);
   assert(d.app.menu.page == MenuPage::Home && !d.app.settingsDirty && d.app.gameRestartRequest == 0);
   d.app.openMenu(MenuPage::GameSettings); d.tick(true);
   assert(!d.app.menuOpen() && d.app.gameRestartRequest == 1 && d.app.currentGame == GameTitle::JetpackJoyride);
@@ -620,6 +639,9 @@ static void jetpackSettingsAndRestart() {
   assert(d.app.settings.jetpackDifficulty == 1 && !d.app.settingsDirty);
   d.app.setArcadeDifficulty(2);
   assert(d.app.settings.jetpackDifficulty == 1 && d.app.settings.arcadeDifficulty == 2);
+  d.app.setJetpackRide(8); d.app.setJetpackRide(UINT8_MAX);
+  d.app.setJetpackGadget(2); d.app.setJetpackGadget(UINT8_MAX);
+  assert(d.app.settings.jetpackRide == 0 && d.app.settings.jetpackGadget == 0);
 }
 
 static void controllerMenuRequestsAndStatus() {

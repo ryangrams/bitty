@@ -1,4 +1,5 @@
 #include "../firmware/flappy/jetpack_art.h"
+#include "../firmware/flappy/menu_font.h"
 
 #include <array>
 #include <assert.h>
@@ -111,7 +112,7 @@ static void labCoverageMotionAndPalette() {
     palette.insert(Art::color(Art::Ink(i)));
     assert(Art::color(Art::Ink(i)) != Empty);
   }
-  assert(palette.size() >= 36 && palette.size() <= 40);
+  assert(palette.size() >= 44 && palette.size() <= 48);
   std::set<uint64_t> views;
   for (uint32_t world : {0u, 256u, 123456u, UINT32_MAX}) {
     Canvas c;
@@ -168,6 +169,114 @@ static void foregroundShapesAndClipping() {
   zap.guards();
 }
 
+static void expandedVehicleSilhouettesAndAnimation() {
+  std::set<uint64_t> shapes;
+  for (uint8_t vehicle = 3; vehicle <= 7; ++vehicle) {
+    Canvas still, moving;
+    Art::drawVehicle(still, 100, 70, 0, vehicle, false, true);
+    Art::drawVehicle(moving, 100, 70, 5, vehicle, true, true);
+    shapes.insert(hash(still));
+    assert(hash(still) != hash(moving));
+    unsigned occupied = 0;
+    for (int y = 0; y < Canvas::Height; ++y)
+      for (int x = 0; x < Canvas::Width; ++x) if (moving.at(x, y) != Empty) {
+        assert(x >= 82 && x <= 118 && y >= 58 && y <= 77);
+        ++occupied;
+      }
+    assert(occupied >= 140 && occupied <= 600);
+    assert(contains(still, Art::Skin));
+    still.guards(); moving.guards();
+  }
+  assert(shapes.size() == 5);
+  std::set<uint64_t> samArms;
+  for (int height : {27, 70, 114}) {
+    Canvas c;
+    Art::drawVehicle(c, 100, height, 5, 8, true, true);
+    assert(c.at(90, 121) != Empty && c.at(105, 121) != Empty);
+    assert(c.at(116, height) != Empty);
+    for (int y = 0; y < Canvas::Height; ++y)
+      for (int x = 0; x < Canvas::Width; ++x)
+        if (c.at(x, y) != Empty) assert(x >= 82 && x <= 121 && y >= 23 && y <= 121);
+    samArms.insert(hash(c)); c.guards();
+  }
+  assert(samArms.size() == 3);
+  Canvas edges;
+  for (uint8_t vehicle = 3; vehicle <= 8; ++vehicle)
+    for (int x : {0, 239}) for (int y : {0, 134}) Art::drawVehicle(edges, x, y, UINT32_MAX, vehicle, true, true);
+  edges.guards();
+}
+
+static void scientistsCrashesPickupsAndEffects() {
+  std::set<uint64_t> states;
+  for (uint8_t state = 0; state < 3; ++state) {
+    std::set<uint64_t> poses;
+    for (unsigned frame : {0u, 8u, 12u}) {
+      Canvas c;
+      Art::drawScientist(c, 100, 70, frame, state);
+      poses.insert(hash(c));
+      for (int y = 0; y < Canvas::Height; ++y)
+        for (int x = 0; x < Canvas::Width; ++x)
+          if (c.at(x, y) != Empty) assert(x >= 92 && x <= 108 && y >= 63 && y <= 76);
+      assert(contains(c, Art::Skin)); c.guards();
+    }
+    assert(poses.size() >= 2);
+    states.insert(*poses.begin());
+  }
+  assert(states.size() == 3);
+  std::set<uint64_t> crashes;
+  for (uint8_t roll = 0; roll < 4; ++roll) {
+    Canvas c;
+    Art::drawCrash(c, 100, 70, 8, roll, false);
+    crashes.insert(hash(c));
+    for (int y = 0; y < Canvas::Height; ++y)
+      for (int x = 0; x < Canvas::Width; ++x)
+        if (c.at(x, y) != Empty) assert(x >= 89 && x <= 108 && y >= 63 && y <= 77);
+    c.guards();
+  }
+  Canvas slide;
+  Art::drawCrash(slide, 100, 70, 8, 0, true);
+  crashes.insert(hash(slide)); assert(crashes.size() == 5);
+  std::set<uint64_t> pickups;
+  for (uint8_t kind = 0; kind < 8; ++kind) {
+    Canvas c;
+    Art::drawPickupIcon(c, 100, 70, 0, kind);
+    pickups.insert(hash(c));
+    for (int y = 0; y < Canvas::Height; ++y)
+      for (int x = 0; x < Canvas::Width; ++x)
+        if (c.at(x, y) != Empty) assert(x >= 92 && x <= 108 && y >= 62 && y <= 78);
+    c.guards();
+  }
+  assert(pickups.size() == 8);
+  for (uint8_t kind = 0; kind < 3; ++kind) {
+    std::set<uint64_t> phases;
+    for (unsigned age : {0u, 8u, 16u, 31u}) {
+      Canvas c;
+      Art::drawExplosion(c, 100, 70, age, kind);
+      phases.insert(hash(c));
+      for (int y = 0; y < Canvas::Height; ++y)
+        for (int x = 0; x < Canvas::Width; ++x)
+          if (c.at(x, y) != Empty) assert(x >= 81 && x <= 119 && y >= 50 && y <= 94);
+      c.guards();
+    }
+    assert(phases.size() == 4);
+    Canvas expired;
+    Art::drawExplosion(expired, 100, 70, 32, kind);
+    const Canvas blank; assert(hash(expired) == hash(blank));
+  }
+  Canvas edge;
+  for (int x : {0, 239}) for (int y : {0, 134}) {
+    for (uint8_t kind = 0; kind < 8; ++kind) Art::drawPickupIcon(edge, x, y, 8, kind);
+    for (uint8_t state = 0; state < 3; ++state) Art::drawScientist(edge, x, y, 12, state);
+    for (uint8_t roll = 0; roll < 4; ++roll) Art::drawCrash(edge, x, y, 8, roll, false);
+    Art::drawExplosion(edge, x, y, 31, 2);
+  }
+  edge.guards();
+}
+
+static void label(Canvas& c, const char* text, int x, int y) {
+  flappy::MenuFont::draw(c.data(), Canvas::Width, Canvas::Height, text, x, y, Art::color(Art::MetalLight));
+}
+
 static void writePpm(const Canvas& c, const std::string& path) {
   std::ofstream file(path.c_str(), std::ios::binary);
   assert(file);
@@ -183,6 +292,8 @@ int main(int argc, char** argv) {
   runnerPosesAndBounds();
   labCoverageMotionAndPalette();
   foregroundShapesAndClipping();
+  expandedVehicleSilhouettesAndAnimation();
+  scientistsCrashesPickupsAndEffects();
   if (argc > 1) {
     const std::string base = argv[1];
     Canvas scene;
@@ -200,6 +311,27 @@ int main(int argc, char** argv) {
       Art::drawRunner(poses, 216, 20 + int(suit * 44), 7, true, false, false, uint8_t(suit), suit == 2);
     }
     writePpm(poses, base + "-poses.ppm");
+    Canvas vehicles;
+    vehicles.rect(0, 0, 240, 135, Art::color(Art::WallShade));
+    const char* vehicleNames[] = {"RUNNER", "ARMOR", "GRAVITY", "HOG", "MECH", "BIRD", "TELEPORT", "DRAGON", "SAM"};
+    for (uint8_t vehicle = 0; vehicle <= 8; ++vehicle) {
+      const int x = 40 + (vehicle % 3) * 80, y = 20 + (vehicle / 3) * 45;
+      Art::drawVehicle(vehicles, x, y, 5, vehicle, true, vehicle < 6);
+      label(vehicles, vehicleNames[vehicle], x - 24, 33 + (vehicle / 3) * 45);
+    }
+    writePpm(vehicles, base + "-vehicles.ppm");
+    Canvas extras;
+    extras.rect(0, 0, 240, 135, Art::color(Art::WallShade));
+    const char* iconNames[] = {"VEHICLE", "SHIELD", "MAGNET", "X2 COINS", "TOKEN", "CASH DASH", "BOOST", "ROCKET"};
+    for (uint8_t icon = 0; icon < 8; ++icon) {
+      const int x = 30 + (icon % 4) * 60, y = 18 + (icon / 4) * 40;
+      Art::drawPickupIcon(extras, x, y, 8, icon);
+      label(extras, iconNames[icon], x - 24, y + 11);
+    }
+    for (uint8_t state = 0; state < 3; ++state) Art::drawScientist(extras, 15 + state * 25, 102, 12, state);
+    for (uint8_t roll = 0; roll < 4; ++roll) Art::drawCrash(extras, 105 + roll * 35, 102, 8, roll, false);
+    label(extras, "STAFF", 8, 117); label(extras, "TUMBLE / BOUNCE", 98, 117);
+    writePpm(extras, base + "-extras.ppm");
   }
   std::cout << "Jetpack artwork bounds, poses, palette, contrast and lab coverage passed\n";
 }
