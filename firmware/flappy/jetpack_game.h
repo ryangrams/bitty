@@ -7,6 +7,11 @@
 #include "jetpack_profile.h"
 #include "jetpack_rewards.h"
 #include "jetpack_missions.h"
+#include "jetpack_vehicle_physics.h"
+#include "jetpack_spin.h"
+#include "jetpack_time_step.h"
+#include "jetpack_rocket_time.h"
+#include "jetpack_rocket_course.h"
 #ifdef M5FLAP_JETPACK_IMPORTED
 #include "jetpack_imported.h"
 static_assert(flappy::JetpackImported::MaxPatternPoints <= 512, "Imported coin group exceeds collection mask");
@@ -19,7 +24,7 @@ class JetpackGame {
  public:
   enum { Width = 240, Height = 135, Unit = 256, FlightUnit = 65536, PlayerX = 43,
          Ceiling = 22, Floor = 114, ZapCount = 6, CoinCount = 160, ScientistCount = 8,
-         MissileCount = 2 };
+         MissileCount = 24, AttractedCoinCount = 48, RocketChoiceCount = 6 };
   enum class Phase : uint8_t { Ready, Running, Crashing, Over, Spin };
   enum class Vehicle : uint8_t { None, Armor, Gravity, Hog, Mech, Bird, Teleporter, Dragon, SAM, Random };
   struct ImportedGroup { int32_t x = 0; int16_t pattern = -1; uint8_t step = 0, top = 0, collected[64] = {}; };
@@ -34,12 +39,24 @@ class JetpackGame {
     int16_t y = 0, dx = 0, dy = 0;
     bool active = false;
   };
-  struct Coin { int32_t x = 0; int16_t y = 0; bool active = false; };
+  struct Coin { int32_t x = 0; int16_t y = 0; bool active = false; uint8_t value = 1; };
+  struct AttractedCoin {
+    int32_t x = 0;
+    int16_t y = 0, vx = 0, vy = 0;
+    uint8_t age = 0, value = 1;
+    uint16_t lockQ8 = 0;
+    bool falling = false, gem = false;
+  };
   struct Missile {
     int32_t x = 0;
     int16_t y = 0;
     uint8_t warning = 0;
     bool active = false;
+    uint32_t clockQ8 = 0;
+    int16_t yQ8 = 0, vxQ8 = 0, vyQ8 = 0;
+    uint16_t chaseQ8 = 0;
+    uint16_t launchTicks = 0, warningStart = 0, trailQ8 = 0;
+    uint8_t rocketFlags = 0;
   };
   struct Pickup {
     int32_t x = 0;
@@ -71,8 +88,13 @@ class JetpackGame {
     armed_ = false;
     thrust_ = false;
     pickup_ = Pickup{};
+    for (Pickup& choice : rocketChoices_) choice = Pickup{};
+    rocketTime_.cancel(); movementScale_ = FlightUnit; rocketNativeSpeed_ = 175 * FlightUnit;
+    rocketWaves_ = 0; rocketShots_ = rocketDrops_ = 0;
+    spinPresentation_.reset();
     for (Zap& zap : zaps_) zap = Zap{};
     for (Coin& coin : coinField_) coin = Coin{};
+    for (AttractedCoin& coin : attractedCoins_) coin = AttractedCoin{};
     for (Missile& missile : missiles_) missile = Missile{};
     cue_ = ArcadeCue::None;
     bonus_ = Bonus{}; token_ = Token{}; samToken_ = Token{}; laser_ = Laser{};
@@ -80,13 +102,15 @@ class JetpackGame {
     for (Rotator& rotator : rotators_) rotator = Rotator{};
     for (Scientist& scientist : scientists_) scientist = Scientist{};
     for (unsigned i = 0; i < unsigned(Power::Count); ++i) powerTicks_[i] = 0;
-    spinTokens_ = samLetters_ = spinTicks_ = reward_ = vehicleJumps_ = vehicleBoost_ = samHits_ = 0;
+    spinTokens_ = samLetters_ = spinTicks_ = reward_ = samHits_ = 0;
     scientistInteractions_ = 0; crashBounces_ = 0; deathSpeed_ = 0;
-    vehicleTicks_ = 0; teleportTarget_ = 70 * FlightUnit; teleportUp_ = true;
-    vehicleWasHeld_ = vehicleInputBlocked_ = false; blastUsed_ = revived_ = spinResult_ = false;
+    vehicleTicks_ = 0; vehiclePhysics_ = JetpackVehiclePhysics::State{};
+    vehicleInputBlocked_ = false; blastUsed_ = revived_ = spinResult_ = false;
     rewardCoins_ = 0; fxAge_ = 32;
     powerEndCash_ = powerEndBoost_ = 0;
     cashStart_ = cashNextCoin_ = 0; cashPayload_ = Bonus{}; boostExtraVelocity_ = 0;
+    cashShowerEmitted_ = 0; cashShowerRemaining_ = 0; cashShowerGemPercent_ = cashNextValue_ = 0;
+    cashShowerX_ = PlayerX * Unit; cashShowerY_ = 70 * Unit;
     coinPattern_ = -1; patternCursor_ = 0; patternX_ = 0;
     if (finalSpinInitialized_) finalSpin_.resetWeights();
     lastAward_ = JetpackRewards::Award{JetpackRewards::Kind::Coins, 0, 0};
@@ -131,10 +155,12 @@ class JetpackGame {
     if (immune_) --immune_;
     if (vehicleHint_) --vehicleHint_;
     updatePowers();
+    if (unsigned(vehicle_) >= unsigned(Vehicle::Gravity)) JetpackVehiclePhysics::advanceSpeed(vehiclePhysics_,uint8_t(vehicle_));
     thrust_ = input.action || input.pressed;
     moveFlight(thrust_, press);
 
-    const int32_t advance = speed();
+    const int32_t advance = JetpackTimeStep::scale(speed(),movementScale_);
+    frameAdvance_ = advance;
     if (vehicle_ == Vehicle::None && y_ == Floor * FlightUnit) footTravel_ += uint32_t(advance);
     if (vehicle_ == Vehicle::Hog) hogTravel_ += uint32_t(advance);
     if (world_ < 0x70000000u) world_ += uint32_t(advance);
@@ -150,7 +176,9 @@ class JetpackGame {
 
   void setNextLoadout(uint8_t ride, uint8_t gadget, bool headstart) {
     nextRide_ = ride <= unsigned(Vehicle::Random) ? ride : 0;
-    nextGadget_ = gadget <= 2 ? gadget : 0; nextHeadstart_ = headstart;
+    nextGadget_ = gadget <= 6 ? gadget : 0; nextHeadstart_ = headstart;
+    if (nextHeadstart_) { nextRide_ = 0; if (nextGadget_ >= 4) nextGadget_ = 0; }
+    else if (nextGadget_ >= 4) nextRide_ = 0;
   }
   void attachProfile(JetpackProfile* profile) { profile_ = profile; if (profile) pendingRewards_ = 0; }
   void setProfileEnabled(bool enabled) { profileEnabled_ = enabled; }
@@ -171,6 +199,23 @@ class JetpackGame {
   bool rankedRun() const { return rankedRun_; }
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   void setDiagnosticProtection(bool enabled) { diagnosticProtection_ = enabled; }
+  bool diagnosticPower(uint8_t id, uint8_t level = 0) {
+    if (phase_ != Phase::Running || !id || id >= uint8_t(Power::Count)) return false;
+    if (vehicle_ != Vehicle::None && (id == unsigned(Power::Boost) || id == unsigned(Power::CashDash) || id == unsigned(Power::RocketTime))) return false;
+    const int upgrade = id == unsigned(Power::Shield) ? JetpackProfile::Shield : id == unsigned(Power::Boost) ? JetpackProfile::Boost : id == unsigned(Power::CashDash) ? JetpackProfile::CashDash : id == unsigned(Power::RocketTime) ? JetpackProfile::RocketTime : -1;
+    if (upgrade >= 0) activeUpgrades_[upgrade] = level > JetpackProfile::maxLevel(uint8_t(upgrade)) ? JetpackProfile::maxLevel(uint8_t(upgrade)) : level;
+    activatePower(Power(id)); return true;
+  }
+  bool diagnosticCoinBurst() {
+    if (phase_ != Phase::Running) return false;
+    startCashShower(300,5,PlayerX * Unit,int16_t(coinTargetY() * Unit)); return true;
+  }
+  bool diagnosticSpin(uint16_t tokens) {
+    if (!tokens || (phase_ != Phase::Running && phase_ != Phase::Crashing)) return false;
+    spinPresentation_.reset();
+    phase_ = Phase::Spin; spinTokens_ = tokens; spinTicks_ = 0; spinResult_ = false; armed_ = false;
+    clearHazards(); return true;
+  }
 #endif
   void observeRun() { if (profile_) profile_->observeRunStats(runStats()); }
   const JetpackProgression& progression() const { return progression_; }
@@ -183,10 +228,17 @@ class JetpackGame {
     return stats;
   }
   const JetpackRewards::Award& lastAward() const { return lastAward_; }
+  const JetpackSpin& spinPresentation() const { return spinPresentation_; }
+  const JetpackRocketTime& rocketTime() const { return rocketTime_; }
+  uint32_t movementScale() const { return movementScale_; }
+  uint16_t rocketShotCount() const { return rocketShots_; }
+  uint16_t rocketDroppedShots() const { return rocketDrops_; }
+  uint8_t rocketWaveCount() const { return rocketWaves_; }
+  unsigned rocketChoiceCount() const { unsigned n = 0; for (const Pickup& p : rocketChoices_) n += p.active; return n; }
   bool lastSpinWon() const { return lastSpinWon_; }
   uint8_t lastSpinMatches() const { return lastSpinMatches_; }
   uint16_t cashInSpinTokens() {
-    if (phase_ != Phase::Spin || spinResult_) return 0;
+    if (phase_ != Phase::Spin || spinResult_ || spinPresentation_.running()) return 0;
     const uint16_t tokens = spinTokens_; spinTokens_ = 0;
     stats_.cashInTokens += tokens;
     addCoins(JetpackRewards::cashInValue(tokens));
@@ -196,11 +248,15 @@ class JetpackGame {
   uint16_t powerTicks(Power power) const { return unsigned(power) < unsigned(Power::Count) ? powerTicks_[unsigned(power)] : 0; }
   uint16_t spinTokens() const { return spinTokens_; }
   uint8_t shieldHits() const { return shieldHits_; }
+  unsigned attractedCoinCount() const {
+    unsigned count = 0; for (const AttractedCoin& coin : attractedCoins_) count += coin.age != 0; return count;
+  }
+  uint16_t cashShowerPending() const { return cashShowerRemaining_; }
   uint8_t samLetters() const { return samLetters_; }
   uint8_t vehicleHits() const { return samHits_; }
   uint16_t scientistInteractions() const { return scientistInteractions_; }
   uint8_t crashBounces() const { return crashBounces_; }
-  int teleportTargetY() const { return int(teleportTarget_ / FlightUnit); }
+  int teleportTargetY() const { return int(JetpackVehiclePhysics::markerY(vehiclePhysics_) / FlightUnit); }
   const Laser& laser() const { return laser_; }
   const Scientist& scientist(unsigned index) const { return scientists_[index < ScientistCount ? index : 0]; }
   void setNextDifficulty(uint8_t difficulty) { nextDifficulty_ = difficulty > 2 ? 2 : difficulty; }
@@ -215,7 +271,9 @@ class JetpackGame {
   int playerY() const { return int(y_ / FlightUnit); }
   int32_t speed() const {
     const int difficultyPercent = difficulty_ == 0 ? 85 : difficulty_ == 2 ? 115 : 100;
-    const int64_t native = int64_t(normalNativeVelocity()) * difficultyPercent / 100 + boostExtraVelocity_;
+    const int64_t native = unsigned(vehicle_) >= unsigned(Vehicle::Gravity) ?
+        JetpackVehiclePhysics::fittedSpeed(vehiclePhysics_,difficultyPercent) :
+        int64_t(normalNativeVelocity()) * difficultyPercent / 100 + boostExtraVelocity_;
     return divideNearest(native * 23 * Unit, int64_t(60) * 60 * FlightUnit);
   }
   const Zap& zap(unsigned index) const { return zaps_[index < ZapCount ? index : 0]; }
@@ -227,11 +285,25 @@ class JetpackGame {
     if (!pixels) return;
     Canvas c(pixels);
     drawLab(c);
+    if (phase_ == Phase::Running && magnetRadius()) JetpackArt::drawMagnetField(c, PlayerX, coinTargetY(), frame_, magnetRadius());
     for (const Scientist& scientist : scientists_) if (scientist.active)
       JetpackArt::drawScientist(c, int(scientist.x / Unit), int(scientist.y / Unit), frame_, scientist.state > 2 ? 1 : scientist.state);
     drawExtras(c);
-    for (const Coin& coin : coinField_) if (coin.active) drawCoin(c, int(coin.x / Unit), coin.y);
+    for (const Coin& coin : coinField_) if (coin.active) {
+      if (coin.value >= 5) JetpackArt::drawGem(c, int(coin.x / Unit), coin.y, frame_);
+      else drawCoin(c, int(coin.x / Unit), coin.y);
+    }
+    for (const AttractedCoin& coin : attractedCoins_) if (coin.age)
+      JetpackArt::drawAttractedCoin(c, int(coin.x / Unit), int(coin.y / Unit), frame_, coin.gem ? 5 : 1, coin.vx, coin.vy);
     if (pickup_.active) drawPickup(c);
+    for (const Pickup& choice : rocketChoices_) if (choice.active) {
+      JetpackArt::drawPickupIcon(c,int(choice.x / Unit),choice.y,frame_,0);
+      if (choice.x < Width * Unit) {
+        const char labels[] = {'G','H','M','B','T','D'};
+        const char label[] = {labels[unsigned(choice.kind) - 2],0};
+        c.text(label,int(choice.x / Unit) - 2,choice.y + 10,rgb(248,216,80));
+      }
+    }
     for (const Zap& zap : zaps_) if (zap.active) drawZap(c, zap);
     for (const Missile& missile : missiles_) if (missile.active) drawMissile(c, missile);
     drawPlayer(c);
@@ -251,9 +323,7 @@ class JetpackGame {
     if (phase_ == Phase::Ready) {
       panel(c, "JETPACK JOYRIDE", "HOLD TO FLY", "TAP TO START");
     } else if (phase_ == Phase::Spin) {
-      panel(c, "FINAL SPIN", spinResult_ ? (!lastSpinWon_ ? "NO MATCH" : reward_ == 0 ? "SECOND CHANCE!" : reward_ == 2 ? "MEGA BLAST!" : reward_ == 3 ? "500M HEADSTART!" : reward_ == 4 ? "DOUBLE COINS!" : reward_ == 5 ? "3 MORE TOKENS!" : "BONUS COINS!") : "ACTION: SPIN",
-          spinResult_ ? (lastSpinWon_ ? "NICE ONE!" : "TRY AGAIN") : "LEFT/DOWN: CASH");
-      c.number(spinResult_ ? rewardCoins_ : spinTokens_, 108, 95, rgb(248, 216, 80));
+      drawSpin(c);
     } else if (phase_ == Phase::Over) {
       panel(c, "RUN COMPLETE", "RELEASE, THEN TAP", "TO TRY AGAIN");
       c.text("METERS", 71, 96, rgb(248, 216, 80));
@@ -327,7 +397,8 @@ class JetpackGame {
     return 175 * FlightUnit + int32_t(int64_t(305) * FlightUnit * meters / 2250);
   }
   int32_t flightFactor() const {
-    return FlightUnit + (normalNativeVelocity() - 175 * FlightUnit) / 350;
+    const int32_t native = vehicle_ == Vehicle::SAM ? vehiclePhysics_.nativeSpeed : normalNativeVelocity();
+    return FlightUnit + (native - 175 * FlightUnit) / 350;
   }
   uint32_t random() {
     random_ ^= random_ << 13; random_ ^= random_ >> 17; random_ ^= random_ << 5;
@@ -355,18 +426,23 @@ class JetpackGame {
       coin.x -= advance;
       if (coin.x < -5 * Unit) coin.active = false;
     }
+    for (Pickup& choice : rocketChoices_) if (choice.active) {
+      choice.x -= advance; if (choice.x < -12 * Unit) choice.active = false;
+    }
     if (pickup_.active) {
       pickup_.x -= advance;
       if (pickup_.x < -12 * Unit) pickup_.active = false;
     }
     for (Missile& missile : missiles_) if (missile.active) {
+      if (missile.rocketFlags & 128) { updateRocketMissile(missile); continue; }
       if (missile.warning) {
-        if (powerTicks_[unsigned(Power::RocketTime)] && (frame_ & 1)) continue;
+        missile.clockQ8 += (movementScale_ + 128) / 256;
+        if (missile.clockQ8 < Unit) continue;
+        missile.clockQ8 -= Unit;
         if (missile.warning > 30 && vehicle_ != Vehicle::SAM) missile.y = int16_t(playerY());
         if (!--missile.warning) missile.x = 254 * Unit;
       } else {
-        if (powerTicks_[unsigned(Power::RocketTime)] && (frame_ & 1)) continue;
-        missile.x -= 1540 + advance / 4;
+        missile.x -= JetpackTimeStep::scale(1540,movementScale_) + advance / 4;
         if (vehicle_ == Vehicle::SAM) {
           const bool armOverlap = missile.x <= (PlayerX + 29) * Unit && missile.x >= (PlayerX + 5) * Unit &&
               missile.y >= playerY() - 9 && missile.y <= playerY() + 9;
@@ -377,7 +453,118 @@ class JetpackGame {
       }
     }
   }
+  void endRocketTime() {
+    rocketTime_.cancel(); movementScale_ = FlightUnit;
+    powerTicks_[unsigned(Power::RocketTime)] = 0;
+    for (Pickup& choice : rocketChoices_) choice.active = false;
+    for (Missile& missile : missiles_) if (missile.rocketFlags & 128) missile = Missile{};
+    progression_.expirePower(nativeDistance(),uint8_t(Power::RocketTime));
+  }
+  void spawnRocketChoices(uint8_t count) {
+    if (count > RocketChoiceCount) count = RocketChoiceCount;
+    uint8_t types[] = {2,3,4,5,6,7};
+    const int rows = count > 3 ? (count + 1) / 2 : count;
+    const int32_t anchor = PlayerX * Unit + JetpackTimeStep::scale(speed(),movementScale_) * 120;
+    for (uint8_t i = 0; i < count; ++i) {
+      const uint8_t selected = uint8_t(i + random() % (6 - i));
+      const uint8_t temp = types[i]; types[i] = types[selected]; types[selected] = temp;
+      Pickup& p = rocketChoices_[i]; p.active = true; p.kind = Vehicle(types[i]);
+      p.x = anchor + (i / rows) * 32 * Unit;
+      p.y = int16_t(rows == 1 ? 68 : 30 + (i % rows) * 76 / (rows - 1));
+    }
+  }
+  void spawnRocketWave() {
+    JetpackRocketCourse::Wave wave;
+    JetpackRocketCourse::choose(random_,wave);
+    ++rocketWaves_;
+    for (unsigned i = 0; i < wave.count; ++i) {
+      Missile* slot = nullptr;
+      for (Missile& missile : missiles_) if (!missile.active) { slot = &missile; break; }
+      if (!slot) { rocketDrops_ = uint16_t(rocketDrops_ + wave.count - i); break; }
+      ++rocketShots_;
+      const auto& shot = wave.shots[i];
+      Missile& m = *slot; m = Missile{}; m.active = true;
+      m.x = (shot.direction < 0 ? 254 : -14) * Unit;
+      m.y = int16_t(JetpackRocketCourse::screenY(shot,Ceiling,Floor)); m.yQ8 = int16_t(m.y * Unit);
+      m.launchTicks = shot.launchTicks; m.warningStart = shot.warningTicks; m.warning = 255;
+      m.chaseQ8 = uint16_t(divideNearest(int64_t(wave.chaseSpeedQ8) * 23,60));
+      const float angle = shot.angleQ8 * (0.0174532925199433f / Unit);
+      const float native = wave.missileSpeedQ8 / float(Unit) *
+          ((shot.flags & JetpackRocketCourse::Ricochet) ? .8f : shot.speedQ8 / float(Unit));
+      m.vxQ8 = int16_t(bounded(int32_t(lroundf(shot.direction * native * cosf(angle) * 23 * Unit / 60)), -16 * Unit,16 * Unit));
+      m.vyQ8 = int16_t(bounded(int32_t(lroundf(-native * sinf(angle) * 23 * Unit / 60)), -16 * Unit,16 * Unit));
+      m.rocketFlags = uint8_t(128 | shot.flags);
+      const auto config = JetpackRocketTime::config(rocketTime_.level());
+      if (random() % 100 < config.trailChancePercent) m.rocketFlags |= 32;
+    }
+  }
+  void updateRocketTime() {
+    if (!rocketTime_.active()) { movementScale_ = FlightUnit; return; }
+    const auto events = rocketTime_.advance();
+    movementScale_ = rocketTime_.timeScaleQ16(rocketNativeSpeed_);
+    for (unsigned wave = 0; wave < 10; ++wave) if (events.waveMask & (1u << wave)) spawnRocketWave();
+    if (events.choiceCount) spawnRocketChoices(events.choiceCount);
+    if (events.ended) endRocketTime();
+  }
+  void updateRocketMissile(Missile& m) {
+    const uint32_t stepQ8 = (movementScale_ + 128) / 256;
+    m.clockQ8 += stepQ8;
+    const uint32_t launchQ8 = uint32_t(m.launchTicks) * Unit;
+    if (!(m.rocketFlags & 64)) {
+      if (m.clockQ8 < uint32_t(m.warningStart) * Unit) {
+        const int32_t chase = JetpackTimeStep::scale(m.chaseQ8,movementScale_);
+        const int32_t target = playerY() * Unit;
+        m.yQ8 = int16_t(m.yQ8 + bounded(target - m.yQ8,-chase,chase));
+        m.y = int16_t(m.yQ8 / Unit);
+      }
+      if (m.clockQ8 < launchQ8) {
+        m.warning = uint8_t(bounded(int32_t((launchQ8 - m.clockQ8 + 255) / Unit),1,255)); return;
+      }
+      m.rocketFlags |= 64; m.warning = 0;
+    }
+    const uint32_t factor = uint32_t(flightFactor());
+    m.x += JetpackTimeStep::scale(divideNearest(int64_t(m.vxQ8) * factor,FlightUnit),movementScale_);
+    int32_t y = m.yQ8 + JetpackTimeStep::scale(divideNearest(int64_t(m.vyQ8) * factor,FlightUnit),movementScale_);
+    const int center = (Ceiling + Floor) * Unit / 2;
+    const int span = divideNearest(int64_t(136) * 23 * Unit,60);
+    const int top = center - span, bottom = center + span;
+    if (y < top || y > bottom) {
+      if (m.rocketFlags & JetpackRocketCourse::Ricochet) {
+        if (y < top) y = 2 * top - y;
+        if (y > bottom) y = 2 * bottom - y;
+        m.vyQ8 = int16_t(-m.vyQ8);
+      } else { m.active = false; return; }
+    }
+    m.yQ8 = int16_t(bounded(y,top,bottom)); m.y = int16_t(m.yQ8 / Unit);
+    if (m.rocketFlags & 32) {
+      m.trailQ8 = uint16_t(m.trailQ8 + stepQ8);
+      if (m.trailQ8 >= 6 * Unit) {
+        for (Coin& coin : coinField_) if (!coin.active) {
+          coin.active = true; coin.x = m.x; coin.y = m.y; coin.value = 5;
+          m.trailQ8 = uint16_t(m.trailQ8 - 6 * Unit); break;
+        }
+      }
+    }
+    if (m.x < -24 * Unit || m.x > 264 * Unit) m.active = false;
+  }
+  void drawSpin(Canvas& c) const {
+    c.rect(28,31,184,88,rgb(16,24,40));
+    c.rect(28,31,184,1,rgb(128,176,184)); c.rect(28,118,184,1,rgb(128,176,184));
+    c.text("FINAL SPIN",90,36,rgb(248,216,80));
+    spinPresentation_.draw(c);
+    const bool rolling = spinPresentation_.running();
+    const char* caption = rolling ? "SPINNING" : !spinResult_ ? "ACTION: SPIN" :
+        !lastSpinWon_ ? "NO MATCH" : reward_ == 0 ? "SECOND CHANCE" : reward_ == 2 ? "BLAST!" :
+        reward_ == 3 ? "500M HEADSTART" : reward_ == 4 ? "DOUBLE COINS" : reward_ == 5 ? "3 MORE TOKENS" : "BONUS COINS";
+    unsigned n = 0; while (caption[n]) ++n;
+    c.text(caption,120 - int(n)*3,98,rgb(224,240,216));
+    if (!rolling && !spinResult_) c.text("LEFT/DOWN: CASH",78,109,rgb(128,176,184));
+    else if (!rolling) { c.text("TAP TO CONTINUE",78,109,rgb(128,176,184)); }
+    c.number(spinTokens_,40,73,rgb(248,216,80));
+  }
+
   void spawnProgression() {
+    if (rocketTime_.active()) return;
     JetpackProgression::Context context;
     context.nativeDistance = nativeDistance(); context.speedQ8 = speed();
     context.vehicle = uint8_t(vehicle_); context.samLetters = samLetters_;
@@ -417,7 +604,7 @@ class JetpackGame {
           span = 90; break;
         case Kind::Missile:
           for (Missile& missile : missiles_) if (!missile.active) {
-            missile.active = true; missile.warning = vehicle_ == Vehicle::SAM ? 50 : 80;
+            missile = Missile{}; missile.active = true; missile.warning = vehicle_ == Vehicle::SAM ? 50 : 80;
             missile.x = 254 * Unit;
             missile.y = vehicle_ == Vehicle::SAM ? int16_t(30 + random() % 77) : int16_t(playerY()); break;
           }
@@ -488,10 +675,11 @@ class JetpackGame {
       return;
     }
   }
-  void putCoin(int x, int y) {
+  bool putCoin(int x, int y, uint8_t value = 1) {
     for (Coin& coin : coinField_) if (!coin.active) {
-      coin.x = x * Unit; coin.y = int16_t(bounded(y, 27, 110)); coin.active = true; return;
+      coin.x = x * Unit; coin.y = int16_t(bounded(y, 27, 110)); coin.active = true; coin.value = value; return true;
     }
+    return false;
   }
   void spawnCoins() {
     if (startImported()) return;
@@ -518,10 +706,9 @@ class JetpackGame {
   }
   void collect() {
     for (Coin& coin : coinField_) if (coin.active) {
-      const int dx = int(coin.x / Unit) - PlayerX, dy = coin.y - playerY();
-      if (dx * dx + dy * dy <= 10 * 10) {
+      if (sweptCoinContact(int(coin.x / Unit), coin.y)) {
         coin.active = false;
-        addCoins(1, true);
+        addCoins(coin.value, true);
         signal(ArcadeCue::Power);
       }
     }
@@ -553,7 +740,7 @@ class JetpackGame {
       case Vehicle::Hog: return nearSegment(PlayerX - 5, py + 1, x, y, dx, dy, 5) || nearSegment(PlayerX + 5, py + 1, x, y, dx, dy, 5);
       case Vehicle::Mech: return nearSegment(PlayerX, py - 5, x, y, dx, dy, 5) || nearSegment(PlayerX, py + 1, x, y, dx, dy, 5);
       case Vehicle::Bird: return nearSegment(PlayerX, py - 2, x, y, dx, dy, 7);
-      case Vehicle::Teleporter: return nearSegment(PlayerX, py - 2, x, y, dx, dy, 7);
+      case Vehicle::Teleporter: return nearSegment(PlayerX, py - 2, x, y, dx, dy, vehiclePhysics_.teleportStage == 1 ? 3 : 7);
       case Vehicle::Dragon: return nearSegment(PlayerX + 9, py - 3, x, y, dx, dy, 7) || nearSegment(PlayerX, py, x, y, dx, dy, 6);
       default: return nearSegment(PlayerX, py, x, y, dx, dy, 6);
     }
@@ -596,6 +783,7 @@ class JetpackGame {
       immune_ = 120;
       signal(ArcadeCue::Power);
     } else {
+      if (rocketTime_.active()) endRocketTime();
       phase_ = Phase::Crashing;
       crashTicks_ = 150;
       deathSpeed_ = speed();
@@ -630,15 +818,28 @@ class JetpackGame {
   }
   void activatePower(Power power) {
     const unsigned index = unsigned(power);
+    if (vehicle_ != Vehicle::None && (power == Power::Boost || power == Power::CashDash || power == Power::RocketTime)) return;
+    if ((power == Power::Boost || power == Power::CashDash) && rocketTime_.active()) endRocketTime();
     if (!index || index >= unsigned(Power::Count)) return;
     const uint16_t duration = power == Power::RocketTime ? JetpackProfile::rocketTicks(activeUpgrades_[JetpackProfile::RocketTime]) : power == Power::Shield ? UINT16_MAX : 1200;
     if (powerTicks_[index] != UINT16_MAX) powerTicks_[index] = duration;
     if (power == Power::Shield) shieldHits_ = JetpackProfile::shieldHits(activeUpgrades_[JetpackProfile::Shield]);
     progression_.acquirePower(nativeDistance(), uint8_t(power));
+    if (power == Power::RocketTime) {
+      powerTicks_[unsigned(Power::Boost)] = powerTicks_[unsigned(Power::CashDash)] = 0;
+      boostExtraVelocity_ = 0;
+      rocketShots_ = rocketDrops_ = 0;
+      rocketNativeSpeed_ = uint32_t(normalNativeVelocity());
+      rocketTime_.start(activeUpgrades_[JetpackProfile::RocketTime]);
+      powerTicks_[index] = UINT16_MAX; rocketWaves_ = 0;
+      clearHazards(); pickup_.active = false;
+      for (Pickup& choice : rocketChoices_) choice = Pickup{};
+    }
     if (power == Power::CashDash) {
       powerTicks_[index] = UINT16_MAX;
       powerEndCash_ = distance() + JetpackProfile::cashMeters(activeUpgrades_[JetpackProfile::CashDash]); clearHazards();
       cashStart_ = distance(); cashNextCoin_ = cashStart_; cashPayload_ = Bonus{};
+      cashNextValue_ = 0;
     }
     if (power == Power::Boost) {
       powerTicks_[index] = UINT16_MAX;
@@ -648,15 +849,18 @@ class JetpackGame {
   }
   void burst(uint8_t kind) { fxAge_ = 0; fxKind_ = kind; fxX_ = PlayerX; fxY_ = int16_t(playerY()); }
   void equip(Vehicle vehicle) {
+    if (rocketTime_.active()) endRocketTime();
     burst(2);
+    const int32_t incomingNative = unsigned(vehicle_) >= unsigned(Vehicle::Gravity) ? vehiclePhysics_.nativeSpeed : normalNativeVelocity();
     vehicle_ = vehicle;
     ++stats_.vehiclesCollected;
     if (vehicle == Vehicle::Mech) ++stats_.mechsCollected;
-    velocity_ = 0; gravityUp_ = false; vehicleJumps_ = 10; vehicleBoost_ = 0;
-    vehicleTicks_ = 0; vehicleWasHeld_ = false; vehicleInputBlocked_ = true;
-    teleportTarget_ = y_; teleportUp_ = true;
+    velocity_ = 0; gravityUp_ = false;
+    vehicleTicks_ = 0; vehicleInputBlocked_ = true;
+    vehiclePhysics_ = JetpackVehiclePhysics::State{};
+    JetpackVehiclePhysics::beginSpeed(vehiclePhysics_,uint8_t(vehicle),incomingNative);
     if (vehicle == Vehicle::Hog || vehicle == Vehicle::Mech) y_ = Floor * FlightUnit;
-    if (vehicle == Vehicle::SAM) { samHits_ = 3; vehicleTicks_ = 0; y_ = 70 * FlightUnit; clearHazards(); }
+    if (vehicle == Vehicle::SAM) { samHits_ = 3; vehicleTicks_ = 0; clearHazards(); }
     clearHazards();
     progression_.acquireVehicle(nativeDistance(), uint8_t(vehicle));
     vehicleHint_ = 180; immune_ = 90; armed_ = false;
@@ -678,6 +882,10 @@ class JetpackGame {
     }
     if (nextGadget_ == 1) powerTicks_[unsigned(Power::Magnet)] = UINT16_MAX;
     if (nextGadget_ == 2) powerTicks_[unsigned(Power::DoubleCoins)] = UINT16_MAX;
+    if (nextGadget_ >= 3) {
+      const Power bonuses[] = {Power::Shield,Power::Boost,Power::CashDash,Power::RocketTime};
+      activatePower(bonuses[nextGadget_ - 3]);
+    }
     if (pendingRewards_ & 2) powerTicks_[unsigned(Power::DoubleCoins)] = UINT16_MAX;
     if (profile_ && profile_->takeDoubleCoins()) powerTicks_[unsigned(Power::DoubleCoins)] = UINT16_MAX;
     const bool earnedHeadstart = profile_ && profile_->takeHeadstart();
@@ -685,8 +893,9 @@ class JetpackGame {
     pendingRewards_ = 0;
   }
   void updatePowers() {
+    updateRocketTime();
     for (unsigned i = 1; i < unsigned(Power::Count); ++i)
-      if (powerTicks_[i] && powerTicks_[i] != UINT16_MAX) --powerTicks_[i];
+      if (i != unsigned(Power::RocketTime) && powerTicks_[i] && powerTicks_[i] != UINT16_MAX) --powerTicks_[i];
     if (powerTicks_[unsigned(Power::CashDash)] && distance() >= powerEndCash_) {
       powerTicks_[unsigned(Power::CashDash)] = 0;
       cashPayload_.active = true; cashPayload_.x = (PlayerX + 92) * Unit;
@@ -720,41 +929,28 @@ class JetpackGame {
       if (press) { gravityUp_ = !gravityUp_; ++stats_.gravityFlips; signal(ArcadeCue::Fire); }
       const int32_t acceleration = divideNearest(int64_t(FlightUnit) * (gravityUp_ ? -299 : 299), 3000);
       velocity_ = divideNearest(int64_t(velocity_ + acceleration) * 98, 100);
-    } else if (vehicle_ == Vehicle::Hog || vehicle_ == Vehicle::Mech || vehicle_ == Vehicle::Bird) {
+    } else if (vehicle_ == Vehicle::Hog || vehicle_ == Vehicle::Mech) {
       const bool grounded = y_ >= Floor * FlightUnit;
-      if (grounded) vehicleJumps_ = vehicle_ == Vehicle::Bird ? 10 : 1;
-      if (press && (vehicleJumps_ || vehicle_ == Vehicle::Bird)) {
-        velocity_ = -scaledNative(vehicle_ == Vehicle::Hog ? 650 : vehicle_ == Vehicle::Mech ? 600 : 500);
-        if (vehicleJumps_) --vehicleJumps_;
-        vehicleBoost_ = vehicle_ == Vehicle::Hog ? 12 : vehicle_ == Vehicle::Mech ? 20 : 0;
-        signal(ArcadeCue::Fire);
-      }
-      const int gravity = vehicle_ == Vehicle::Hog ? 30 : vehicle_ == Vehicle::Mech ? 36 : 20;
-      int boost = 0;
-      if (held && vehicleBoost_) boost = vehicle_ == Vehicle::Hog ? 60 : 45;
-      else if (held && vehicle_ == Vehicle::Mech && !grounded) boost = 29;
-      if (vehicleBoost_) --vehicleBoost_;
-      velocity_ = divideNearest(int64_t(velocity_ + scaledNative(gravity - boost)) * 98, 100);
+      if (JetpackVehiclePhysics::hop(vehiclePhysics_,vehicle_ == Vehicle::Mech,held,press,grounded,velocity_)) signal(ArcadeCue::Fire);
+    } else if (vehicle_ == Vehicle::Bird) {
+      if (JetpackVehiclePhysics::bird(vehiclePhysics_,held,press,velocity_)) signal(ArcadeCue::Fire);
     } else if (vehicle_ == Vehicle::Teleporter) {
       velocity_ = 0;
-      teleportTarget_ += (teleportUp_ ? -2 : 2) * FlightUnit;
-      if (teleportTarget_ < 28 * FlightUnit) { teleportTarget_ = 28 * FlightUnit; teleportUp_ = false; }
-      if (teleportTarget_ > Floor * FlightUnit) { teleportTarget_ = Floor * FlightUnit; teleportUp_ = true; }
-      if (press) { y_ = teleportTarget_; immune_ = 12; signal(ArcadeCue::Power); }
+      const JetpackVehiclePhysics::Teleport event = JetpackVehiclePhysics::teleporter(vehiclePhysics_,press);
+      if (event.started) signal(ArcadeCue::Fire);
+      if (event.arrived) { y_ = JetpackVehiclePhysics::markerY(vehiclePhysics_); burst(2); signal(ArcadeCue::Power); }
     } else if (vehicle_ == Vehicle::Dragon) {
       velocity_ += scaledNative(held ? 20 : -20);
       velocity_ = bounded(velocity_, -scaledNative(550), scaledNative(550));
-    } else if (vehicle_ == Vehicle::SAM) {
-      velocity_ = (held ? -2 : 2) * FlightUnit;
     } else {
       if (press) signal(ArcadeCue::Fire);
       // Net thrust and gravity retain the 240-unit center travel in 92 pixels.
       const int32_t acceleration = divideNearest(int64_t(flightFactor()) * (held ? -161 : 115), 2000);
-      velocity_ = divideNearest(int64_t(velocity_ + acceleration) * 98, 100);
+      velocity_ = JetpackTimeStep::accelerate(velocity_,acceleration,movementScale_);
     }
-    vehicleWasHeld_ = held;
-    y_ += velocity_;
-    const int top = unsigned(vehicle_) >= unsigned(Vehicle::Hog) ? 28 : Ceiling;
+    y_ += JetpackTimeStep::scale(velocity_,movementScale_);
+    const int top = vehicle_ == Vehicle::SAM ? 27 : vehicle_ == Vehicle::Teleporter ? Ceiling :
+        unsigned(vehicle_) >= unsigned(Vehicle::Hog) ? 28 : Ceiling;
     if (y_ < top * FlightUnit) { y_ = top * FlightUnit; velocity_ = 0; }
     if (y_ > Floor * FlightUnit) { y_ = Floor * FlightUnit; velocity_ = 0; }
   }
@@ -762,6 +958,111 @@ class JetpackGame {
     if (gameplay && powerTicks_[unsigned(Power::DoubleCoins)]) count *= 2;
     if (gameplay) stats_.coinsCollected += count;
     coins_ = coins_ + count > 999999 ? 999999 : coins_ + count;
+  }
+  int magnetRadius() const { return powerTicks_[unsigned(Power::Magnet)] ? 65 : 0; }
+  int coinTargetY() const { return vehicle_ == Vehicle::SAM ? 105 : playerY(); }
+  bool coinContact(int x, int y) const {
+    if (vehicle_ == Vehicle::SAM) return x >= PlayerX - 18 && x <= PlayerX + 18 && y >= 90 && y <= 123;
+    const int dx = x - PlayerX, dy = y - playerY();
+    return dx * dx + dy * dy <= 10 * 10;
+  }
+  bool sweptCoinContact(int x, int y) const {
+    if (coinContact(x,y)) return true;
+    const int span = (frameAdvance_ + Unit - 1) / Unit;
+    if (vehicle_ == Vehicle::SAM) return x <= PlayerX + 18 && x + span >= PlayerX - 18 && y >= 90 && y <= 123;
+    return nearSegment(PlayerX,playerY(),x,y,span,0,10);
+  }
+  bool attractCoin(int32_t x, int y, uint8_t value, int16_t vx = 0, int16_t vy = 0) {
+    for (AttractedCoin& coin : attractedCoins_) if (!coin.age) {
+      coin.x = x; coin.y = int16_t(bounded(y * Unit, 16 * Unit, 122 * Unit));
+      coin.vx = vx; coin.vy = vy; coin.age = 1; coin.value = value;
+      coin.falling = false; coin.lockQ8 = 0; coin.gem = value >= 5;
+      return true;
+    }
+    return false;
+  }
+  void updateAttractedCoins() {
+    const float dt = movementScale_ / float(FlightUnit);
+    const int32_t drag99 = movementScale_ == FlightUnit ? 64881 : int32_t(lroundf(powf(.99f,dt) * FlightUnit));
+    const float bounceDrag = movementScale_ == FlightUnit ? .95f : powf(.95f,dt);
+    const int32_t targetY = coinTargetY() * Unit;
+    for (AttractedCoin& coin : attractedCoins_) if (coin.age) {
+      if (coin.falling) {
+        const uint16_t step = uint16_t((movementScale_ + 128) / 256);
+        coin.lockQ8 = coin.lockQ8 > step ? uint16_t(coin.lockQ8 - step) : 0;
+        const int dx = int(coin.x / Unit) - PlayerX, dy = int(coin.y / Unit) - coinTargetY();
+        if (!coin.lockQ8 && coinContact(int(coin.x / Unit),int(coin.y / Unit))) {
+          addCoins(coin.value,true); coin.age = 0; signal(ArcadeCue::Power); continue;
+        }
+        if (!coin.lockQ8 && magnetRadius() && dx * dx + dy * dy <= magnetRadius() * magnetRadius()) coin.falling = false;
+        else {
+          coin.x += JetpackTimeStep::scale(coin.vx,movementScale_) - frameAdvance_;
+          int32_t y = coin.y + JetpackTimeStep::scale(coin.vy,movementScale_);
+          coin.vx = int16_t(divideNearest(int64_t(coin.vx) * drag99,FlightUnit));
+          coin.vy = int16_t(bounded(divideNearest(int64_t(coin.vy + JetpackTimeStep::scale(16,movementScale_)) * drag99,FlightUnit),-10 * Unit,10 * Unit));
+          const int top = 68 * Unit - divideNearest(int64_t(132) * 23 * Unit,60);
+          const int floor = 68 * Unit + divideNearest(int64_t(132) * 23 * Unit,60);
+          if (y < top || y > floor) {
+            const bool bottom = y > floor; y = bottom ? floor : top;
+            if (bottom && abs(coin.vy) < 98) coin.vy = 0;
+            else {
+              const int32_t bounce = int32_t(lroundf((movementScale_ == FlightUnit ? (750 + random() % 101) / 1000.f : powf((750 + random() % 101) / 1000.f,dt)) * FlightUnit));
+              coin.vy = int16_t(-divideNearest(int64_t(coin.vy) * bounce,FlightUnit));
+            }
+            coin.vx = int16_t(lroundf(coin.vx * bounceDrag));
+          }
+          coin.y = int16_t(y);
+          if (coin.x < -25 * Unit || coin.x > (Width + 100) * Unit) coin.age = 0;
+          else if (coin.age < 255) ++coin.age;
+          continue;
+        }
+      }
+      const int32_t dx = PlayerX * Unit - coin.x, dy = targetY - coin.y;
+      if (coin.age >= 3 && coinContact(int(coin.x / Unit), int(coin.y / Unit))) {
+        addCoins(coin.value, true); coin.age = 0; signal(ArcadeCue::Power); continue;
+      }
+      const int32_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+      const int32_t length = ax > ay ? ax : ay;
+      if (length) {
+        coin.vx = int16_t(bounded(int32_t(coin.vx) * 7 / 8 + dx * 96 / length, -6 * Unit, 6 * Unit));
+        coin.vy = int16_t(bounded(int32_t(coin.vy) * 7 / 8 + dy * 96 / length, -6 * Unit, 6 * Unit));
+      }
+      coin.x += coin.vx;
+      coin.y = int16_t(bounded(int32_t(coin.y) + coin.vy, 16 * Unit, 122 * Unit));
+      if (coin.age < 255) ++coin.age;
+    }
+  }
+  void emitCashShower() {
+    for (unsigned i = 0; i < 6 && cashShowerRemaining_; ++i) {
+      if (attractedCoinCount() == AttractedCoinCount) return;
+      const unsigned free = AttractedCoinCount - attractedCoinCount();
+      unsigned batch = (cashShowerRemaining_ + free - 1) / free;
+      if (batch > 32) batch = 32;
+      uint8_t value = 0; bool gem = false;
+      for (unsigned k = 0; k < batch; ++k) {
+        const bool isGem = random() % 100 < cashShowerGemPercent_;
+        gem |= isGem; value = uint8_t(value + (isGem ? 5 : 1));
+      }
+      const int x = int(cashShowerX_ / Unit) + int(random() % 31) - 15;
+      const int y = int(cashShowerY_ / Unit) + int(random() % 17) - 8;
+      const bool first = cashShowerEmitted_ < 5;
+      const float angle = first ? (random() % 6284) / 1000.f : cashSprayAngle_ + (int(random() % 901) - 450) / 1000.f;
+      const float magnitude = first ? (200 + random() % 601) * (23.f * Unit / 6000) : cashSpraySpeed_ * (1200 + random() % 801) / 1000.f;
+      const int16_t vx = int16_t(bounded(int32_t(lroundf(cosf(angle) * magnitude)) + (first ? speed() : 0),-10 * Unit,10 * Unit));
+      const int16_t vy = int16_t(bounded(int32_t(lroundf(sinf(angle) * magnitude)),-10 * Unit,10 * Unit));
+      for (AttractedCoin& coin : attractedCoins_) if (!coin.age) {
+        coin.x = x * Unit; coin.y = int16_t(bounded(y * Unit,17 * Unit,119 * Unit));
+        coin.vx = vx; coin.vy = vy; coin.age = 1; coin.value = value;
+        coin.falling = true; coin.gem = gem; coin.lockQ8 = 18 * Unit;
+        cashShowerRemaining_ = uint16_t(cashShowerRemaining_ - batch); ++cashShowerEmitted_; break;
+      }
+    }
+  }
+  void startCashShower(uint16_t count, uint8_t gems, int32_t x, int16_t y) {
+    cashShowerRemaining_ = uint16_t(cashShowerRemaining_ > UINT16_MAX - count ? UINT16_MAX : cashShowerRemaining_ + count);
+    cashShowerGemPercent_ = gems; cashShowerX_ = x; cashShowerY_ = y; cashShowerEmitted_ = 0;
+    const float vx = float(speed()), vy = velocity_ / float(FlightUnit / Unit);
+    cashSprayAngle_ = atan2f(vy,vx); cashSpraySpeed_ = sqrtf(vx * vx + vy * vy);
   }
   void updateExtras(int32_t advance) {
     if (bonus_.active) { bonus_.x -= advance; if (bonus_.x < -12 * Unit) bonus_.active = false; }
@@ -793,29 +1094,34 @@ class JetpackGame {
       }
       if (scientist.x < -15 * Unit) scientist.active = false;
     }
-    if (powerTicks_[unsigned(Power::Magnet)]) {
+    updateAttractedCoins();
+    emitCashShower();
+    if (magnetRadius()) {
       for (Coin& coin : coinField_) if (coin.active) {
-        const int dx = int(coin.x / Unit) - PlayerX, dy = coin.y - playerY();
-        if (dx * dx + dy * dy < 65 * 65) {
-          coin.x += ((PlayerX * Unit) - coin.x) / 5;
-          coin.y = int16_t(coin.y + (dy > 0 ? -2 : dy < 0 ? 2 : 0));
-        }
+        const int dx = int(coin.x / Unit) - PlayerX, dy = coin.y - coinTargetY();
+        if (!coinContact(int(coin.x / Unit), coin.y) && dx * dx + dy * dy <= magnetRadius() * magnetRadius() &&
+            attractCoin(coin.x, coin.y, coin.value)) coin.active = false;
       }
     }
     updateImported(advance);
-    while (powerTicks_[unsigned(Power::CashDash)] && cashNextCoin_ <= distance() && cashNextCoin_ < powerEndCash_) {
-      putCoin(PlayerX + 92, cashPathY(cashNextCoin_ - cashStart_)); ++cashNextCoin_;
+    while (cashNextCoin_ <= distance() && cashNextCoin_ < powerEndCash_) {
+      if (!cashNextValue_) cashNextValue_ = random() % 100 < JetpackProfile::cashGemPercent(activeUpgrades_[JetpackProfile::CashDash]) ? 5 : 1;
+      if (!putCoin(PlayerX + 92, cashPathY(cashNextCoin_ - cashStart_), cashNextValue_)) break;
+      ++cashNextCoin_; cashNextValue_ = 0;
     }
   }
   void collectExtras() {
+    for (Pickup& choice : rocketChoices_) if (choice.active &&
+        abs(int(choice.x / Unit) - PlayerX) <= 10 && abs(int(choice.y) - playerY()) <= 12) {
+      const Vehicle selected = choice.kind; endRocketTime(); equip(selected); break;
+    }
     if (cashPayload_.active) {
       const int dx = int(cashPayload_.x / Unit) - PlayerX, dy = cashPayload_.y - playerY();
       if (dx * dx + dy * dy < 14 * 14) {
         const uint16_t payload = JetpackProfile::cashPayload(activeUpgrades_[JetpackProfile::CashDash]);
         const uint8_t gems = JetpackProfile::cashGemPercent(activeUpgrades_[JetpackProfile::CashDash]);
-        uint32_t total = 0;
-        for (unsigned i = 0; i < payload; ++i) total += random() % 100 < gems ? 5 : 1;
-        addCoins(total, true); cashPayload_.active = false; burst(0); signal(ArcadeCue::Win);
+        startCashShower(payload,gems,cashPayload_.x,int16_t(cashPayload_.y * Unit));
+        cashPayload_.active = false; burst(0); signal(ArcadeCue::Win);
       }
     }
     if (bonus_.active && vehicle_ == Vehicle::None) {
@@ -875,17 +1181,20 @@ class JetpackGame {
     } else deathSpeed_ = deathSpeed_ * 995 / 1000;
     if (deathSpeed_ < 3) deathSpeed_ = 0;
     if (world_ < 0x70000000u) world_ += uint32_t(deathSpeed_);
+    frameAdvance_ = deathSpeed_;
     updateObjects(deathSpeed_); updateExtras(deathSpeed_);
     if (crashTicks_) --crashTicks_;
-    if (!crashTicks_ && y_ == Floor * FlightUnit && velocity_ == 0) {
+    if (!crashTicks_ && y_ == Floor * FlightUnit && velocity_ == 0 && deathSpeed_ == 0) {
       if (spinTokens_) { phase_ = Phase::Spin; spinTicks_ = 90; spinResult_ = false; }
       else { phase_ = Phase::Over; settleRun(); }
       armed_ = false;
     }
   }
   void tickSpin(bool press) {
+    if (spinResult_ && spinPresentation_.running()) { spinPresentation_.tick(); return; }
     if (spinTicks_) --spinTicks_;
     if (spinResult_) {
+      if (press) spinTicks_ = 0;
       if (spinTicks_) return;
       if (lastAward_.kind == JetpackRewards::Kind::Revive) {
         phase_ = Phase::Running; vehicle_ = Vehicle::None;
@@ -907,7 +1216,8 @@ class JetpackGame {
     const JetpackRewards::Outcome outcome = finalSpin_.spin(prizeWord, stopWord, reseedWord);
     lastAward_ = outcome.award; lastSpinWon_ = outcome.hasPrize; lastSpinMatches_ = outcome.matches;
     if (outcome.hasPrize) ++stats_.prizesWon;
-    spinResult_ = true; spinTicks_ = 60; rewardCoins_ = lastAward_.amount;
+    spinPresentation_.begin(outcome,stopWord ^ reseedWord);
+    spinResult_ = true; spinTicks_ = outcome.hasPrize ? JetpackSpin::WinHold : JetpackSpin::LossHold; rewardCoins_ = lastAward_.amount;
     if (!outcome.hasPrize) { reward_ = 6; signal(ArcadeCue::Hit); return; }
     using Kind = JetpackRewards::Kind;
     switch (lastAward_.kind) {
@@ -1036,7 +1346,8 @@ class JetpackGame {
   }
   void collectImported() {
 #ifdef M5FLAP_JETPACK_IMPORTED
-    const int radius = powerTicks_[unsigned(Power::Magnet)] ? 65 : 10;
+    const int minimum = vehicle_ == Vehicle::SAM ? 18 : 10;
+    const int radius = magnetRadius() > minimum ? magnetRadius() : minimum;
     for (ImportedGroup& group : importedGroups_) if (group.pattern >= 0) {
       const auto& pattern = JetpackImported::CoinPatterns[unsigned(group.pattern)];
       for (unsigned i = 0; i < pattern.count; ++i) {
@@ -1045,9 +1356,12 @@ class JetpackGame {
         const int x = int(group.x / Unit) + int(point & 255) * group.step;
         if (x > PlayerX + radius || x < PlayerX - radius) continue;
         const int y = group.top + int(point >> 8) * group.step;
-        const int dx = x - PlayerX, dy = y - playerY();
-        if (dx * dx + dy * dy <= radius * radius) {
+        const int dx = x - PlayerX, dy = y - coinTargetY();
+        const int squared = dx * dx + dy * dy;
+        if (sweptCoinContact(x,y)) {
           group.collected[i / 8] |= uint8_t(1u << (i & 7)); addCoins(1, true); signal(ArcadeCue::Power);
+        } else if (magnetRadius() && squared <= radius * radius && attractCoin(x * Unit, y, 1)) {
+          group.collected[i / 8] |= uint8_t(1u << (i & 7));
         }
       }
     }
@@ -1084,6 +1398,7 @@ class JetpackGame {
     JetpackArt::drawZap(c, x, zap.y, x + zap.dx, zap.y + zap.dy, frame_);
   }
   void drawMissile(Canvas& c, const Missile& missile) const {
+    if ((missile.rocketFlags & 128) && missile.clockQ8 < uint32_t(missile.warningStart) * Unit) return;
     const int y = missile.y;
     if (missile.warning) {
       const uint16_t red = rgb(232, 128, 48);
@@ -1103,6 +1418,13 @@ class JetpackGame {
   }
   void drawPlayer(Canvas& c) const {
     if (immune_ && (frame_ & 4)) return;
+    if (vehicle_ == Vehicle::Teleporter &&
+        ((vehiclePhysics_.teleportStage == 1 && vehiclePhysics_.teleportTicks <= 6) ||
+         (vehiclePhysics_.teleportStage == 2 && vehiclePhysics_.teleportTicks > 6))) {
+      c.rect(PlayerX - 1,playerY() - 7,3,12,rgb(239,226,255));
+      c.line(PlayerX - 4,playerY() - 4,PlayerX + 4,playerY() - 4,rgb(166,114,224));
+      return;
+    }
     if (phase_ == Phase::Crashing || phase_ == Phase::Over || phase_ == Phase::Spin) {
       JetpackArt::drawCrash(c, PlayerX, playerY(), frame_, uint8_t(phase_ == Phase::Crashing ? frame_ / 5 & 3 : 0), playerY() == Floor && !velocity_);
     } else if (unsigned(vehicle_) >= unsigned(Vehicle::Hog)) {
@@ -1124,6 +1446,14 @@ class JetpackGame {
 
   ImportedGroup importedGroups_[2];
   JetpackProgression progression_;
+  JetpackVehiclePhysics::State vehiclePhysics_;
+  JetpackSpin spinPresentation_;
+  JetpackRocketTime rocketTime_;
+  uint32_t rocketNativeSpeed_ = 175 * FlightUnit;
+  uint32_t movementScale_ = FlightUnit;
+  uint8_t rocketWaves_ = 0;
+  uint16_t rocketShots_ = 0, rocketDrops_ = 0;
+  Pickup rocketChoices_[RocketChoiceCount];
   JetpackRewards::FinalSpin finalSpin_;
   JetpackRewards::Award lastAward_{JetpackRewards::Kind::Coins, 0, 0};
   bool lastSpinWon_ = false;
@@ -1136,22 +1466,29 @@ class JetpackGame {
   Token token_;
   Token samToken_;
   Scientist scientists_[ScientistCount];
+  AttractedCoin attractedCoins_[AttractedCoinCount];
   Rotator rotators_[2];
   Laser laser_;
   uint16_t powerTicks_[unsigned(Power::Count)] = {};
   uint32_t powerEndCash_ = 0, powerEndBoost_ = 0;
   uint32_t cashStart_ = 0, cashNextCoin_ = 0, footTravel_ = 0, hogTravel_ = 0;
+  int32_t cashShowerX_ = PlayerX * Unit;
+  int16_t cashShowerY_ = 70 * Unit;
+  uint16_t cashShowerRemaining_ = 0, cashShowerEmitted_ = 0;
+  float cashSprayAngle_ = 0, cashSpraySpeed_ = 0;
+  int32_t frameAdvance_ = 0;
+  uint8_t cashShowerGemPercent_ = 0, cashNextValue_ = 0;
   int32_t boostExtraVelocity_ = 0;
-  int32_t deathSpeed_ = 0, teleportTarget_ = 0, patternX_ = 0;
+  int32_t deathSpeed_ = 0, patternX_ = 0;
   int16_t coinPattern_ = -1;
   uint16_t patternCursor_ = 0, vehicleTicks_ = 0, scientistInteractions_ = 0, rewardCoins_ = 0;
   uint16_t spinTokens_ = 0;
-  uint8_t samLetters_ = 0, spinTicks_ = 0, reward_ = 0, vehicleJumps_ = 0, vehicleBoost_ = 0;
+  uint8_t samLetters_ = 0, spinTicks_ = 0, reward_ = 0;
   uint8_t activeUpgrades_[JetpackProfile::UpgradeCount] = {}, shieldHits_ = 0;
   int16_t fxX_ = PlayerX, fxY_ = Floor;
   uint8_t fxAge_ = 32, fxKind_ = 0;
   uint8_t samHits_ = 0, crashBounces_ = 0, nextRide_ = 0, nextGadget_ = 0, pendingRewards_ = 0;
-  bool nextHeadstart_ = false, vehicleWasHeld_ = false, vehicleInputBlocked_ = false, teleportUp_ = true, blastUsed_ = false, revived_ = false, spinResult_ = false;
+  bool nextHeadstart_ = false, vehicleInputBlocked_ = false, blastUsed_ = false, revived_ = false, spinResult_ = false;
   bool profileEnabled_ = true, rankedRun_ = true, runStarted_ = false, runSettled_ = false;
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   bool diagnosticProtection_ = false;

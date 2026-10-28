@@ -42,23 +42,13 @@ Each remaining token can be cashed in for 100 coins. `cashInValue()` uses a 32-b
 
 `FinalSpin::spin()` includes a no-prize outcome. Each of the two later reels has a 50% target-match chance. An ordinary spin needs both matches to win. A forced-win countdown starts at three or four spent tokens. It decreases once per spin, guarantees a matching result when it expires, then starts another three- or four-spin cycle. An ordinary win keeps the current countdown.
 
-The original builds finite drums of eight weighted symbols, arranges them to avoid adjacent duplicates where possible and accepts timed touch stops. Its ordinary stop policy has a 50% center target, a 25% next symbol and a 25% previous symbol. The M5 converts that policy into two match checks and a compact result screen. Its finite-drum arrangement and touch-stop phase are adapted, so this implementation does not claim the original's exact overall return. `draw()` remains available for selecting a weighted winning prize after a match has been established.
+The original builds finite drums of eight weighted symbols, arranges them to avoid adjacent duplicates where possible and accepts timed touch stops. Its ordinary stop policy has a 50% center target, a 25% next symbol and a 25% previous symbol. The M5 converts that policy into two match checks and an animated three-reel presentation. Reels stop in sequence over 60 simulation ticks. A win then holds for 150 ticks and a loss for eight, with fresh input available to continue. Its finite-drum arrangement and touch-stop phase are adapted, so this implementation does not claim the original's exact overall return. `draw()` remains available for selecting a weighted winning prize after a match has been established.
 
 `FinalSpin::Eligibility` lets the caller exclude a revive outside a recoverable run, or a next-run consumable that cannot be accepted. Excluding an outcome preserves its stored weight. Call `resetWeights()` for a new run. A revive continues the same run and keeps the reduced weights. Full `reset(randomWord)` initializes a loaded game session. The forced-win countdown survives run retries and revives within that session, matching the reference object's lifetime.
 
 Native blast velocity is `(tier + 1)` times the base values X=500 and Y=6. The three results are X=1000/1500/2000 and Y=12/18/24. The M5 maps the 2:3:4 strength ratio onto its small playfield.
 
-Evidence in the supplied arm64 library:
-
-- `Slot::ParseProbability`, `0x1037cec`: reads the initial weight and post-win multiplier.
-- `Slot::SlotTypeWin`, `0x1039434`: multiplies the initial weight and truncates to an integer.
-- `Slot::ResetProbabilities`, `0x103971c`: restores initial weights.
-- `SlotMachine::GiveReward`, `0x103e8ac`: resolves coin payouts, adds three tokens and grants consumables.
-- `SlotMachine::CashInTokens`, `0x103c938`: multiplies remaining tokens by the configured cash-in value.
-- `SlotMachine::SlotMachine`, `0x103a1ac`, and `UpdateLeverState`, `0x103e108`: initialize and decrease the forced-win countdown.
-- `SlotMachine::Update`, `0x103cc18`: checks all three symbols and resets an expired countdown.
-- `Slot::Randomise`, `0x1036efc`, and `GetDICTSlotType`, `0x10382dc`: build and arrange the finite drums.
-- `Player::Explode`, `0xebefdc`: applies blast tier strength.
+These reward values come from the supplied package's settings and static behavior audit. Private native analysis stays outside the source package. The public tests exercise the independently written reward and reel helpers. See [the vehicle and bonus audit](JETPACK_AUDIT.md) for the current implementation boundary.
 
 ## Coins and saved rewards
 
@@ -79,7 +69,17 @@ The table uses the package's `#default` configuration. The port starts each powe
 | Cash Dash | 0, 12500, 65000, 225000, 650000 | 60, 80, 100, 120, 150m |
 | Rocket Time | 1000, 3500, 12000, 30000, 75000, 150000, 250000, 350000, 450000, 550000 | 7, 9.5, 12, 14.5, 17, 19.5, 22, 24.5, 27, 29.5 seconds |
 
-Cash Dash's source coin payload rises from 300 to 700 in steps of 100. Cash Dash credits its caught payload through a bounded burst effect; it does not allocate hundreds of separate coin bodies. Its gem percentage is 5/10/15/20/25. Boost native additive speed is 2000/2000/3000/3500/3500. It approaches that modifier by 35 native units per reference tick. The boosted state clears at the endpoint minus 30/30/40/50/50m, then the modifier decays by 0.9 per tick. Rocket Time uses a 0.5 time multiplier. Its campaign pickup and purchase unlock at mission rank 5. Practice can exercise it earlier. These values are distinct from any conversion needed for the M5's rendering scale.
+Cash Dash's source coin payload rises from 300 to 700 in steps of 100. Catching the Cash Dash endpoint starts a ballistic shower with gravity, drag, bounces and a 0.3-second collection lock. The shared 48-entry coin-effect pool represents the source payload as value bundles. After the lock, body contact collects a bundle and Magnet can attract it. Uncaught bundles can leave the playfield. Missing the endpoint forfeits the shower. Its gem percentage is 5/10/15/20/25. Boost native additive speed is 2000/2000/3000/3500/3500. It approaches that modifier by 35 native units per reference tick. The boosted state clears at the endpoint minus 30/30/40/50/50m, then the modifier decays by 0.9 per tick. Rocket Time captures a speed-dependent target at activation: half speed through 380 native units per second, with a proportionally lower factor above that speed. Its campaign pickup and purchase unlock at mission rank 5. Practice can exercise it earlier. These values are distinct from any conversion needed for the M5's rendering scale.
+
+## Rocket Time and powered coin spawning
+
+Boost continues the ordinary coin scheduler while clearing hazards. Cash Dash supplies its own path and endpoint. Rocket Time pauses ordinary content spawning while preserving existing coins.
+
+Rocket Time uses an unscaled sequence clock. It eases into slow motion over 1.5 seconds, holds for the configured duration plus one second, then eases out over 1.5 seconds. World movement and normal-flight acceleration, drag and displacement use the same scale. Its target uses speed captured at activation.
+
+Waves begin 1.5 seconds after activation and repeat every 2.5 seconds. Upgrade levels schedule one through ten waves and one through six distinct classic vehicle choices. Missile trails can occur at every tier and emit gems at 0.1 scaled-second intervals while flying. Collecting a vehicle ends the power and restores ordinary motion. The source build has authored waves. A private import can add the supplied package's wave timing and geometry.
+
+The choices use readable M5 lanes. Premium choices and the full ownership catalog remain open. See [the audit](JETPACK_AUDIT.md) for the remaining behavior and verification gaps.
 
 ## Three active missions
 

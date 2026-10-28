@@ -2010,7 +2010,7 @@ void serviceDiagnostics() {
         diagnosticJetpackRide = 255;
         if (jetpackGame) resetNativeArcade();
       } else if (sscanf(command + 10, "%u %u %u", &ride, &gadget, &headstart) == 3 &&
-                 ride <= 9 && gadget <= 2 && headstart <= 1) {
+                 ride <= 9 && gadget <= 6 && headstart <= 1) {
         diagnosticJetpackRide = uint8_t(ride);
         diagnosticJetpackGadget = uint8_t(gadget);
         diagnosticJetpackHeadstart = headstart != 0;
@@ -2020,6 +2020,16 @@ void serviceDiagnostics() {
       unsigned value = 0;
       if (jetpackGame && sscanf(command + 10, "%u", &value) == 1 && value <= 1)
         jetpackGame->setDiagnosticProtection(value != 0);
+    } else if (!strncmp(command, "M5JETPOWER ", 11)) {
+      unsigned power = 0, level = 0;
+      if (diagnosticArcadeTesting && jetpackGame && sscanf(command + 11, "%u %u", &power, &level) >= 1 && power < 7 && level <= 9)
+        jetpackGame->diagnosticPower(uint8_t(power), uint8_t(level));
+    } else if (!strcmp(command, "M5JETBURST")) {
+      if (diagnosticArcadeTesting && jetpackGame) jetpackGame->diagnosticCoinBurst();
+    } else if (!strncmp(command, "M5JETSPIN ", 10)) {
+      unsigned tokens = 0;
+      if (diagnosticArcadeTesting && jetpackGame && sscanf(command + 10, "%u", &tokens) == 1 && tokens <= 65535)
+        jetpackGame->diagnosticSpin(uint16_t(tokens));
     } else if (!strcmp(command, "M5JETCASH")) {
       jetpackCashRequested = true;
     } else if (!strcmp(command, "M5JETTRACE")) {
@@ -2218,6 +2228,12 @@ void serviceDiagnostics() {
           unsigned(jetpackGame->spinTokens()), unsigned(jetpackGame->samLetters()),
           unsigned(jetpackGame->scientistInteractions()), unsigned(jetpackGame->crashBounces()),
           unsigned(sizeof(flappy::JetpackGame)), unsigned(diagnosticJetpackRide));
+      if (jetpackGame) Serial.printf("JETPACK_BONUS scale_q16=%lu waves=%u shots=%u drops=%u choices=%u attracted=%u shower_pending=%u reels=%u reel_age=%u\n",
+          (unsigned long)jetpackGame->movementScale(), unsigned(jetpackGame->rocketWaveCount()),
+          unsigned(jetpackGame->rocketShotCount()), unsigned(jetpackGame->rocketDroppedShots()),
+          unsigned(jetpackGame->rocketChoiceCount()), unsigned(jetpackGame->attractedCoinCount()),
+          unsigned(jetpackGame->cashShowerPending()), unsigned(jetpackGame->spinPresentation().running()),
+          unsigned(jetpackGame->spinPresentation().age()));
 #ifdef M5FLAP_JETPACK_IMPORTED
       Serial.printf("JETPACK_PACK patterns=%u points=%u original_runner=%u\n",
           unsigned(flappy::JetpackImported::PatternCount), unsigned(flappy::JetpackImported::CoinPointCount),

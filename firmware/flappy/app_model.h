@@ -228,17 +228,32 @@ class AppModel {
     if (ride > 8) ride = 0;
     if (settings.jetpackRide != ride) settingsDirty = true;
     settings.jetpackRide = ride;
+    if (ride) {
+      if (settings.jetpackHeadstart || settings.jetpackGadget >= 4) settingsDirty = true;
+      settings.jetpackHeadstart = false;
+      if (settings.jetpackGadget >= 4) settings.jetpackGadget = 0;
+    }
   }
 
   void setJetpackGadget(uint8_t gadget) {
-    if (gadget > 2) gadget = 0;
+    if (gadget > 6) gadget = 0;
     if (settings.jetpackGadget != gadget) settingsDirty = true;
     settings.jetpackGadget = gadget;
+    if (gadget >= 4) {
+      if (settings.jetpackRide || settings.jetpackHeadstart) settingsDirty = true;
+      settings.jetpackRide = 0;
+      settings.jetpackHeadstart = false;
+    }
   }
 
   void setJetpackHeadstart(bool enabled) {
     if (settings.jetpackHeadstart != enabled) settingsDirty = true;
     settings.jetpackHeadstart = enabled;
+    if (enabled) {
+      if (settings.jetpackRide || settings.jetpackGadget >= 4) settingsDirty = true;
+      settings.jetpackRide = 0;
+      if (settings.jetpackGadget >= 4) settings.jetpackGadget = 0;
+    }
   }
 
   void setJetpackPractice(bool enabled) {
@@ -624,7 +639,7 @@ class AppModel {
         return "Restart game";
       case MenuPage::GeometryLevel: return geometryLevelLabel(index);
       case MenuPage::JetpackPractice: {
-        constexpr const char* labels[] = {"Practice mode", "Starting ride", "Gadget", "Headstart"};
+        constexpr const char* labels[] = {"Practice mode", "Starting ride", "Starting bonus", "Headstart"};
         return labels[index];
       }
       case MenuPage::JetpackUpgrades: {
@@ -747,7 +762,10 @@ class AppModel {
           constexpr const char* rides[] = {"On foot", "Gravity suit", "Hog", "Stomper", "Bird", "Teleporter", "Dragon", "S.A.M.", "Random"};
           return rides[settings.jetpackRide <= 8 ? settings.jetpackRide : 0];
         }
-        if (index == 2) return settings.jetpackGadget == 1 ? "Coin magnet" : settings.jetpackGadget == 2 ? "Double coins" : "Off";
+        if (index == 2) {
+          constexpr const char* bonuses[] = {"Off", "Coin magnet", "Double coins", "Shield", "Boost", "Cash Dash", "Rocket Time"};
+          return bonuses[settings.jetpackGadget <= 6 ? settings.jetpackGadget : 0];
+        }
         if (index == 3) return settings.jetpackHeadstart ? "On" : "Off";
         break;
       case MenuPage::JetpackUpgrades:
@@ -1050,7 +1068,7 @@ class AppModel {
       case MenuPage::JetpackPractice:
         if (menu.selection == 0) setJetpackPractice(!settings.jetpackPractice);
         else if (menu.selection == 1) setJetpackRide(uint8_t((settings.jetpackRide + 1) % 9));
-        else if (menu.selection == 2) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 3));
+        else if (menu.selection == 2) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 7));
         else if (menu.selection == 3) setJetpackHeadstart(!settings.jetpackHeadstart);
         break;
       case MenuPage::JetpackUpgrades:

@@ -288,12 +288,39 @@ static void writePpm(const Canvas& c, const std::string& path) {
   }
 }
 
+static void magnetFieldGemsAndMovingCoins() {
+  std::set<uint64_t> frames;
+  for (unsigned frame : {0u,8u,16u,24u}) {
+    Canvas c;
+    Art::drawMagnetField(c,120,70,frame,65);
+    unsigned painted = 0;
+    for (int y = 0; y < Canvas::Height; ++y) for (int x = 0; x < Canvas::Width; ++x)
+      if (c.at(x,y) != Empty) { assert(x >= 55 && x <= 185 && y >= 5 && y <= 134); ++painted; }
+    assert(painted >= 30 && painted <= 150);
+    frames.insert(hash(c)); c.guards();
+  }
+  assert(frames.size() == 4);
+  for (int x : {0,120,239}) for (int y : {0,70,134}) {
+    Canvas c;
+    Art::drawMagnetField(c,x,y,7,65);
+    Art::drawGem(c,x,y,8);
+    Art::drawAttractedCoin(c,x,y,7,1,-400,600);
+    Art::drawAttractedCoin(c,x,y,7,5,400,-600);
+    c.guards();
+  }
+  Canvas gold,gem;
+  Art::drawAttractedCoin(gold,100,70,0,1,200,-400);
+  Art::drawAttractedCoin(gem,100,70,0,5,200,-400);
+  assert(hash(gold) != hash(gem) && contains(gem,Art::BlueLight));
+}
+
 int main(int argc, char** argv) {
   runnerPosesAndBounds();
   labCoverageMotionAndPalette();
   foregroundShapesAndClipping();
   expandedVehicleSilhouettesAndAnimation();
   scientistsCrashesPickupsAndEffects();
+  magnetFieldGemsAndMovingCoins();
   if (argc > 1) {
     const std::string base = argv[1];
     Canvas scene;

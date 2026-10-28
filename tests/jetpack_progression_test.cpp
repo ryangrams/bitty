@@ -179,7 +179,25 @@ static void rareStreaksAndFullTrace() {
       << " vehicles, " << spins << " spin tokens, " << sams << " SAM letters\n";
 }
 
+static void poweredCoinEligibility() {
+  Policy p; p.reset(912);
+  Policy::Context c; c.safePower = true; c.powerMask = 2;
+  c.scientistSlot = c.samSlot = c.spinSlot = false;
+  Access::due(p,100000,100000); c.nativeDistance = 49 * 18;
+  assert(!find(p.step(c),Kind::Coins));
+  c.nativeDistance = 50 * 18;
+  const auto boost = p.step(c); assert(find(boost,Kind::Coins));
+  p.completeContent(c.nativeDistance,400,3500,true);
+  Access::due(p,100000,100000); c.powerMask = 4;
+  assert(!find(p.step(c),Kind::Coins));
+  c.safePower = false; c.powerMask = 8;
+  for (unsigned i = 0; i < 100; ++i) {
+    assert(Access::ordinary(p,c) != Kind::Coins);
+    Access::completeOrdinary(p,c.nativeDistance);
+  }
+}
+
 int main() {
-  nativeUnitsAndManagerTargets(); vehicleHistoryAndRecovery(); eligibilityAndFamilies(); rareStreaksAndFullTrace();
+  nativeUnitsAndManagerTargets(); vehicleHistoryAndRecovery(); eligibilityAndFamilies(); rareStreaksAndFullTrace(); poweredCoinEligibility();
   std::cout << "Jetpack progression tests passed\n";
 }

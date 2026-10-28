@@ -11,7 +11,7 @@ The importer supports the observed APKM install pack, an APK containing `assets/
 
 The default output is `.local/jetpack/imported/`. Keep this folder private and out of Git. It contains:
 
-- `jetpack_imported.h`: packed coin coordinates and formation metadata for the firmware.
+- `jetpack_imported.h`: packed coin coordinates, formation metadata and optional Rocket Time waves for the firmware.
 - `receipt.json`: source and selected-file hashes, formation counts, dimensions, and import options.
 - `reference-config.json`: decoded settings and vehicle configuration for private reference. Importing these values does not automatically change the game's physics.
 
@@ -26,6 +26,12 @@ Classic eligibility and relative weights come from the package's base coin confi
 When the package includes Teleporter, SAM, Coin Streak, Gravity Suit or Mech coin profiles, the importer also preserves their selection weights and distance steps. Empty formations remain valid blank choices. The firmware uses the current profile's distance when selecting these layouts. The receipt lists which profiles were found and reports missing references separately. These records select layouts; they do not import the original program or enable unrelated events.
 
 The importer rejects oversized archives, duplicate or unsafe paths, unsupported cells, malformed configuration, and invalid dimensions. Patterns are limited to 256 columns, 40 rows, and 512 occupied cells each, with a combined maximum of 65,535 occupied cells. The row limit keeps every coin within the display's vertical play area at an integer pixel pitch. It reports unsupported data and preserves an existing import when validation fails.
+
+## Optional Rocket Time waves
+
+When the supplied package contains supported Rocket Time missile configuration, the importer also stores its pattern weights, lanes or lane ranges, angles, speeds, direction flags, chase speed and warning/launch timing in the private header. The receipt records the number of patterns and missiles. The package used during this audit supplied 15 patterns and 88 missile entries.
+
+These records remain private. The public source contains authored fallback waves and tests built from synthetic data. Older imported headers without wave metadata still use the fallback. Reimporting a compatible package adds its optional metadata without requiring original runner art. Missing or malformed optional configuration is handled by the importer's validation rules. See [the audit](JETPACK_AUDIT.md) for Rocket Time behavior and the remaining adaptations.
 
 ## Optional original runner
 

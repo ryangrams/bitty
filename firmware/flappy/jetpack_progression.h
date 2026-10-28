@@ -123,7 +123,8 @@ class JetpackProgression {
     uint32_t encounter = addSaturated(d, 577);
     uint32_t dueMeters = 0;
     if (context.safePower) {
-      return batch;
+      if (!(context.powerMask & 2) || (context.powerMask & 4) || !context.coinSlot || (!context.vehicle && meters < 50)) return batch;
+      kind = Kind::Coins;
     } else if (d < recoveryUntil_) {
       if (context.coinSlot) kind = Kind::Coins;
     } else if (!context.vehicle && context.powerSlot && meters + 100 > powerDue_) {

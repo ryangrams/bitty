@@ -17,6 +17,8 @@ struct JetpackTestAccess {
   static void clear(JetpackGame& game) {
     for (auto& zap : game.zaps_) zap = JetpackGame::Zap{};
     for (auto& coin : game.coinField_) coin = JetpackGame::Coin{};
+    for (auto& coin : game.attractedCoins_) coin = JetpackGame::AttractedCoin{};
+    game.cashShowerRemaining_ = 0;
     for (auto& missile : game.missiles_) missile = JetpackGame::Missile{};
     game.pickup_ = JetpackGame::Pickup{};
     game.bonus_ = game.cashPayload_ = JetpackGame::Bonus{}; game.token_ = game.samToken_ = JetpackGame::Token{}; game.laser_ = JetpackGame::Laser{};
@@ -45,7 +47,15 @@ struct JetpackTestAccess {
   }
   static void coin(JetpackGame& game, int x, int y) {
     game.coinField_[0].active = true; game.coinField_[0].x = x * JetpackGame::Unit;
-    game.coinField_[0].y = int16_t(y);
+    game.coinField_[0].y = int16_t(y); game.coinField_[0].value = 1;
+  }
+  static void gem(JetpackGame& game, int x, int y) { coin(game,x,y); game.coinField_[0].value = 5; }
+  static bool ordinaryCoin(const JetpackGame& game) { return game.coinField_[0].active; }
+  static bool attract(JetpackGame& game, int x, int y, uint8_t value) { return game.attractCoin(x * JetpackGame::Unit,y,value); }
+  static int attractedX(const JetpackGame& game) { return int(game.attractedCoins_[0].x); }
+  static void shower(JetpackGame& game, uint16_t count, uint8_t gems) {
+    game.cashShowerRemaining_ = count; game.cashShowerGemPercent_ = gems;
+    game.cashShowerX_ = 43 * JetpackGame::Unit; game.cashShowerY_ = 70 * JetpackGame::Unit;
   }
   static void pickup(JetpackGame& game, JetpackGame::Vehicle kind) {
     game.pickup_.active = true; game.pickup_.x = (JetpackGame::PlayerX + 1) * JetpackGame::Unit;
@@ -69,6 +79,10 @@ struct JetpackTestAccess {
     return JetpackGame::nearSegment(px, py, x, y, dx, dy, radius);
   }
   static void equip(JetpackGame& game, JetpackGame::Vehicle vehicle) { game.equip(vehicle); }
+  static uint8_t teleportStage(const JetpackGame& game) { return game.vehiclePhysics_.teleportStage; }
+  static uint16_t immunity(const JetpackGame& game) { return game.immune_; }
+  static int32_t nativeRideSpeed(const JetpackGame& game) { return game.vehiclePhysics_.nativeSpeed; }
+  static void rocketHold(JetpackGame& game) { game.rocketTime_.advance(90); game.movementScale_ = game.rocketTime_.timeScaleQ16(uint32_t(game.normalNativeVelocity())); }
   static void power(JetpackGame& game, JetpackGame::Power power) { game.activatePower(power); }
   static void laser(JetpackGame& game, unsigned ticks, int y) { game.laser_.active = true; game.laser_.ticks = uint16_t(ticks); game.laser_.y = int16_t(y); }
   static void npc(JetpackGame& game) { game.scientists_[0].active = true; game.scientists_[0].x = 45 * JetpackGame::Unit; game.scientists_[0].y = 114 * JetpackGame::Unit; }
@@ -117,6 +131,24 @@ struct JetpackTestAccess {
       game.collectImported();
     }
   }
+  static void singleImportedCoin(JetpackGame& game, unsigned index) {
+    pattern(game,index); auto& group = game.importedGroups_[0];
+    const uint16_t point = JetpackImported::CoinPoints[JetpackImported::CoinPatterns[index].offset];
+    for (uint8_t& bits : group.collected) bits = 255;
+    group.collected[0] = 254;
+    group.x = (JetpackGame::PlayerX + 35 - int(point & 255) * group.step) * JetpackGame::Unit;
+    game.y_ = (group.top + int(point >> 8) * group.step) * JetpackGame::FlightUnit;
+  }
+  static void singleImportedAtBody(JetpackGame& game, unsigned index) {
+    singleImportedCoin(game,index); auto& group = game.importedGroups_[0];
+    const uint16_t point = JetpackImported::CoinPoints[JetpackImported::CoinPatterns[index].offset];
+    group.x = (JetpackGame::PlayerX - int(point & 255) * group.step) * JetpackGame::Unit;
+    group.top = uint8_t(105 - int(point >> 8) * group.step);
+    player(game,28);
+  }
+  static void collectImported(JetpackGame& game) { game.collectImported(); }
+  static bool firstImportedDetached(const JetpackGame& game) { return game.importedGroups_[0].collected[0] & 1; }
+  static void freeAttractionSlot(JetpackGame& game) { game.attractedCoins_[0] = JetpackGame::AttractedCoin{}; }
 #endif
   static unsigned coinCount(const JetpackGame& game) {
     unsigned count = 0; for (const auto& coin : game.coinField_) count += coin.active; for (const auto& group : game.importedGroups_) count += group.pattern >= 0; return count;
@@ -370,14 +402,20 @@ static void expandedRidesAndFreshControls() {
     game.tick(press());
     if (ride == 2) assert(game.gravityUp());
     if (ride == 3 || ride == 4 || ride == 5 || ride == 8) assert(Access::velocity(game) < 0);
-    if (ride == 6) assert(game.playerY() == game.teleportTargetY());
+    if (ride == 6) {
+      assert(game.playerY() == 70 && Access::teleportStage(game) == 1);
+      for (unsigned i = 0; i < 11; ++i) { game.tick(Input{}); assert(game.playerY() == 70); }
+      game.tick(Input{});
+      assert(game.playerY() == game.teleportTargetY() && Access::teleportStage(game) == 2);
+    }
     if (ride == 7) assert(Access::velocity(game) > 0);
     game.setNextLoadout(0, 2, true);
     assert(uint8_t(game.vehicle()) == ride);
   }
   Game bird; bird.setNextLoadout(5, 0, false); start(bird); Access::clear(bird); bird.tick(Input{});
   for (unsigned i = 0; i < 15; ++i) {
-    Access::player(bird, 70); bird.tick(press()); assert(Access::velocity(bird) < 0); bird.tick(Input{});
+    Access::player(bird, 70); bird.tick(press()); assert(Access::velocity(bird) < 0);
+    for (unsigned release = 0; release < 10; ++release) bird.tick(Input{});
   }
   Game pickup; start(pickup); Access::clear(pickup); Access::zap(pickup, 44, 40, 0, 50);
   Access::missileAt(pickup, 70, 70); Access::laser(pickup, 30, 70);
@@ -387,6 +425,41 @@ static void expandedRidesAndFreshControls() {
   assert(Access::body(pickup, 15, 61, 60, 0));
   Access::equip(pickup, Vehicle::None); Access::player(pickup, 70);
   assert(!Access::body(pickup, 15, 61, 60, 0));
+}
+
+static void verifiedVehicleIntegration() {
+  Game sam; sam.setNextLoadout(uint8_t(Vehicle::SAM),0,false); start(sam); Access::clear(sam);
+  sam.tick(Input{}); Access::player(sam,70);
+  double y = 70, velocity = 0;
+  for (unsigned tick = 0; tick < 30; ++tick) {
+    sam.tick(hold());
+    const double native = double(Access::nativeRideSpeed(sam)) / Game::FlightUnit;
+    const double factor = 1 + (native - 175) / 350;
+    velocity = (velocity - .21 * (92.0 / 240) * factor) * .98;
+    y += velocity;
+    if (y < 27) { y = 27; velocity = 0; }
+    assert(std::abs(Access::preciseY(sam) - y) < .01);
+  }
+  for (unsigned tick = 0; tick < 120; ++tick) sam.tick(hold());
+  assert(sam.playerY() == 27);
+  sam.tick(Input{});
+  assert(Access::velocity(sam) > 0);
+
+  Game tele; tele.setNextLoadout(uint8_t(Vehicle::Teleporter),0,false); start(tele); Access::clear(tele);
+  tele.tick(Input{}); Access::player(tele,70); Access::immunity(tele,0);
+  const int target = tele.teleportTargetY();
+  tele.tick(press());
+  for (unsigned tick = 0; tick < 11; ++tick) tele.tick(Input{});
+  assert(tele.playerY() == 70 && Access::immunity(tele) == 0);
+  tele.tick(Input{});
+  assert(tele.playerY() == target && Access::immunity(tele) == 0);
+
+  Game hog; hog.setNextLoadout(uint8_t(Vehicle::Hog),0,false); start(hog); Access::clear(hog);
+  for (unsigned tick = 0; tick < 600; ++tick) hog.tick(Input{});
+  assert(std::abs(double(Access::nativeRideSpeed(hog)) / Game::FlightUnit - 635.437691859) < .004);
+  assert(hog.speed() > 4 * Game::Unit);
+  for (unsigned tick = 0; tick < 5000; ++tick) hog.tick(Input{});
+  assert(hog.speed() <= 1636);
 }
 
 static void allPowerupsAndNpcInteractions() {
@@ -414,10 +487,13 @@ static void allPowerupsAndNpcInteractions() {
   Access::power(coins, Power::DoubleCoins); Access::coin(coins, 44, 70); coins.tick(Input{});
   assert(coins.coins() == 2);
   Access::power(coins, Power::Magnet); Access::coin(coins, 90, 70);
-  for (unsigned i = 0; i < 20; ++i) { Access::player(coins, 70); coins.tick(Input{}); }
+  coins.tick(Input{}); assert(coins.coins() == 2 && coins.attractedCoinCount() == 1);
+  const int before = Access::attractedX(coins);
+  coins.tick(Input{}); assert(coins.coins() == 2 && Access::attractedX(coins) < before);
+  for (unsigned i = 0; i < 80; ++i) { Access::player(coins, 70); coins.tick(Input{}); }
   assert(coins.coins() == 4);
   Game slow, fast; start(slow); start(fast); Access::clear(slow); Access::clear(fast);
-  Access::power(slow, Power::RocketTime); Access::missileAt(slow, 220, 40); Access::missileAt(fast, 220, 40);
+  Access::power(slow, Power::RocketTime); Access::rocketHold(slow); Access::missileAt(slow, 220, 40); Access::missileAt(fast, 220, 40);
   for (unsigned i = 0; i < 10; ++i) { slow.tick(Input{}); fast.tick(Input{}); }
   assert(slow.missile(0).x > fast.missile(0).x + 20 * Q);
   Game npc; start(npc); Access::clear(npc); Access::npc(npc); npc.tick(Input{});
@@ -451,7 +527,7 @@ static void finalSpinAndCrashRewards() {
     assert(game.phase() == Phase::Spin);
     const unsigned expected = reward == 0 ? 0 : reward == 1 ? 2 : reward == 2 ? 3 : reward == 3 ? 4 : 1;
     assert(Access::reward(game) == expected);
-    for (unsigned i = 0; i < 59; ++i) game.tick(Input{});
+    for (unsigned i = 0; i < flappy::JetpackSpin::Duration + flappy::JetpackSpin::WinHold - 1; ++i) game.tick(Input{});
     assert(game.phase() == Phase::Spin);
     game.tick(Input{});
     if (reward == 0) assert(game.phase() == Phase::Running);
@@ -471,7 +547,7 @@ static void finalSpinAndCrashRewards() {
   }
   Game crash; start(crash); Access::clear(crash); Access::player(crash, 60); Access::hit(crash);
   const uint32_t before = crash.distance();
-  for (unsigned i = 0; i < 150; ++i) crash.tick(Input{});
+  for (unsigned i = 0; i < 400 && !crash.gameOver(); ++i) crash.tick(Input{});
   assert(crash.gameOver() && crash.crashBounces() >= 1 && crash.distance() > before);
 }
 
@@ -495,7 +571,7 @@ static void bonusChoicesAndProfileIsolation() {
     Access::clear(practice); Access::spin(practice, reward); practice.tick(press());
     assert(!practice.rankedRun() && practice.lastSpinWon());
     assert(Access::pendingRewards(practice) == 0);
-    for (unsigned i = 0; i < 60; ++i) practice.tick(Input{});
+    for (unsigned i = 0; i < flappy::JetpackSpin::Duration + flappy::JetpackSpin::WinHold; ++i) practice.tick(Input{});
     assert(practice.gameOver() && profile.coins() == bank);
     practice.setProfileEnabled(true); practice.tick(Input{}); practice.tick(press());
     assert(practice.rankedRun() && !practice.powerTicks(Game::Power::Boost) && !practice.powerTicks(Game::Power::DoubleCoins));
@@ -526,7 +602,9 @@ static void nativePowerTimingAndPayload() {
   Access::meters(cash, 60); cash.tick(Input{});
   assert(Access::payload(cash) && cash.coins() == 0 && !cash.powerTicks(Game::Power::CashDash));
   Access::player(cash, 70); Access::catchPayload(cash); cash.tick(Input{});
-  assert(!Access::payload(cash) && cash.coins() >= 300 && cash.coins() <= 1500 && (cash.coins() - 300) % 4 == 0);
+  assert(!Access::payload(cash) && cash.coins() == 0 && cash.cashShowerPending() == 300);
+  for (unsigned i = 0; i < 400; ++i) { Access::player(cash, 70); cash.tick(Input{}); }
+  assert(cash.cashShowerPending() == 0 && cash.attractedCoinCount() == 0 && cash.coins() < 1800);
   assert(cash.runStats().coinsCollected == cash.coins());
 
   flappy::JetpackProfile profile; auto saved = profile.state();
@@ -542,6 +620,69 @@ static void nativePowerTimingAndPayload() {
   Access::power(upgraded, Game::Power::Boost);
   for (unsigned i = 0; i < 100; ++i) upgraded.tick(Input{});
   assert(Access::boostExtra(upgraded) == 3500 * Game::FlightUnit);
+}
+
+static void boundedMagnetAndGemAnimation() {
+  Game full; start(full); Access::clear(full); Access::player(full,70); Access::power(full,Game::Power::Magnet);
+  for (unsigned i = 0; i < Game::AttractedCoinCount; ++i) assert(Access::attract(full,85,70,1));
+  assert(!Access::attract(full,85,70,1));
+  Access::gem(full,90,70); full.tick(Input{});
+  assert(full.coins() == 0 && Access::ordinaryCoin(full) && full.attractedCoinCount() == Game::AttractedCoinCount);
+  for (unsigned i = 0; i < 150; ++i) { Access::player(full,70); full.tick(Input{}); }
+  assert(full.coins() == Game::AttractedCoinCount + 5 && full.attractedCoinCount() == 0);
+  const uint32_t collected = full.coins();
+  for (unsigned i = 0; i < 100; ++i) { Access::player(full,70); full.tick(Input{}); }
+  assert(full.coins() == collected);
+
+  Game shower; start(shower); Access::clear(shower); Access::player(shower,70);
+  for (unsigned i = 0; i < Game::AttractedCoinCount; ++i) assert(Access::attract(shower,85,70,1));
+  Access::power(shower,Game::Power::Magnet); Access::shower(shower,100,100); shower.tick(Input{});
+  assert(shower.cashShowerPending() == 100 && shower.coins() == 0);
+  for (unsigned i = 0; i < 300; ++i) { Access::player(shower,70); shower.tick(Input{}); }
+  assert(shower.cashShowerPending() == 0 && shower.attractedCoinCount() == 0 && shower.coins() > Game::AttractedCoinCount && shower.coins() <= Game::AttractedCoinCount + 500);
+  Game doubleGem; start(doubleGem); Access::clear(doubleGem); Access::player(doubleGem,70);
+  Access::power(doubleGem,Game::Power::DoubleCoins); Access::power(doubleGem,Game::Power::Magnet); Access::gem(doubleGem,85,70);
+  doubleGem.tick(Input{}); assert(doubleGem.coins() == 0 && doubleGem.attractedCoinCount() == 1);
+  for (unsigned i = 0; i < 100; ++i) { Access::player(doubleGem,70); doubleGem.tick(Input{}); }
+  assert(doubleGem.coins() == 10 && doubleGem.attractedCoinCount() == 0);
+
+  Game sam; sam.setNextLoadout(8,0,false); start(sam); Access::clear(sam); Access::player(sam,28);
+  Access::coin(sam,44,105); sam.tick(Input{}); assert(sam.coins() == 1);
+  Access::coin(sam,44,28); sam.tick(Input{}); assert(sam.coins() == 1);
+
+#ifdef M5FLAP_JETPACK_IMPORTED
+  unsigned pattern = 0;
+  while (pattern < flappy::JetpackImported::PatternCount && !flappy::JetpackImported::CoinPatterns[pattern].count) ++pattern;
+  assert(pattern < flappy::JetpackImported::PatternCount);
+  Game imported; start(imported); Access::clear(imported); Access::power(imported,Game::Power::Magnet);
+  Access::singleImportedCoin(imported,pattern);
+  const int playerY = imported.playerY();
+  for (unsigned i = 0; i < Game::AttractedCoinCount; ++i) assert(Access::attract(imported,85,playerY,1));
+  Access::collectImported(imported);
+  assert(!Access::firstImportedDetached(imported) && imported.coins() == 0);
+  Access::freeAttractionSlot(imported); Access::collectImported(imported);
+  assert(Access::firstImportedDetached(imported) && imported.coins() == 0 && imported.attractedCoinCount() == Game::AttractedCoinCount);
+  Access::collectImported(imported); assert(imported.attractedCoinCount() == Game::AttractedCoinCount);
+  for (unsigned i = 0; i < 150; ++i) { Access::player(imported,playerY); imported.tick(Input{}); }
+  assert(imported.coins() == Game::AttractedCoinCount && imported.attractedCoinCount() == 0);
+  Game importedSam; importedSam.setNextLoadout(8,0,false); start(importedSam); Access::clear(importedSam);
+  Access::singleImportedAtBody(importedSam,pattern); Access::collectImported(importedSam);
+  assert(importedSam.coins() == 1);
+#endif
+}
+
+static void poweredCoinsRemainPlayable() {
+  Game boost; start(boost); Access::clear(boost); Access::meters(boost,100); Access::power(boost,Game::Power::Boost);
+  auto& policy = Access::progression(boost); policy.setEnabled(true);
+  flappy::JetpackProgressionTestAccess::due(policy,100000,100000); Access::spawn(boost);
+  assert(Access::coinCount(boost) > 0);
+  Game cash; start(cash); Access::clear(cash); Access::meters(cash,100); Access::power(cash,Game::Power::CashDash);
+  auto& cashPolicy = Access::progression(cash); cashPolicy.setEnabled(true);
+  flappy::JetpackProgressionTestAccess::due(cashPolicy,100000,100000); Access::spawn(cash);
+  assert(Access::coinCount(cash) == 0);
+  Game rocket; start(rocket); Access::clear(rocket); Access::player(rocket,70); Access::coin(rocket,44,70);
+  Access::power(rocket,Game::Power::RocketTime);
+  assert(Access::ordinaryCoin(rocket)); rocket.tick(Input{}); assert(rocket.coins() == 1);
 }
 
 static void realSpawnAnchorEncounterTiming() {
@@ -692,7 +833,7 @@ static void dumpScene(const char* path, int vehicle) {
 
 int main(int argc, char** argv) {
   timingFlightAndRearming(); independentFlightAndDistance(); collisionGeometryAndCoins(); fatalCueWinsOverCoinCollection(); vehiclesAbsorbAndChangePhysics();
-  independentGravityFlight(); missilesTrackThenLock(); expandedRidesAndFreshControls(); allPowerupsAndNpcInteractions(); samVisibleBlocksAndLaserSeparation(); finalSpinAndCrashRewards(); bonusChoicesAndProfileIsolation(); nativePowerTimingAndPayload(); realSpawnAnchorEncounterTiming(); deterministicProgressionAndRenderBounds(); randomizedRuns(); expandedPoolAndRenderStress(); importedGroupsKeepEveryCell();
+  independentGravityFlight(); missilesTrackThenLock(); expandedRidesAndFreshControls(); verifiedVehicleIntegration(); allPowerupsAndNpcInteractions(); samVisibleBlocksAndLaserSeparation(); finalSpinAndCrashRewards(); bonusChoicesAndProfileIsolation(); nativePowerTimingAndPayload(); boundedMagnetAndGemAnimation(); poweredCoinsRemainPlayable(); realSpawnAnchorEncounterTiming(); deterministicProgressionAndRenderBounds(); randomizedRuns(); expandedPoolAndRenderStress(); importedGroupsKeepEveryCell();
   if (argc > 1) dumpScene(argv[1], argc > 2 ? argv[2][0] - '0' : 0);
   std::cout << "Jetpack tests passed\n";
 }

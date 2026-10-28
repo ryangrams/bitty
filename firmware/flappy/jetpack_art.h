@@ -205,6 +205,68 @@ void drawCoin(Canvas& c, int x, int y, uint32_t frame) {
 }
 
 template<class Canvas>
+void drawGem(Canvas& c, int x, int y, uint32_t frame) {
+  c.line(x - 3, y - 2, x, y - 5, color(Outline));
+  c.line(x, y - 5, x + 3, y - 2, color(Outline));
+  c.line(x - 3, y - 2, x, y + 4, color(Outline));
+  c.line(x + 3, y - 2, x, y + 4, color(Outline));
+  c.rect(x - 2, y - 2, 5, 3, color(Blue));
+  c.line(x - 2, y - 2, x, y + 3, color(BlueLight));
+  c.line(x + 2, y - 2, x, y + 3, color(Shirt));
+  c.line(x - 1, y - 3, x + 1, y - 3, color(SkinLight));
+  c.pixel(x - 1, y - 2, color((frame / 5u & 1u) ? Eye : BlueLight));
+}
+
+template<class Canvas>
+void drawMagnetField(Canvas& c, int x, int y, uint32_t frame, int radius) {
+  if (radius <= 0) return;
+  static const int8_t sine[16] = {0,6,11,15,16,15,11,6,0,-6,-11,-15,-16,-15,-11,-6};
+  const int near = radius < 31 ? radius : 31;
+  const int phase = int(frame / 2u % 18u);
+  const int ring = near - phase * (near - 11) / 18;
+  for (unsigned quadrant = 0; quadrant < 4; ++quadrant) {
+    const unsigned angle = (unsigned(frame / 4u) + quadrant * 4u) & 15u;
+    const unsigned next = (angle + 1) & 15u;
+    const int ax = x + sine[(angle + 4) & 15u] * ring / 16;
+    const int ay = y + sine[angle] * ring / 16;
+    const int bx = x + sine[(next + 4) & 15u] * ring / 16;
+    const int by = y + sine[next] * ring / 16;
+    c.line(ax, ay, bx, by, color(Blue));
+    c.pixel(bx, by, color(BlueLight));
+  }
+  for (unsigned i = 0; i < 8; ++i) {
+    const unsigned angle = (i * 2u + unsigned(frame / 8u)) & 15u;
+    const int px = x + sine[(angle + 4) & 15u] * radius / 16;
+    const int py = y + sine[angle] * radius / 16;
+    c.pixel(px, py, color(Screen));
+  }
+  c.rect(x - 15, y - 3, 3, 7, color(RedShade));
+  c.rect(x - 14, y - 3, 2, 2, color(RedLight));
+  c.rect(x - 14, y + 2, 2, 2, color(BlueLight));
+  c.pixel(x - 13, y, color(MetalLight));
+}
+
+template<class Canvas>
+void drawAttractedCoin(Canvas& c, int x, int y, uint32_t frame, uint8_t value, int vx, int vy) {
+  const int tx = vx > 0 ? -1 : vx < 0 ? 1 : 0;
+  const int ty = vy > 0 ? -1 : vy < 0 ? 1 : 0;
+  c.pixel(x + tx * 4, y + ty * 4, color(value >= 5 ? BlueShade : BrassShade));
+  c.pixel(x + tx * 2, y + ty * 2, color(value >= 5 ? Blue : Brass));
+  if (value >= 5) {
+    c.line(x, y - 2, x + 2, y, color(BlueLight));
+    c.line(x + 2, y, x, y + 2, color(Blue));
+    c.line(x, y + 2, x - 2, y, color(Shirt));
+    c.line(x - 2, y, x, y - 2, color(BlueLight));
+    c.pixel(x, y - 1, color(Eye));
+  } else {
+    const int half = frame / 4u & 1u ? 1 : 0;
+    c.rect(x - half, y - 2, half * 2 + 1, 5, color(Brass));
+    c.pixel(x - half, y - 1, color(BrassLight));
+    c.pixel(x, y - 2, color(FireLight));
+  }
+}
+
+template<class Canvas>
 void drawMissile(Canvas& c, int x, int y, uint32_t frame) {
   c.rect(x - 4, y - 3, 12, 7, color(Outline));
   c.rect(x - 6, y - 2, 3, 5, color(MetalShade));

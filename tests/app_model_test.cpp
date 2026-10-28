@@ -591,9 +591,9 @@ static void jetpackSettingsAndRestart() {
     assert(d.app.settings.jetpackRide == ride % 9);
     assert(MenuFont::textWidth(d.app.menuValue(1)) <= 128);
   }
-  for (uint8_t gadget = 1; gadget <= 3; ++gadget) {
+  for (uint8_t gadget = 1; gadget <= 7; ++gadget) {
     d.app.menu.selection = 2; d.tick(true);
-    assert(d.app.settings.jetpackGadget == gadget % 3);
+    assert(d.app.settings.jetpackGadget == gadget % 7);
   }
   d.app.menu.selection = 3; d.tick(true); assert(d.app.settings.jetpackHeadstart);
   d.tick(true); assert(!d.app.settings.jetpackHeadstart);
@@ -632,6 +632,56 @@ static void jetpackSettingsAndRestart() {
   d.app.setJetpackGadget(2); d.app.setJetpackGadget(UINT8_MAX);
   assert(d.app.settings.jetpackRide == 0 && d.app.settings.jetpackGadget == 0);
   d.app.setJetpackDifficulty(UINT8_MAX); assert(d.app.settings.jetpackDifficulty == 1);
+}
+
+static void jetpackPracticeCompatibility() {
+  for (uint8_t bonus = 4; bonus <= 6; ++bonus) {
+    AppModel app;
+    app.setJetpackGadget(bonus); app.settingsDirty = false;
+    app.setJetpackRide(3);
+    assert(app.settings.jetpackRide == 3 && app.settings.jetpackGadget == 0 && !app.settings.jetpackHeadstart && app.settingsDirty);
+    app.settingsDirty = false; app.setJetpackRide(3); assert(!app.settingsDirty);
+    app.setJetpackGadget(bonus);
+    assert(app.settings.jetpackRide == 0 && app.settings.jetpackGadget == bonus && !app.settings.jetpackHeadstart && app.settingsDirty);
+    app.settingsDirty = false; app.setJetpackGadget(bonus); assert(!app.settingsDirty);
+    app.setJetpackHeadstart(true);
+    assert(app.settings.jetpackHeadstart && app.settings.jetpackRide == 0 && app.settings.jetpackGadget == 0 && app.settingsDirty);
+    app.settingsDirty = false; app.setJetpackHeadstart(true); assert(!app.settingsDirty);
+    app.setJetpackGadget(bonus);
+    assert(!app.settings.jetpackHeadstart && app.settings.jetpackGadget == bonus && app.settingsDirty);
+  }
+  for (uint8_t gadget = 0; gadget <= 3; ++gadget) {
+    AppModel app;
+    app.setJetpackGadget(gadget); app.setJetpackHeadstart(true); app.settingsDirty = false;
+    app.setJetpackRide(4);
+    assert(app.settings.jetpackRide == 4 && app.settings.jetpackGadget == gadget && !app.settings.jetpackHeadstart && app.settingsDirty);
+    app.settingsDirty = false; app.setJetpackGadget(gadget); assert(!app.settingsDirty);
+    app.setJetpackHeadstart(true);
+    assert(app.settings.jetpackRide == 0 && app.settings.jetpackGadget == gadget && app.settings.jetpackHeadstart && app.settingsDirty);
+    app.settingsDirty = false; app.setJetpackRide(0); app.setJetpackGadget(gadget); assert(!app.settingsDirty);
+    app.setJetpackHeadstart(false); assert(app.settingsDirty && app.settings.jetpackGadget == gadget);
+    app.settingsDirty = false; app.setJetpackHeadstart(false); assert(!app.settingsDirty);
+    AppModel rideFirst; rideFirst.setJetpackRide(5); rideFirst.settingsDirty = false;
+    rideFirst.setJetpackGadget(gadget);
+    assert(rideFirst.settings.jetpackRide == 5 && rideFirst.settings.jetpackGadget == gadget && rideFirst.settingsDirty == (gadget != 0));
+    AppModel headstartFirst; headstartFirst.setJetpackHeadstart(true); headstartFirst.settingsDirty = false;
+    headstartFirst.setJetpackGadget(gadget);
+    assert(headstartFirst.settings.jetpackHeadstart && headstartFirst.settings.jetpackGadget == gadget && headstartFirst.settingsDirty == (gadget != 0));
+  }
+  // Re-selecting an unchanged value repairs incompatible restored settings.
+  for (uint8_t ride = 1; ride <= 8; ++ride) {
+    AppModel app;
+    app.settings.jetpackRide = ride; app.settings.jetpackGadget = 6; app.settings.jetpackHeadstart = true;
+    app.setJetpackRide(ride);
+    assert(app.settingsDirty && app.settings.jetpackRide == ride && !app.settings.jetpackGadget && !app.settings.jetpackHeadstart);
+  }
+  AppModel restored;
+  restored.settings.jetpackRide = 2; restored.settings.jetpackGadget = 4; restored.settings.jetpackHeadstart = true;
+  restored.setJetpackGadget(4);
+  assert(restored.settingsDirty && !restored.settings.jetpackRide && !restored.settings.jetpackHeadstart && restored.settings.jetpackGadget == 4);
+  restored.settingsDirty = false; restored.settings.jetpackRide = 2; restored.settings.jetpackGadget = 6; restored.settings.jetpackHeadstart = true;
+  restored.setJetpackHeadstart(true);
+  assert(restored.settingsDirty && !restored.settings.jetpackRide && !restored.settings.jetpackGadget && restored.settings.jetpackHeadstart);
 }
 
 static void controllerMenuRequestsAndStatus() {
@@ -1123,6 +1173,7 @@ int main() {
   nativeArcadeLauncherAndBoot();
   nativeArcadeSettingsAndRequests();
   jetpackSettingsAndRestart();
+  jetpackPracticeCompatibility();
   controllerMenuRequestsAndStatus();
   perGameSettingsAndTetrisRequests();
   perGameSettingsAndZeroRequests();

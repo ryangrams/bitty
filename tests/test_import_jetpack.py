@@ -36,6 +36,43 @@ def binary_xml():
     return b'bxml\x01\x00\x03\x00' + struct.pack('<I', len(strings)) + strings + struct.pack('<I', 1) + root
 
 
+def binary_xml_nodes(roots):
+    strings = bytearray()
+    offsets = {}
+
+    def text(value):
+        if value not in offsets:
+            offsets[value] = len(strings)
+            strings.extend(value.encode() + b'\x00')
+        return struct.pack('<I', offsets[value])
+
+    def node(value):
+        attrs = value.get('attrs', {})
+        children = value.get('children', [])
+        result = b'\x01' + text(value['tag']) + struct.pack('<I', len(attrs))
+        result += b''.join(text(key) + text(item) for key, item in attrs.items())
+        return result + struct.pack('<I', len(children)) + b''.join(node(child) for child in children)
+
+    data = b''.join(node(root) for root in roots)
+    return b'bxml\x01\x00\x03\x00' + struct.pack('<I', len(strings)) + strings + struct.pack('<I', len(roots)) + data
+
+
+def rocket_fixture():
+    def actor(delay, low, high, angle, speed, random='false'):
+        return {'tag': 'missile', 'attrs': {'scale': '1', 'delay': str(delay)}, 'children': [
+            {'tag': 'position', 'attrs': {'random': random, 'range': 'true', 'lower_y': str(low), 'upper_y': str(high)}},
+            {'tag': 'flight', 'attrs': {'dud': 'false', 'ricochet': 'true', 'ricochet_angle': str(angle), 'speed': str(speed)}},
+        ]}
+    return [{'tag': 'missile_file', 'children': [
+        {'tag': 'missileSpeed', 'attrs': {'value': '3'}},
+        {'tag': 'chaseSpeed', 'attrs': {'value': '0.5'}},
+        {'tag': 'missile_pattern', 'children': [
+            {'tag': 'probability', 'attrs': {'value': '7', 'startDistance': '0'}},
+            actor(-100, -60, 60, 12, 2), actor(-80, 30, -30, -12, 1, 'true'),
+        ]},
+    ]}]
+
+
 def texture(width=128, height=64):
     header = bytearray(52)
     header[:4] = b'TEX\x01'
@@ -220,6 +257,52 @@ class JetpackImportTests(unittest.TestCase):
         self.assertIn('0xf800', header)
         self.assertIn('approximations', receipt['runner']['method'])
 
+    def test_optional_rocket_waves_preserve_timing_lanes_and_flags(self):
+        roots = rocket_fixture()
+        data = binary_xml_nodes(roots)
+        waves = importer.rocket_waves(roots)
+        self.assertEqual(importer.rocket_waves(importer.BinaryXML(data).decode()), waves)
+        self.assertEqual(waves['patterns'], [{'offset': 0, 'count': 2, 'weight': 700}])
+        self.assertEqual(waves['missiles'][0], {'launchTicks': 50, 'warningTicks': 20,
+                         'laneMinQ8': -128, 'laneMaxQ8': 128, 'angleQ8': 3072,
+                         'speedQ8': 512, 'direction': -1, 'flags': 6})
+        self.assertEqual(waves['missiles'][1]['laneMinQ8'], -64)
+        self.assertEqual(waves['missiles'][1]['laneMaxQ8'], 64)
+        self.assertEqual(waves['missiles'][1]['flags'], 7)
+        receipt = self.run_import(self.package(self.entries() + [(importer.ROCKET_CONFIG, data)]))
+        header = (self.directory / 'private' / 'jetpack_imported.h').read_text()
+        self.assertEqual((receipt['rocket_pattern_count'], receipt['rocket_missile_count']), (1, 2))
+        self.assertIn('#define M5FLAP_JETPACK_ROCKET_WAVES 1', header)
+        self.assertIn('RocketMissileSpeedQ8 = 768', header)
+        self.assertIn('RocketChaseSpeedQ8 = 128', header)
+        self.assertIn('{50,20,-128,128,3072,512,-1,6}', header)
+        self.run_import(self.package())
+        self.assertNotIn('M5FLAP_JETPACK_ROCKET_WAVES', (self.directory / 'private' / 'jetpack_imported.h').read_text())
+
+    def test_malformed_rocket_config_preserves_existing_import(self):
+        self.run_import()
+        output = self.directory / 'private' / 'jetpack_imported.h'
+        before = output.read_bytes()
+        for field, value in (('delay', '-121'), ('delay', '1.5'), ('scale', '2')):
+            roots = rocket_fixture()
+            roots[0]['children'][2]['children'][1]['attrs'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(importer.ImportError):
+                self.run_import(self.package(self.entries() + [(importer.ROCKET_CONFIG, binary_xml_nodes(roots))]))
+            self.assertEqual(output.read_bytes(), before)
+        for field, value in (('upper_y', 'NaN'), ('upper_y', '241'), ('random', 'yes')):
+            roots = rocket_fixture()
+            roots[0]['children'][2]['children'][1]['children'][0]['attrs'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(importer.ImportError):
+                importer.rocket_waves(roots)
+        roots = rocket_fixture()
+        roots[0]['children'][2]['children'] += roots[0]['children'][2]['children'][1:] * 4
+        with self.assertRaisesRegex(importer.ImportError, 'missile count'):
+            importer.rocket_waves(roots)
+        roots = rocket_fixture()
+        roots[0]['children'] += roots[0]['children'][2:] * importer.MAX_ROCKET_PATTERNS
+        with self.assertRaisesRegex(importer.ImportError, 'pattern count'):
+            importer.rocket_waves(roots)
+
     def test_malformed_runner_dimensions_are_rejected(self):
         bad = bytearray(texture())
         struct.pack_into('<I', bad, 28, 0xffffffff)
@@ -230,6 +313,7 @@ class JetpackImportTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler unavailable')
     def test_generated_header_compiles_with_and_without_runner(self):
         entries = self.entries() + [(name, texture()) for name in importer.RUNNER_SOURCES]
+        entries.append((importer.ROCKET_CONFIG, binary_xml_nodes(rocket_fixture())))
         source = self.package(entries)
         probe = self.directory / 'probe.cpp'
         for enabled in (False, True):
@@ -240,6 +324,8 @@ class JetpackImportTests(unittest.TestCase):
                              'static_assert(MaxPatternPoints <= 512, "mask capacity");\n'
                              'static_assert(ProfileWeightCount == 1, "profile weights");\n'
                              'static_assert(ProfileSAM == 2, "profile ID");\n'
+                             'static_assert(RocketPatternCount == 1, "Rocket patterns");\n'
+                             'static_assert(RocketMissileCount == 2, "Rocket missiles");\n'
                              'static_assert(sizeof(RunnerPixels[0]) == 600, "runner dimensions");\n'
                              'static_assert(FrameCount == %d, "frame count");\n' % (6 if enabled else 0))
             subprocess.run([shutil.which('c++'), '-std=c++11', '-Wall', '-Wextra', '-Werror',

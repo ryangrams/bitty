@@ -24,6 +24,9 @@ MAX_PATTERN = 512
 MAX_PATTERN_POINTS = 512
 MAX_POINTS = 65535
 MAX_PROFILE_WEIGHTS = 4096
+MAX_ROCKET_PATTERNS = 32
+MAX_ROCKET_MISSILES = 8
+ROCKET_CONFIG = 'xml/Streaks/PowerupSlowMotionMissiles.xml'
 BASE_CONFIG = 'Configs/coins_patterns/CoinPatterns_1.json'
 PROFILE_CONFIGS = ((0, 'Default', BASE_CONFIG),
                    (1, 'Teleporter', 'Configs/coins_patterns/Streaks_CFTCoins_1.json'),
@@ -290,7 +293,70 @@ def runner_frames(read):
                     'source_bounds': [left, top, right, bottom]}
 
 
-def header(patterns, points, frames, profile_records=None):
+def rocket_waves(roots):
+    def number(attrs, key, lower, upper, default=None, integral=False):
+        value = Decimal(str(attrs[key] if key in attrs else default))
+        if not value.is_finite() or not lower <= value <= upper or integral and value != int(value):
+            raise ImportError('Invalid Rocket Time ' + key)
+        return int(value) if integral else value
+
+    def boolean(attrs, key, default='false'):
+        value = attrs.get(key, default)
+        if value not in ('true', 'false'):
+            raise ImportError('Invalid Rocket Time ' + key)
+        return value == 'true'
+
+    def child(node, tag):
+        nodes = [item for item in node.get('children', []) if item.get('tag') == tag]
+        if len(nodes) != 1:
+            raise ImportError('Invalid Rocket Time ' + tag)
+        return nodes[0].get('attrs', {})
+
+    try:
+        if len(roots) != 1 or roots[0].get('tag') != 'missile_file':
+            raise ImportError('Invalid Rocket Time root')
+        root = roots[0]
+        speed = number(child(root, 'missileSpeed'), 'value', 0, 100)
+        chase = number(child(root, 'chaseSpeed'), 'value', 0, 100)
+        nodes = [node for node in root.get('children', []) if node.get('tag') == 'missile_pattern']
+        if not 0 < len(nodes) <= MAX_ROCKET_PATTERNS:
+            raise ImportError('Rocket Time pattern count exceeds the limit')
+        patterns, missiles = [], []
+        for node in nodes:
+            probability = child(node, 'probability')
+            weight = number(probability, 'value', 0, 655)
+            if number(probability, 'startDistance', 0, 65535, 0, True) != 0 or probability.get('leveltag'):
+                raise ImportError('Unsupported Rocket Time pattern probability')
+            actors = [item for item in node.get('children', []) if item.get('tag') == 'missile']
+            if not 0 < len(actors) <= MAX_ROCKET_MISSILES:
+                raise ImportError('Rocket Time missile count exceeds the limit')
+            patterns.append({'offset': len(missiles), 'count': len(actors), 'weight': int(weight * 100)})
+            for actor in actors:
+                attrs = actor.get('attrs', {})
+                delay = number(attrs, 'delay', -120, 3600, integral=True)
+                if number(attrs, 'scale', 1, 1, 1) != 1:
+                    raise ImportError('Unsupported Rocket Time missile scale')
+                position, flight = child(actor, 'position'), child(actor, 'flight')
+                random_lane, ranged = boolean(position, 'random'), boolean(position, 'range')
+                low = number(position, 'lower_y', -240, 240) if ranged else number(position, 'y', -240, 240, 0)
+                high = number(position, 'upper_y', -240, 240) if ranged else low
+                low, high = min(low, high), max(low, high)
+                angle = number(flight, 'ricochet_angle', -90, 90, 0)
+                missile_speed = number(flight, 'speed', 0, 100, 1)
+                flags = int(random_lane) | (int(ranged) << 1) | (int(boolean(flight, 'ricochet')) << 2) | (int(boolean(flight, 'dud')) << 3)
+                missiles.append({'launchTicks': 150 + delay, 'warningTicks': 120 + delay,
+                                 'laneMinQ8': int(low * 256 / 120), 'laneMaxQ8': int(high * 256 / 120),
+                                 'angleQ8': int(angle * 256), 'speedQ8': int(missile_speed * 256),
+                                 'direction': -1, 'flags': flags})
+        if not any(pattern['weight'] for pattern in patterns):
+            raise ImportError('Rocket Time patterns have no weight')
+        return {'patterns': patterns, 'missiles': missiles,
+                'missileSpeedQ8': int(speed * 256), 'chaseSpeedQ8': int(chase * 256)}
+    except (KeyError, TypeError, AttributeError, InvalidOperation) as error:
+        raise ImportError('Invalid Rocket Time pattern config') from error
+
+
+def header(patterns, points, frames, profile_records=None, rocket=None):
     lines = ['#pragma once', '#include <stdint.h>', '// Private imported data. Rebuild from your own source package.',
              'namespace flappy { namespace JetpackImported {',
              'struct Pattern { uint16_t offset, count, width, height, weight; uint8_t flags; };',
@@ -315,6 +381,21 @@ def header(patterns, points, frames, profile_records=None):
         if not profile_records:
             lines.append('  {0,0,0,0},')
         lines += ['};', 'static const unsigned ProfileWeightCount = %d;' % len(profile_records)]
+    if rocket is not None:
+        lines[2:2] = ['#define M5FLAP_JETPACK_ROCKET_WAVES 1']
+        lines += ['struct RocketMissile { uint16_t launchTicks, warningTicks; int16_t laneMinQ8, laneMaxQ8, angleQ8; uint16_t speedQ8; int8_t direction; uint8_t flags; };',
+                  'struct RocketPattern { uint16_t offset, weight; uint8_t count; };',
+                  'static const RocketMissile RocketMissiles[] = {']
+        lines += ['  {%d,%d,%d,%d,%d,%d,%d,%d},' % tuple(missile[key] for key in
+                  ('launchTicks', 'warningTicks', 'laneMinQ8', 'laneMaxQ8', 'angleQ8', 'speedQ8', 'direction', 'flags'))
+                  for missile in rocket['missiles']]
+        lines += ['};', 'static const RocketPattern RocketPatterns[] = {']
+        lines += ['  {%d,%d,%d},' % tuple(pattern[key] for key in ('offset', 'weight', 'count'))
+                  for pattern in rocket['patterns']]
+        lines += ['};', 'static const unsigned RocketPatternCount = %d;' % len(rocket['patterns']),
+                  'static const unsigned RocketMissileCount = %d;' % len(rocket['missiles']),
+                  'static const uint16_t RocketMissileSpeedQ8 = %d;' % rocket['missileSpeedQ8'],
+                  'static const uint16_t RocketChaseSpeedQ8 = %d;' % rocket['chaseSpeedQ8']]
     lines += ['static const bool HasRunner = %s;' % ('true' if frames else 'false'),
               'static const unsigned FrameCount = %d;' % len(frames),
               'static const uint16_t RunnerPixels[][300] = {']
@@ -337,7 +418,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
     with source.open('rb') as stream:
         for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b''):
             digest.update(chunk)
-    evidence, patterns, points, configs = [], [], [], {}
+    evidence, patterns, points, configs, rocket = [], [], [], {}, None
     try:
         with game_archive(source) as (archive, entries, prefix, containers):
             def read(name, limit=MAX_TEXT):
@@ -387,6 +468,9 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
             for name in ('xml/settings.xml', 'xml/LevelPacing.xml', 'xml/ObstaclePatterns.xml', 'xml/MissileProbability.xml', 'xml/vehicleProbability.xml'):
                 if prefix + name in entries:
                     configs[name] = BinaryXML(read(name)).decode()
+            if prefix + ROCKET_CONFIG in entries:
+                configs[ROCKET_CONFIG] = BinaryXML(read(ROCKET_CONFIG)).decode()
+                rocket = rocket_waves(configs[ROCKET_CONFIG])
             json_names = ('Configs/game_mode_rules/classic_1.json',) + tuple('Configs/vehicles/' + name + '_1.json' for name in ('GravitySuit', 'Hog', 'mech', 'ProfitBird', 'Teleporter', 'Dragon', 'dragonInfo'))
             for name in json_names:
                 if prefix + name in entries:
@@ -394,7 +478,7 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
             frames, art = runner_frames(read) if original_runner else ([], None)
     except (zipfile.BadZipFile, OSError, RuntimeError, struct.error, RecursionError) as error:
         raise ImportError('Invalid or unreadable source archive') from error
-    generated = header(patterns, points, frames, imported_profile_records)
+    generated = header(patterns, points, frames, imported_profile_records, rocket)
     receipt = {'format_version': 2, 'source_sha256': digest.hexdigest(), 'source_bytes': source.stat().st_size,
                'rights_acknowledged': True, 'containers': containers, 'patterns': patterns, 'point_count': len(points),
                'base_pattern_count': sum(bool(pattern['flags'] & 1) for pattern in patterns),
@@ -402,6 +486,8 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
                'profile_ids': {label: profile for profile, label, _ in PROFILE_CONFIGS if profile in profile_configs},
                'profile_weight_count': len(imported_profile_records),
                'missing_profile_patterns': missing_profile_patterns,
+               'rocket_pattern_count': len(rocket['patterns']) if rocket else 0,
+               'rocket_missile_count': len(rocket['missiles']) if rocket else 0,
                'runner': art, 'files': evidence, 'header_sha256': hashlib.sha256(generated.encode()).hexdigest()}
     outputs = {'jetpack_imported.h': generated, 'receipt.json': json.dumps(receipt, indent=2, sort_keys=True) + '\n',
                'reference-config.json': json.dumps(configs, indent=2, sort_keys=True) + '\n'}

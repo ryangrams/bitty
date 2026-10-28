@@ -138,6 +138,7 @@ tests/test_build_jetpack.py
 tests/test_jetpack_runtime.py
 docs/JETPACK_IMPORT.md
 docs/JETPACK_PROGRESSION.md
+docs/JETPACK_AUDIT.md
 firmware/flappy/jetpack_progression.h
 firmware/flappy/jetpack_rewards.h
 firmware/flappy/jetpack_missions.h
@@ -146,3 +147,14 @@ tests/jetpack_progression_test.cpp
 tests/jetpack_rewards_test.cpp
 tests/jetpack_missions_test.cpp
 tests/jetpack_profile_test.cpp
+firmware/flappy/jetpack_spin.h
+tests/jetpack_spin_test.cpp
+firmware/flappy/jetpack_time_step.h
+tests/jetpack_time_step_test.cpp
+firmware/flappy/jetpack_rocket_time.h
+tests/jetpack_rocket_time_test.cpp
+firmware/flappy/jetpack_vehicle_physics.h
+tests/jetpack_vehicle_physics_test.cpp
+firmware/flappy/jetpack_rocket_course.h
+tests/jetpack_rocket_course_test.cpp
+tests/jetpack_bonus_integration_test.cpp
