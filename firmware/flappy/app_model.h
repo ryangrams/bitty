@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "game_core.h"
+#include "jetpack_profile.h"
 
 namespace flappy {
 
@@ -36,7 +37,7 @@ inline uint8_t visibleGameIndex(GameTitle title) {
   }
 }
 enum class Mode : uint8_t { Original, Clock, Demo, Arcade, Big, Coop, Count };
-enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions };
 
 constexpr uint8_t GeometryLevelCount = 22;
 
@@ -84,6 +85,7 @@ struct Settings {
   uint8_t jetpackRide = 0;
   uint8_t jetpackGadget = 0;
   bool jetpackHeadstart = false;
+  bool jetpackPractice = false;
 };
 
 struct MenuState {
@@ -143,6 +145,8 @@ class AppModel {
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
   uint32_t arcadeCalibrateRequest = 0;
+  uint32_t jetpackUpgradeRequest = 0;
+  uint8_t jetpackUpgradeKind = 0;
   uint32_t tetrisRequest = 0;
   uint32_t tetrisZeroRequest = 0;
   uint32_t tetrisCalibrateRequest = 0;
@@ -235,6 +239,28 @@ class AppModel {
   void setJetpackHeadstart(bool enabled) {
     if (settings.jetpackHeadstart != enabled) settingsDirty = true;
     settings.jetpackHeadstart = enabled;
+  }
+
+  void setJetpackPractice(bool enabled) {
+    if (settings.jetpackPractice != enabled) settingsDirty = true;
+    settings.jetpackPractice = enabled;
+  }
+
+  void setJetpackProgress(uint32_t coins, const uint8_t* levels) {
+    jetpackCoins_ = coins;
+    for (uint8_t i = 0; i < 4; ++i) jetpackLevels_[i] = levels ? levels[i] : 0;
+  }
+
+  void setJetpackMission(uint8_t index, const char* label, uint32_t progress, uint32_t target, bool done) {
+    if (index >= 3) return;
+    jetpackMissionLabels_[index] = label;
+    jetpackMissionProgress_[index] = progress;
+    jetpackMissionTargets_[index] = target;
+    jetpackMissionDone_[index] = done;
+  }
+
+  void setJetpackRank(uint16_t rank, uint16_t stars, uint16_t target) {
+    jetpackRank_ = rank; jetpackStars_ = stars; jetpackStarTarget_ = target;
   }
 
   const char* gameLabel(GameTitle title) const {
@@ -521,6 +547,9 @@ class AppModel {
       case MenuPage::Skins: return "Skins";
       case MenuPage::Clock: return "Set clock";
       case MenuPage::Controller: return "Controller";
+      case MenuPage::JetpackPractice: return "Practice (no coins)";
+      case MenuPage::JetpackUpgrades: return "Power-up upgrades";
+      case MenuPage::JetpackMissions: return "Mission goals";
       case MenuPage::Coop: return "Co-op link";
       default: return "Menu";
     }
@@ -551,6 +580,9 @@ class AppModel {
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
       case MenuPage::Clock: return 4;
       case MenuPage::Controller: return 4;
+      case MenuPage::JetpackPractice: return 5;
+      case MenuPage::JetpackUpgrades: return 6;
+      case MenuPage::JetpackMissions: return 5;
       case MenuPage::Coop: return 4;
       default: return 0;
     }
@@ -582,7 +614,7 @@ class AppModel {
         }
         if (currentGame == GameTitle::GeometryDash) return index == 0 ? "Level" : "Restart level";
         if (currentGame == GameTitle::JetpackJoyride) {
-          constexpr const char* labels[] = {"Restart game", "Difficulty", "Starting ride", "Gadget", "Headstart"};
+          constexpr const char* labels[] = {"Restart game", "Difficulty", "Missions", "Power-up upgrades", "Practice"};
           return labels[index];
         }
         if (nativeArcadeGame(currentGame)) {
@@ -591,6 +623,16 @@ class AppModel {
         }
         return "Restart game";
       case MenuPage::GeometryLevel: return geometryLevelLabel(index);
+      case MenuPage::JetpackPractice: {
+        constexpr const char* labels[] = {"Practice mode", "Starting ride", "Gadget", "Headstart"};
+        return labels[index];
+      }
+      case MenuPage::JetpackUpgrades: {
+        constexpr const char* labels[] = {"Coins", "Shield", "Boost", "Cash Dash", "Rocket Time"};
+        return labels[index];
+      }
+      case MenuPage::JetpackMissions:
+        return index < 3 ? (jetpackMissionLabels_[index] ? jetpackMissionLabels_[index] : "Mission") : "Rank";
       case MenuPage::TetrisLevel:
         snprintf(labelBuffer_, sizeof(labelBuffer_), "Level %u", unsigned(index));
         return labelBuffer_;
@@ -686,12 +728,11 @@ class AppModel {
           if (index == 0) return geometryLevelLabel(settings.geometryLevel);
         } else if (currentGame == GameTitle::JetpackJoyride) {
           if (index == 1) return settings.jetpackDifficulty == 0 ? "Easy" : settings.jetpackDifficulty == 2 ? "Hard" : "Normal";
-          if (index == 2) {
-            constexpr const char* rides[] = {"On foot", "Gravity suit", "Hog", "Stomper", "Bird", "Teleporter", "Dragon", "S.A.M.", "Random"};
-            return rides[settings.jetpackRide <= 8 ? settings.jetpackRide : 0];
+          if (index == 3) {
+            snprintf(valueBuffer_, sizeof(valueBuffer_), "%lu coins", static_cast<unsigned long>(jetpackCoins_));
+            return valueBuffer_;
           }
-          if (index == 3) return settings.jetpackGadget == 1 ? "Coin magnet" : settings.jetpackGadget == 2 ? "Double coins" : "Off";
-          if (index == 4) return settings.jetpackHeadstart ? "On" : "Off";
+          if (index == 4) return settings.jetpackPractice ? "On: no records" : "Off";
         } else if (nativeArcadeGame(currentGame)) {
           if (index == 1) return "Hold unit steady";
           if (index == 2) return settings.arcadeSensitivity == 0 ? "Fine" : settings.arcadeSensitivity == 2 ? "Fast" : "Normal";
@@ -700,6 +741,37 @@ class AppModel {
         }
         break;
       case MenuPage::GeometryLevel: return index == settings.geometryLevel ? "*" : "";
+      case MenuPage::JetpackPractice:
+        if (index == 0) return settings.jetpackPractice ? "On: no coins" : "Off";
+        if (index == 1) {
+          constexpr const char* rides[] = {"On foot", "Gravity suit", "Hog", "Stomper", "Bird", "Teleporter", "Dragon", "S.A.M.", "Random"};
+          return rides[settings.jetpackRide <= 8 ? settings.jetpackRide : 0];
+        }
+        if (index == 2) return settings.jetpackGadget == 1 ? "Coin magnet" : settings.jetpackGadget == 2 ? "Double coins" : "Off";
+        if (index == 3) return settings.jetpackHeadstart ? "On" : "Off";
+        break;
+      case MenuPage::JetpackUpgrades:
+        if (index == 0) snprintf(valueBuffer_, sizeof(valueBuffer_), "%lu", static_cast<unsigned long>(jetpackCoins_));
+        else if (index < 5) {
+          const uint8_t kind = uint8_t(index - 1), level = jetpackLevels_[kind];
+          if (kind == JetpackProfile::RocketTime && jetpackRank_ < 5) return "Requires rank 5";
+          if (level >= JetpackProfile::maxLevel(kind)) snprintf(valueBuffer_, sizeof(valueBuffer_), "Lv%u Max", unsigned(level + 1));
+          else {
+            const uint32_t cost = JetpackProfile::cost(kind, uint8_t(level + 1));
+            snprintf(valueBuffer_, sizeof(valueBuffer_), "Lv%u %s %lu", unsigned(level + 1), jetpackCoins_ >= cost ? "Buy" : "Need", static_cast<unsigned long>(cost));
+          }
+        } else return "";
+        return valueBuffer_;
+      case MenuPage::JetpackMissions:
+        if (index < 3) {
+          if (jetpackMissionDone_[index]) return "Complete";
+          snprintf(valueBuffer_, sizeof(valueBuffer_), "%lu/%lu", static_cast<unsigned long>(jetpackMissionProgress_[index]), static_cast<unsigned long>(jetpackMissionTargets_[index]));
+        } else if (index == 3) {
+          if (!jetpackStarTarget_) snprintf(valueBuffer_, sizeof(valueBuffer_), "Lv%u complete", unsigned(jetpackRank_));
+          else snprintf(valueBuffer_, sizeof(valueBuffer_), "Lv%u %u/%u stars", unsigned(jetpackRank_), unsigned(jetpackStars_), unsigned(jetpackStarTarget_));
+        }
+        else return "";
+        return valueBuffer_;
       case MenuPage::TetrisLevel: return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroLevel : settings.tetrisLevel) ? "*" : "";
       case MenuPage::TetrisType:
         return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroGameType : settings.tetrisGameType == 6 ? 1 : 0) ? "*" : "";
@@ -827,8 +899,14 @@ class AppModel {
   uint16_t nextLapseFrames_ = 0;
   float targetError_ = 0;
   bool previousAutoFlap_ = false;
-  mutable char labelBuffer_[20] = {};
-  mutable char valueBuffer_[12] = {};
+  uint32_t jetpackCoins_ = 0;
+  uint8_t jetpackLevels_[4] = {};
+  const char* jetpackMissionLabels_[3] = {};
+  uint32_t jetpackMissionProgress_[3] = {}, jetpackMissionTargets_[3] = {};
+  bool jetpackMissionDone_[3] = {};
+  uint16_t jetpackRank_ = 1, jetpackStars_ = 0, jetpackStarTarget_ = 3;
+  mutable char labelBuffer_[24] = {};
+  mutable char valueBuffer_[24] = {};
 
   bool gameAvailable(GameTitle title) const {
     return title == GameTitle::FlappyBird || nativeArcadeGame(title) || (title == GameTitle::Nes && nesAvailable_) ||
@@ -913,7 +991,8 @@ class AppModel {
                menu.page == MenuPage::Coop || menu.page == MenuPage::TetrisLevel ||
                menu.page == MenuPage::TetrisType || menu.page == MenuPage::TetrisControls ||
                menu.page == MenuPage::TetrisLink || menu.page == MenuPage::TetrisZeroPlayers ||
-               menu.page == MenuPage::GeometryLevel) openMenu(MenuPage::GameSettings);
+               menu.page == MenuPage::GeometryLevel || menu.page == MenuPage::JetpackPractice ||
+               menu.page == MenuPage::JetpackUpgrades || menu.page == MenuPage::JetpackMissions) openMenu(MenuPage::GameSettings);
       else openMenu();
       return;
     }
@@ -957,9 +1036,9 @@ class AppModel {
         } else if (currentGame == GameTitle::JetpackJoyride) {
           if (menu.selection == 0) requestGameRestart();
           else if (menu.selection == 1) setJetpackDifficulty(uint8_t((settings.jetpackDifficulty + 1) % 3));
-          else if (menu.selection == 2) setJetpackRide(uint8_t((settings.jetpackRide + 1) % 9));
-          else if (menu.selection == 3) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 3));
-          else if (menu.selection == 4) setJetpackHeadstart(!settings.jetpackHeadstart);
+          else if (menu.selection == 2) openMenu(MenuPage::JetpackMissions);
+          else if (menu.selection == 3) openMenu(MenuPage::JetpackUpgrades);
+          else if (menu.selection == 4) openMenu(MenuPage::JetpackPractice);
         } else if (nativeArcadeGame(currentGame)) {
           if (menu.selection == 0) requestGameRestart();
           else if (menu.selection == 1) ++arcadeCalibrateRequest;
@@ -968,6 +1047,18 @@ class AppModel {
           else if (menu.selection == 4) setArcadeDifficulty(uint8_t((settings.arcadeDifficulty + 1) % 3));
         } else requestGameRestart();
         break;
+      case MenuPage::JetpackPractice:
+        if (menu.selection == 0) setJetpackPractice(!settings.jetpackPractice);
+        else if (menu.selection == 1) setJetpackRide(uint8_t((settings.jetpackRide + 1) % 9));
+        else if (menu.selection == 2) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 3));
+        else if (menu.selection == 3) setJetpackHeadstart(!settings.jetpackHeadstart);
+        break;
+      case MenuPage::JetpackUpgrades:
+        if (menu.selection > 0 && menu.selection < 5) {
+          jetpackUpgradeKind = uint8_t(menu.selection - 1); ++jetpackUpgradeRequest;
+        }
+        break;
+      case MenuPage::JetpackMissions: break;
       case MenuPage::GeometryLevel:
         if (currentGame == GameTitle::GeometryDash && geometryDashAvailable_) {
           setGeometryLevel(menu.selection);

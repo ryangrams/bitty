@@ -137,3 +137,12 @@ tests/test_import_jetpack.py
 tests/test_build_jetpack.py
 tests/test_jetpack_runtime.py
 docs/JETPACK_IMPORT.md
+docs/JETPACK_PROGRESSION.md
+firmware/flappy/jetpack_progression.h
+firmware/flappy/jetpack_rewards.h
+firmware/flappy/jetpack_missions.h
+firmware/flappy/jetpack_profile.h
+tests/jetpack_progression_test.cpp
+tests/jetpack_rewards_test.cpp
+tests/jetpack_missions_test.cpp
+tests/jetpack_profile_test.cpp

@@ -23,7 +23,14 @@ MAX_ENTRIES = 30000
 MAX_PATTERN = 512
 MAX_PATTERN_POINTS = 512
 MAX_POINTS = 65535
+MAX_PROFILE_WEIGHTS = 4096
 BASE_CONFIG = 'Configs/coins_patterns/CoinPatterns_1.json'
+PROFILE_CONFIGS = ((0, 'Default', BASE_CONFIG),
+                   (1, 'Teleporter', 'Configs/coins_patterns/Streaks_CFTCoins_1.json'),
+                   (2, 'SAM', 'Configs/coins_patterns/Streaks_SAMCoins_1.json'),
+                   (3, 'CoinStreak', 'Configs/coins_patterns/Streaks_CoinStreak_1.json'),
+                   (4, 'Gravity', 'Configs/coins_patterns/Streaks_GRAVCoins_1.json'),
+                   (5, 'Mech', 'Configs/coins_patterns/Streaks_MECHCoins_1.json'))
 RUNNER_SOURCES = ('textures/Characters/Jetpacks/jetpackDefault.tex',
                   'textures/Characters/Barry/defaultBody.tex',
                   'textures/Characters/Barry/defaultHead.tex')
@@ -199,6 +206,44 @@ def base_weights(config):
         raise ImportError('Invalid base coin pattern config') from error
 
 
+def profile_weights(config, profile):
+    try:
+        patterns = config['coin_pattern_file']['coin_pattern']
+        if not isinstance(patterns, list) or not 0 < len(patterns) <= MAX_PATTERN:
+            raise ImportError('Invalid profile coin pattern list')
+        result, names = [], set()
+        for pattern in patterns:
+            name = safe_name(pattern['filename'])
+            if name in names:
+                raise ImportError('Duplicate profile coin pattern')
+            names.add(name)
+            probabilities = pattern['probability']
+            if not isinstance(probabilities, list):
+                probabilities = [probabilities]
+            if not 0 < len(probabilities) <= 256:
+                raise ImportError('Invalid profile probability list')
+            starts = set()
+            for probability in probabilities:
+                if probability.get('leveltag'):
+                    continue
+                weight = Decimal(str(probability['value']))
+                start = Decimal(str(probability.get('startDistance', 0)))
+                if not weight.is_finite() or not 0 <= weight <= 655:
+                    raise ImportError('Invalid profile coin weight')
+                if not start.is_finite() or not 0 <= start <= 65535 or start != int(start):
+                    raise ImportError('Invalid profile start distance')
+                if int(start) in starts:
+                    raise ImportError('Duplicate profile start distance')
+                starts.add(int(start))
+                result.append({'name': name, 'startMeters': int(start),
+                               'weight': int(weight * 100), 'profile': profile})
+                if len(result) > MAX_PROFILE_WEIGHTS:
+                    raise ImportError('Profile coin weight count exceeds the limit')
+        return result
+    except (KeyError, TypeError, AttributeError, InvalidOperation) as error:
+        raise ImportError('Invalid profile coin pattern config') from error
+
+
 def runner_frames(read):
     sheets, evidence = [], []
     for name in RUNNER_SOURCES:
@@ -245,7 +290,7 @@ def runner_frames(read):
                     'source_bounds': [left, top, right, bottom]}
 
 
-def header(patterns, points, frames):
+def header(patterns, points, frames, profile_records=None):
     lines = ['#pragma once', '#include <stdint.h>', '// Private imported data. Rebuild from your own source package.',
              'namespace flappy { namespace JetpackImported {',
              'struct Pattern { uint16_t offset, count, width, height, weight; uint8_t flags; };',
@@ -258,8 +303,19 @@ def header(patterns, points, frames):
     lines += ['  {%d,%d,%d,%d,%d,%d},' % tuple(pattern[k] for k in ('offset', 'count', 'width', 'height', 'weight', 'flags')) for pattern in patterns]
     lines += ['};', 'static const unsigned PatternCount = %d;' % len(patterns),
               'static const unsigned CoinPointCount = %d;' % len(points),
-              'static const unsigned MaxPatternPoints = %d;' % max(pattern['count'] for pattern in patterns),
-              'static const bool HasRunner = %s;' % ('true' if frames else 'false'),
+              'static const unsigned MaxPatternPoints = %d;' % max(pattern['count'] for pattern in patterns)]
+    if profile_records is not None:
+        lines[2:2] = ['#define M5FLAP_JETPACK_PROFILE_WEIGHTS 1']
+        lines += ['enum ProfileId { ProfileDefault=0, ProfileTeleporter=1, ProfileSAM=2,',
+                  '                 ProfileCoinStreak=3, ProfileGravity=4, ProfileMech=5 };',
+                  'struct ProfileWeight { uint16_t pattern, startMeters, weight; uint8_t profile; };',
+                  'static const ProfileWeight ProfileWeights[] = {']
+        lines += ['  {%d,%d,%d,%d},' % tuple(record[key] for key in ('pattern', 'startMeters', 'weight', 'profile'))
+                  for record in profile_records]
+        if not profile_records:
+            lines.append('  {0,0,0,0},')
+        lines += ['};', 'static const unsigned ProfileWeightCount = %d;' % len(profile_records)]
+    lines += ['static const bool HasRunner = %s;' % ('true' if frames else 'false'),
               'static const unsigned FrameCount = %d;' % len(frames),
               'static const uint16_t RunnerPixels[][300] = {']
     for frame in frames:
@@ -288,16 +344,42 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
                 data = read_member(archive, entries, prefix + name, limit)
                 evidence.append({'path': name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
                 return data
-            weights = base_weights(parse_json(read(BASE_CONFIG)))
+            base_config = parse_json(read(BASE_CONFIG))
+            weights = base_weights(base_config)
+            profile_records = profile_weights(base_config, 0)
+            profile_configs = [0]
+            for profile, label, name in PROFILE_CONFIGS[1:]:
+                if prefix + name in entries:
+                    config = parse_json(read(name))
+                    configs[name] = config
+                    profile_records.extend(profile_weights(config, profile))
+                    profile_configs.append(profile)
+                    if len(profile_records) > MAX_PROFILE_WEIGHTS:
+                        raise ImportError('Combined profile coin weight count exceeds the limit')
             names = sorted(name[len(prefix):] for name in entries if name.startswith(prefix + 'patterns/') and name.endswith('.txt'))
             if not 0 < len(names) <= MAX_PATTERN:
                 raise ImportError('Pattern count exceeds the supported limit')
             missing_base_patterns = sorted(set(weights) - set(names))
+            indices = {name: index for index, name in enumerate(names)}
+            missing_profile_patterns = {label: sorted({record['name'] for record in profile_records
+                                                       if record['profile'] == profile and record['name'] not in indices})
+                                        for profile, label, _ in PROFILE_CONFIGS if profile in profile_configs}
+            memberships = {}
+            imported_profile_records = []
+            for record in profile_records:
+                if record['name'] not in indices:
+                    continue
+                if record['profile'] and record['weight']:
+                    memberships[record['name']] = memberships.get(record['name'], 0) | (1 << (record['profile'] + 2))
+                imported_profile_records.append({key: record[key] for key in ('startMeters', 'weight', 'profile')}
+                                               | {'pattern': indices[record['name']]})
+            imported_profile_records.sort(key=lambda record: (record['profile'], record['pattern'], record['startMeters']))
             for name in names:
                 width, height, coords = pattern_points(read(name, 65536))
                 if len(points) + len(coords) > MAX_POINTS:
                     raise ImportError('Combined coin point count exceeds 65535')
                 flags = int(name in weights) | (2 if PurePosixPath(name).name.startswith('cashDash') else 0) | (4 if 'onboarding' in name.lower() else 0)
+                flags |= memberships.get(name, 0)
                 patterns.append({'name': name, 'offset': len(points), 'count': len(coords), 'width': width, 'height': height, 'weight': weights.get(name, 0), 'flags': flags})
                 points.extend(coords)
             if not any(pattern['flags'] & 1 and pattern['count'] for pattern in patterns):
@@ -312,11 +394,14 @@ def import_package(source, output=DEFAULT_OUTPUT, *, accept_rights=False, origin
             frames, art = runner_frames(read) if original_runner else ([], None)
     except (zipfile.BadZipFile, OSError, RuntimeError, struct.error, RecursionError) as error:
         raise ImportError('Invalid or unreadable source archive') from error
-    generated = header(patterns, points, frames)
-    receipt = {'format_version': 1, 'source_sha256': digest.hexdigest(), 'source_bytes': source.stat().st_size,
+    generated = header(patterns, points, frames, imported_profile_records)
+    receipt = {'format_version': 2, 'source_sha256': digest.hexdigest(), 'source_bytes': source.stat().st_size,
                'rights_acknowledged': True, 'containers': containers, 'patterns': patterns, 'point_count': len(points),
                'base_pattern_count': sum(bool(pattern['flags'] & 1) for pattern in patterns),
                'missing_base_patterns': missing_base_patterns,
+               'profile_ids': {label: profile for profile, label, _ in PROFILE_CONFIGS if profile in profile_configs},
+               'profile_weight_count': len(imported_profile_records),
+               'missing_profile_patterns': missing_profile_patterns,
                'runner': art, 'files': evidence, 'header_sha256': hashlib.sha256(generated.encode()).hexdigest()}
     outputs = {'jetpack_imported.h': generated, 'receipt.json': json.dumps(receipt, indent=2, sort_keys=True) + '\n',
                'reference-config.json': json.dumps(configs, indent=2, sort_keys=True) + '\n'}

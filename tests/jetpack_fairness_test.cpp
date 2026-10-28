@@ -11,14 +11,11 @@ struct JetpackTestAccess {
   static JetpackGame::Zap sample(JetpackGame& game, int& spacing) {
     for (auto& zap : game.zaps_) zap = JetpackGame::Zap{};
     for (auto& missile : game.missiles_) missile = JetpackGame::Missile{};
-    game.distanceToCoins_ = game.distanceToVehicle_ = 100000000;
     for (unsigned attempt = 0; attempt < 64 && !game.zaps_[0].active; ++attempt) {
       for (auto& rotator : game.rotators_) rotator = JetpackGame::Rotator{};
-      game.distanceToHazard_ = 0;
-      game.missileGap_ = false;
-      game.spawnObjects(0);
+      game.spawnZap();
     }
-    spacing = game.distanceToHazard_ / JetpackGame::Unit;
+    spacing = int(JetpackProgression::screenQ8(JetpackProgression::safeGapNative(game.speed())) / JetpackGame::Unit);
     assert(game.zaps_[0].active);
     return game.zaps_[0];
   }
@@ -27,8 +24,7 @@ struct JetpackTestAccess {
     game.reset(seed, difficulty);
     game.world_ = uint32_t(uint64_t(meters) * JetpackGame::Unit * 69 / 10);
     game.phase_ = JetpackGame::Phase::Running;
-    game.distanceToHazard_ = game.distanceToCoins_ = game.distanceToVehicle_ = 100000000;
-    game.distanceToBonus_ = game.distanceToToken_ = game.distanceToScientist_ = game.distanceToLaser_ = 100000000;
+    game.progression_.setEnabled(false);
     for (unsigned i = 0; i < zaps.size(); ++i) game.zaps_[i] = zaps[i];
   }
   static void stage(JetpackGame& game, unsigned meters) {

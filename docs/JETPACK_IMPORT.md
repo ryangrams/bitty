@@ -23,6 +23,8 @@ The importer preserves every `1` in each supported ASCII formation. A `0` or spa
 
 Classic eligibility and relative weights come from the package's base coin configuration. The receipt reports missing file references without guessing filename aliases. Those references do not enter the classic selection. Event-tagged formations remain in the private data without entering the ordinary classic selection. Cash Dash and onboarding filenames receive separate flags. Including a formation in the header does not enable every original event or vehicle sequence.
 
+When the package includes Teleporter, SAM, Coin Streak, Gravity Suit or Mech coin profiles, the importer also preserves their selection weights and distance steps. Empty formations remain valid blank choices. The firmware uses the current profile's distance when selecting these layouts. The receipt lists which profiles were found and reports missing references separately. These records select layouts; they do not import the original program or enable unrelated events.
+
 The importer rejects oversized archives, duplicate or unsafe paths, unsupported cells, malformed configuration, and invalid dimensions. Patterns are limited to 256 columns, 40 rows, and 512 occupied cells each, with a combined maximum of 65,535 occupied cells. The row limit keeps every coin within the display's vertical play area at an integer pixel pitch. It reports unsupported data and preserves an existing import when validation fails.
 
 ## Optional original runner

@@ -166,6 +166,51 @@ class JetpackImportTests(unittest.TestCase):
         self.assertEqual(receipt['missing_base_patterns'], ['patterns/missing.txt'])
         self.assertEqual(receipt['base_pattern_count'], 1)
 
+    def test_profiles_preserve_distance_weights_and_empty_choices(self):
+        sam = {'coin_pattern_file': {'coin_pattern': [
+            {'filename': 'patterns/blank.txt', 'probability': {'value': 40, 'startDistance': 20}},
+            {'filename': 'patterns/coinPattern1.txt', 'probability': {'value': 1, 'startDistance': 20}},
+            {'filename': 'patterns/missingSAM.txt', 'probability': {'value': 2}},
+        ]}}
+        gravity = {'coin_pattern_file': {'coin_pattern': [
+            {'filename': 'patterns/coinPattern1.txt', 'probability': [
+                {'value': 0, 'startDistance': 0}, {'value': 5, 'startDistance': 20},
+                {'value': 12, 'startDistance': 0, 'leveltag': 'event'}]},
+        ]}}
+        configs = dict((label, name) for _, label, name in importer.PROFILE_CONFIGS)
+        entries = self.entries() + [('patterns/blank.txt', '00\n00'),
+                                    (configs['SAM'], json.dumps(sam)),
+                                    (configs['Gravity'], json.dumps(gravity))]
+        receipt = self.run_import(self.package(entries))
+        header = (self.directory / 'private' / 'jetpack_imported.h').read_text()
+        self.assertEqual(receipt['profile_ids'], {'Default': 0, 'SAM': 2, 'Gravity': 4})
+        self.assertEqual(receipt['profile_weight_count'], 5)
+        self.assertEqual(receipt['missing_profile_patterns']['SAM'], ['patterns/missingSAM.txt'])
+        patterns = {pattern['name']: pattern for pattern in receipt['patterns']}
+        self.assertEqual(patterns['patterns/blank.txt']['count'], 0)
+        self.assertEqual(patterns['patterns/blank.txt']['flags'], 16)
+        self.assertEqual(patterns['patterns/coinPattern1.txt']['flags'], 81)
+        self.assertIn('#define M5FLAP_JETPACK_PROFILE_WEIGHTS 1', header)
+        self.assertIn('{0,20,4000,2}', header)
+        self.assertIn('{2,20,100,2}', header)
+        self.assertIn('{2,0,0,4}', header)
+        self.assertIn('{2,20,500,4}', header)
+
+    def test_malformed_profile_weights_preserve_existing_import(self):
+        self.run_import()
+        output = self.directory / 'private' / 'jetpack_imported.h'
+        before = output.read_bytes()
+        name = dict((label, path) for _, label, path in importer.PROFILE_CONFIGS)['SAM']
+        for probability in ({'value': -1}, {'value': 656}, {'value': 'NaN'},
+                            {'value': 1, 'startDistance': -1}, {'value': 1, 'startDistance': 65536},
+                            {'value': 1, 'startDistance': 0.5}, [],
+                            [{'value': 1}, {'value': 2}]):
+            config = {'coin_pattern_file': {'coin_pattern': [
+                {'filename': 'patterns/coinPattern1.txt', 'probability': probability}]}}
+            with self.subTest(probability=probability), self.assertRaises(importer.ImportError):
+                self.run_import(self.package(self.entries() + [(name, json.dumps(config))]))
+            self.assertEqual(output.read_bytes(), before)
+
     def test_optional_runner_uses_fixed_frames_and_no_external_library(self):
         entries = self.entries() + [(name, texture()) for name in importer.RUNNER_SOURCES]
         receipt = self.run_import(self.package(entries), original_runner=True)
@@ -193,6 +238,8 @@ class JetpackImportTests(unittest.TestCase):
                              'using namespace flappy::JetpackImported;\n'
                              'static_assert(PatternCount == 3, "pattern count");\n'
                              'static_assert(MaxPatternPoints <= 512, "mask capacity");\n'
+                             'static_assert(ProfileWeightCount == 1, "profile weights");\n'
+                             'static_assert(ProfileSAM == 2, "profile ID");\n'
                              'static_assert(sizeof(RunnerPixels[0]) == 600, "runner dimensions");\n'
                              'static_assert(FrameCount == %d, "frame count");\n' % (6 if enabled else 0))
             subprocess.run([shutil.which('c++'), '-std=c++11', '-Wall', '-Wextra', '-Werror',
