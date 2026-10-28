@@ -261,8 +261,8 @@ static void compactPreviewsMatchSkinColorsAndAlpha() {
 }
 
 static void skinPickerGridAnimationPagingAndBack() {
-  const uint16_t gold = flappy::rgb(255, 220, 116), outline = flappy::rgb(77, 104, 121);
-  const uint16_t previewBackground = flappy::rgb(142, 195, 204), card = flappy::rgb(26, 35, 49);
+  const uint16_t gold = flappy::BittyUi::Amber, outline = flappy::BittyUi::Rule;
+  const uint16_t previewBackground = flappy::rgb(142, 195, 204), card = flappy::BittyUi::Panel;
   std::vector<const char*> names;
   for (uint8_t index = 0; index < flappy::Skins::count(); ++index) names.push_back(flappy::Skins::name(index));
   flappy::AppModel app(35);
@@ -285,7 +285,7 @@ static void skinPickerGridAnimationPagingAndBack() {
       assert(renderer.birdMasks() == activeMasks && app.settings.skinIndex == 0);
       for (int slot = 0; slot < 6 && first + slot < app.skinCount(); ++slot) {
         const uint8_t index = uint8_t(first + slot);
-        const int left = 6 + (slot % 2) * 68, top = 42 + (slot / 2) * 62;
+        const int left = 6 + (slot % 2) * 68, top = 46 + (slot / 2) * 61;
         assert(pixels.data()[top * flappy::PixelWidth + left] == (selected == index ? gold : outline));
         expected.select(index);
         const uint8_t animation = sequence[phase];
@@ -322,8 +322,8 @@ static void skinPickerGridAnimationPagingAndBack() {
   app.openMenu(flappy::MenuPage::Skins);
   app.menu.selection = 0;
   renderer.draw(app, options);
-  assert(pixels.data()[42 * flappy::PixelWidth + 6] == gold);
-  assert(pixels.data()[42 * flappy::PixelWidth + 74] == flappy::rgb(10, 17, 26));
+  assert(pixels.data()[46 * flappy::PixelWidth + 6] == gold);
+  assert(pixels.data()[46 * flappy::PixelWidth + 74] == flappy::BittyUi::Black);
   app.menu.selection = 1;
   renderer.draw(app, options);
   assert(pixels.data()[230 * flappy::PixelWidth + 6] == gold);
@@ -462,7 +462,7 @@ static void menusScrollAndRenderEverySelection() {
   preparePlaying(app, flappy::Mode::Original, 10);
   app.setSkinNames(names, flappy::Skins::BuiltinCount);
   const auto noMenu = frame(app);
-  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::GeometryLevel); ++page) {
+  for (uint8_t page = uint8_t(flappy::MenuPage::Home); page <= uint8_t(flappy::MenuPage::JetpackMissions); ++page) {
     app.openMenu(flappy::MenuPage(page));
     const uint8_t count = app.menuItemCount();
     assert(count > 1);
@@ -508,7 +508,7 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
   for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
     assert(app.setCurrentGame(flappy::GameTitle(game)));
     for (uint8_t page = uint8_t(flappy::MenuPage::Home);
-         page <= uint8_t(flappy::MenuPage::GeometryLevel); ++page) {
+         page <= uint8_t(flappy::MenuPage::JetpackMissions); ++page) {
       app.openMenu(flappy::MenuPage(page));
       assert(flappy::MenuFont::textWidth(app.menuTitle()) <= 128);
       for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
@@ -517,8 +517,8 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
       }
     }
   }
-  assert(flappy::MenuFont::textWidth("MENU NEXT  A SELECT", 1) <= 128);
-  assert(flappy::MenuFont::textWidth("HOLD MENU TO EXIT", 1) <= 128);
+  assert(flappy::MenuFont::textWidth("RIGHT NEXT  M5 SELECT", 1) <= 128);
+  assert(flappy::MenuFont::textWidth("HOLD RIGHT TO EXIT", 1) <= 128);
 
   app.setCurrentGame(flappy::GameTitle::FlappyBird);
   app.openMenu(flappy::MenuPage::Skins);
@@ -552,6 +552,25 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
       assert(frame(app).size() == FramePixels);
     }
   }
+}
+
+static void menuBatteryAndOpaqueBackground() {
+  flappy::AppModel app(42);
+  app.openMenu(flappy::MenuPage::Home);
+  flappy::RenderOptions options;
+  options.battery = flappy::batteryStatus(true,3700,flappy::PowerSource::Battery);
+  const auto first = frame(app,options);
+  app.game.score = 120; app.game.birdY = 420; app.game.rotation = 90;
+  app.game.state = flappy::State::GameOver;
+  assert(frame(app,options) == first);
+  options.battery = flappy::batteryStatus(true,4100,flappy::PowerSource::External,true);
+  const auto charged = frame(app,options);
+  assert(differentPixels(first,charged) > 0);
+  for (int y = 31; y < flappy::PixelHeight; ++y)
+    for (int x = 0; x < flappy::PixelWidth; ++x)
+      assert(first[y * flappy::PixelWidth + x] == charged[y * flappy::PixelWidth + x]);
+  options.battery = flappy::batteryStatus(false,4100,flappy::PowerSource::External);
+  assert(differentPixels(charged,frame(app,options)) > 0);
 }
 
 static void volumeMenuShowsLevelsAndCurrentValue() {
@@ -959,6 +978,7 @@ int main() {
   allModesAndSkinsRespectBufferBounds();
   menusScrollAndRenderEverySelection();
   actualMenuLabelsFitAndSurviveNativeCrop();
+  menuBatteryAndOpaqueBackground();
   volumeMenuShowsLevelsAndCurrentValue();
   sleepMenuShowsChoicesAndCurrentValue();
   launcherMenusShowAvailabilityAndTitles();

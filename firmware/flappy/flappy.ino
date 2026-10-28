@@ -108,6 +108,10 @@ flappy::AsyncDisplay asyncDisplay;
 flappy::InactivityPolicy inactivity;
 flappy::PowerSource powerSource = flappy::PowerSource::Unknown;
 flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false);
+flappy::BatteryStatus menuBattery;
+flappy::BatteryStatus pollMenuBattery(uint32_t nowMs, bool force = false);
+uint32_t lastBatteryPollMs = 0;
+bool batteryPolled = false;
 void servicePiezoOutput();
 uint32_t lastPowerPollMs = 0;
 bool powerPolled = false;
@@ -1729,6 +1733,7 @@ void showFrame(uint32_t nowMs) {
   flappy::RenderOptions options;
   options.uiScale = viewport.native ? 2 : 3;
   options.nowMs = nowMs;
+  if (app.menuOpen()) options.battery = pollMenuBattery(nowMs);
   options.coopStatus = coopLink.statusText();
   options.peerName = coopLink.session().role() == flappy::coop::Role::Host ?
                      coopLink.deviceName() : coopLink.peerName();
@@ -1863,6 +1868,57 @@ flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force) {
   return powerSource = flappy::axp192PowerSource(readOk, status[0], status[1]);
 #else
   return powerSource = flappy::PowerSource::Unknown;
+#endif
+}
+
+flappy::BatteryStatus pollMenuBattery(uint32_t nowMs, bool force) {
+  if (!force && batteryPolled && uint32_t(nowMs - lastBatteryPollMs) < 1000) return menuBattery;
+  batteryPolled = true;
+  lastBatteryPollMs = nowMs;
+  const auto source = pollPowerSource(nowMs);
+  const auto board = M5.getBoard();
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  if (board == m5gfx::board_t::board_M5StickS3) {
+    uint16_t mv = 0;
+    const bool valid = M5.Power.M5pm1.getBatteryVoltage(&mv);
+    // The pinned M5PM1 driver does not report charge activity. Show USB power only.
+    return menuBattery = flappy::batteryStatus(valid,mv,source);
+  }
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32)
+  if (board == m5gfx::board_t::board_M5StickC || board == m5gfx::board_t::board_M5StickCPlus) {
+    uint8_t status[2] = {}, voltage[2] = {};
+    const bool statusOk = M5.Power.Axp192.readRegister(0,status,2);
+    const bool voltageOk = M5.Power.Axp192.readRegister(0x78,voltage,2);
+    const unsigned raw = (unsigned(voltage[0]) << 4) | (voltage[1] & 15u);
+    return menuBattery = flappy::batteryStatus(statusOk && voltageOk && (status[1] & 0x20u),
+        int(raw * 11 / 10),flappy::axp192PowerSource(statusOk,status[0],status[1]),status[0] & 4u);
+  }
+#endif
+  return menuBattery = flappy::batteryStatus(false,0,source);
+}
+
+void showBootSplash() {
+  const uint32_t started = millis();
+  uint32_t next = micros();
+  unsigned frames = 0;
+  do {
+    const uint32_t elapsed = uint32_t(millis() - started);
+    flappy::BittyUi::splash(canvasStorage,flappy::PixelWidth,flappy::PixelHeight,elapsed);
+    pushAppCanvas();
+    asyncDisplay.drain();
+    ++frames;
+    M5.update();
+    if (elapsed >= 160 && (M5.BtnA.isPressed() || M5.BtnB.isPressed())) break;
+    next += TickMicros;
+    while (int32_t(micros() - next) < 0) delay(1);
+  } while (uint32_t(millis() - started) < flappy::BittyUi::SplashMs);
+  asyncDisplay.drain();
+  invalidateDisplay();
+  clearPendingInput();
+  inactivity.resumed(millis());
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  Serial.printf("BOOT splash_ms=%lu splash_frames=%u\n",(unsigned long)(millis() - started),frames);
 #endif
 }
 
@@ -2022,6 +2078,8 @@ void setup() {
       M5.Display.width() >= 135 && M5.Display.height() >= 240);
   app.setTetrisZeroTitle(TetrisZeroRom::title);
   loadSettings();
+  applyOutputSettings();
+  showBootSplash();
 #ifdef M5FLAP_USB_LIBRARY
   initializeLibrary();
 #endif
@@ -2125,6 +2183,24 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5MENU")) {
       app.openMenu(flappy::MenuPage::Home);
       clearPendingInput();
+    } else if (!strncmp(command,"M5UI ",5)) {
+      unsigned page = 0, selection = 0;
+      if (sscanf(command + 5,"%u %u",&page,&selection) == 2 && page >= 1 &&
+          page <= unsigned(flappy::MenuPage::JetpackMissions)) {
+        app.openMenu(flappy::MenuPage(page));
+        if (selection < app.menuItemCount()) app.menu.selection = uint8_t(selection);
+        clearPendingInput();
+      }
+    } else if (!strcmp(command,"M5UIFRAME") && app.menuOpen()) {
+      showFrame(millis());
+      asyncDisplay.drain();
+      Serial.printf("UIFRAME %d %d\n",viewport.width,viewport.height);
+      for (int y = 0; y < viewport.height; y += StripRows) {
+        const int rows = viewport.height - y < StripRows ? viewport.height - y : StripRows;
+        viewport.copyRows(canvasStorage,stripStorage,y,rows);
+        Serial.write(reinterpret_cast<const uint8_t*>(stripStorage),size_t(viewport.width) * rows * 2);
+      }
+      Serial.println("\nUIFRAME_END");
     } else if (!strncmp(command, "M5TESTMODE ", 11)) {
       unsigned value = 0;
       if (sscanf(command + 11, "%u", &value) == 1 && value <= 1 && diagnosticArcadeTesting != (value != 0)) {
@@ -2334,6 +2410,9 @@ void serviceDiagnostics() {
       Serial.printf("SLEEP source=%u timeout_s=%lu idle_ms=%lu index=%u\n", unsigned(powerSource),
           (unsigned long)app.sleepTimeoutSeconds(), (unsigned long)inactivity.idleMs(millis()),
           unsigned(app.settings.sleepIndex));
+      const auto battery = pollMenuBattery(millis(),true);
+      Serial.printf("BATTERY percent=%d mv=%u source=%u charging=%u estimated=1\n",
+          int(battery.percent),unsigned(battery.millivolts),unsigned(battery.source),unsigned(battery.charging));
       Serial.printf("OPT cache=%u pcm=%u render_us=%llu bg_bytes=%u idle=%u\n", unsigned(nes.prgCacheMask()),
           unsigned(nes.pcmEnabled()), (unsigned long long)appRenderUs,
           unsigned(renderer->backgroundCacheBytes()), unsigned(nes.idleJumpEnabled()));

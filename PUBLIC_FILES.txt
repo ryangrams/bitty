@@ -20,6 +20,7 @@ assets/README.md
 assets/skin_catalog.json
 docs/ARCADE_RESEARCH.md
 docs/CONTROLLERS.md
+docs/BITTY_UI.md
 docs/COOP.md
 docs/DISTRIBUTION.md
 docs/GEOMETRY_DASH.md
@@ -39,6 +40,8 @@ firmware/flappy/app_model.h
 firmware/flappy/arcade_support.h
 firmware/flappy/arkanoid_game.h
 firmware/flappy/async_display.h
+firmware/flappy/battery_status.h
+firmware/flappy/bitty_ui.h
 firmware/flappy/ble_controller.h
 firmware/flappy/ble_link.h
 firmware/flappy/ble_radio.h
@@ -107,6 +110,7 @@ tests/arcade_support_test.cpp
 tests/arkanoid_game_test.cpp
 tests/async_display_test.cpp
 tests/ble_radio_test.cpp
+tests/bitty_ui_test.cpp
 tests/cartridge_store_test.cpp
 tests/controller_input_test.cpp
 tests/coop_protocol_test.cpp

@@ -6,6 +6,7 @@
 #include <string.h>
 #include "app_model.h"
 #include "menu_font.h"
+#include "bitty_ui.h"
 #include "skins.h"
 
 namespace flappy {
@@ -15,6 +16,7 @@ constexpr int PixelHeight = 256;
 struct RenderOptions {
   uint8_t uiScale = 2;
   uint32_t nowMs = 0;
+  BatteryStatus battery;
   const char* coopStatus = "";
   const char* peerName = "";
   const char* notice = "";
@@ -78,13 +80,16 @@ class Renderer {
   void draw(const AppModel& app, const RenderOptions& options = RenderOptions()) {
     if (skins_.selected != app.settings.skinIndex) setSkin(app.settings.skinIndex);
     if (app.menu.page == MenuPage::Skins) drawSkinPicker(app, options);
-    else {
-      drawGame(app.game, app.settings.mode, &app, options);
-      if (app.menuOpen()) drawMenu(app, options);
-    }
+    else if (app.menuOpen()) drawMenu(app, options);
+    else drawGame(app.game, app.settings.mode, &app, options);
     if (options.notice && *options.notice) {
-      panel(3, app.menuOpen() ? 48 : 222, 138, 9);
-      text(options.notice, 5, app.menuOpen() ? 50 : 224, 1, 0xffff, 33);
+      const int y = app.menuOpen() ? 51 : 224;
+      rect(6,y,132,15,BittyUi::Panel);
+      const size_t length = strlen(options.notice);
+      const size_t limit = 21;
+      size_t offset = length > limit ? (options.nowMs / 400) % (length - limit + 4) : 0;
+      if (length > limit && offset > length - limit) offset = length - limit;
+      menuText(options.notice + offset,9,y + 1,1,BittyUi::Text,limit);
     }
   }
 
@@ -486,8 +491,8 @@ class Renderer {
     if (game.state == State::GameOver && mode != Mode::Clock && mode != Mode::Coop) drawResult(game, mode, app);
     if (mode == Mode::Demo || mode == Mode::Clock) {
       const bool autoPilot = app && app->autoPlaying();
-      panel(0, 241, 144, 15);
-      centered(autoPilot ? "AUTO / ACTION TO PLAY" : "PLAY / SCORE UNSAVED", 246, 1);
+      rect(6,229,132,17,BittyUi::Panel);
+      menuCentered(autoPilot ? "AUTO / ACTION TO PLAY" : "PLAY / SCORE UNSAVED",231,1,BittyUi::Text);
     }
     if (mode == Mode::Coop && (game.state == State::Ready || game.state == State::GameOver)) drawLobby(opt);
     if (game.state == State::Dying && game.stateFrames < 5) {
@@ -582,24 +587,25 @@ class Renderer {
       previewFirst_ = first;
       previewSkinCount_ = count;
     }
-    const uint16_t background = rgb(10, 17, 26), card = rgb(26, 35, 49);
-    const uint16_t gold = rgb(255, 220, 116), outline = rgb(77, 104, 121);
+    const uint16_t background = BittyUi::Black, card = BittyUi::Panel;
+    const uint16_t gold = BittyUi::Amber, outline = BittyUi::Rule;
     rect(0, 0, PixelWidth, PixelHeight, background);
-    menuCentered("Skins", 13, 1, gold);
+    BittyUi::header(pixels_,PixelWidth,PixelHeight,opt.battery);
     const char* caption = app.menuLabel(app.menu.selection);
     const size_t captionLength = strlen(caption);
-    const unsigned maxCaption = 31;
+    const unsigned maxCaption = 15;
     unsigned captionOffset = 0;
     if (captionLength > maxCaption) {
       captionOffset = (opt.nowMs / 400) % unsigned(captionLength - maxCaption + 4);
       if (captionOffset > captionLength - maxCaption) captionOffset = unsigned(captionLength - maxCaption);
     }
-    text(caption + captionOffset, 10, 31, 1, rgb(166, 224, 232), maxCaption);
+    char title[23]; snprintf(title,sizeof(title),"Skin: %.15s",caption + captionOffset);
+    menuCentered(title,31,1,BittyUi::Text);
     static const uint8_t animation[] = {0, 1, 2, 1};
     const uint8_t frame = animation[(opt.nowMs / 120) % 4];
     for (uint8_t slot = 0; slot < 6 && first + slot < count; ++slot) {
       const uint8_t index = uint8_t(first + slot);
-      const int x = 6 + (slot % 2) * 68, y = 42 + (slot / 2) * 62;
+      const int x = 6 + (slot % 2) * 68, y = 46 + (slot / 2) * 61;
       const bool selected = index == app.menu.selection;
       rect(x, y, 64, 60, selected ? gold : outline);
       rect(x + 2, y + 2, 60, 56, card);
@@ -619,28 +625,29 @@ class Renderer {
       char label[11], continuation[11];
       skinLabelLines(app.menuLabel(index), label, continuation);
       const int labelY = y + (*continuation ? 32 : 38);
-      menuText(label, x + (64 - MenuFont::textWidth(label)) / 2, labelY, 1, 0xffff, 10);
+      menuText(label, x + (64 - MenuFont::textWidth(label)) / 2, labelY, 1, BittyUi::Text, 10);
       if (*continuation) menuText(continuation, x + (64 - MenuFont::textWidth(continuation)) / 2,
-                                  y + 45, 1, 0xffff, 10);
+                                  y + 45, 1, BittyUi::Text, 10);
     }
     const bool back = app.menu.selection == count;
     rect(6, 230, 132, 16, back ? gold : card);
-    menuCentered("Back", 232, 1, back ? rgb(30, 36, 46) : 0xffff);
+    menuCentered("Back", 232, 1, back ? BittyUi::Black : BittyUi::Text);
   }
-  void drawGamePicker(const AppModel& app) {
-    rect(2, 10, 140, 233, rgb(17, 23, 36));
-    menuCentered(app.menuTitle(), 19, 1, rgb(255, 224, 103));
+  void drawGamePicker(const AppModel& app, const RenderOptions& opt) {
+    rect(2, 10, 140, 233, BittyUi::Black);
+    BittyUi::header(pixels_,PixelWidth,PixelHeight,opt.battery);
+    menuCentered(app.menuTitle(), 34, 1, BittyUi::Text);
     const unsigned first = (app.menu.selection / 6) * 6;
     const unsigned count = app.menuItemCount();
     char page[8]; snprintf(page, sizeof(page), "%u/%u", first / 6 + 1, (count + 5) / 6);
-    menuText(page, 116, 19, 1, rgb(166, 224, 232), 3);
+    menuText(page, 116, 34, 1, BittyUi::Muted, 3);
     for (unsigned tile = 0; tile < 6 && first + tile < count; ++tile) {
       const unsigned index = first + tile;
       const bool selected = index == app.menu.selection, back = index + 1 == count;
       const bool available = back || app.gameChoiceAvailable(index);
-      const int x = 8 + int(tile % 2) * 66, y = 43 + int(tile / 2) * 54;
-      const uint16_t fill = selected ? rgb(239, 199, 91) : rgb(35, 45, 63);
-      const uint16_t ink = selected ? rgb(17, 23, 36) : available ? rgb(228, 239, 240) : rgb(116, 130, 150);
+      const int x = 8 + int(tile % 2) * 66, y = 54 + int(tile / 2) * 54;
+      const uint16_t fill = selected ? BittyUi::Amber : BittyUi::Panel;
+      const uint16_t ink = selected ? BittyUi::Black : available ? BittyUi::Text : BittyUi::Muted;
       rect(x, y, 62, 50, fill);
       const int cx = x + 30, cy = y + 13;
       const auto title = app.gameChoiceTitle(index);
@@ -685,40 +692,32 @@ class Renderer {
       if (!back && *app.menuValue(index)) rect(x + 54, y + 3, 4, 4, ink);
     }
     const bool available = unsigned(app.menu.selection) + 1 == count || app.gameChoiceAvailable(app.menu.selection);
-    menuCentered(available ? "A SELECT  MENU NEXT" : "ADD ROM VIA USB", 215, 1, rgb(166, 224, 232));
-    menuCentered("HOLD MENU TO EXIT", 231, 1);
+    menuCentered(available ? "M5 SELECT  RIGHT NEXT" : "ADD ROM VIA USB", 217, 1, BittyUi::Muted);
+    menuCentered("HOLD RIGHT TO EXIT", 231, 1, BittyUi::Muted);
   }
 
   void drawMenu(const AppModel& app, const RenderOptions& opt) {
+    rect(0,0,PixelWidth,PixelHeight,BittyUi::Black);
     if (app.menu.page == MenuPage::ChangeGame || app.menu.page == MenuPage::BootGame) {
-      drawGamePicker(app);
+      drawGamePicker(app,opt);
       return;
     }
-    // The opaque panel covers its interior, so dim only the exposed border.
-    for (int y = 0; y < PixelHeight; ++y) {
-      uint16_t* row = pixels_ + y * PixelWidth;
-      if (y < 10 || y >= 243) {
-        for (int x = 0; x < PixelWidth; ++x) row[x] = blend(0, row[x], 170);
-      } else for (int x = 0; x < 2; ++x) {
-        row[x] = blend(0, row[x], 170);
-        row[PixelWidth - 1 - x] = blend(0, row[PixelWidth - 1 - x], 170);
-      }
-    }
-    panel(2, 10, 140, 233);
+    rect(2,10,140,233,BittyUi::Black);
+    BittyUi::header(pixels_,PixelWidth,PixelHeight,opt.battery);
     const int scale = 1;
-    menuCentered(app.menuTitle(), 20, 1, rgb(255, 224, 103));
+    menuCentered(app.menuTitle(), 34, 1, BittyUi::Text);
     const char* val = app.menuValue(app.menu.selection);
-    if (val && *val) menuCentered(val, 40, 1, rgb(166, 224, 232));
+    if (val && *val) menuCentered(val, 51, 1, BittyUi::Glow);
     const int visible = opt.uiScale >= 3 ? 5 : 7;
-    const int rowHeight = opt.uiScale >= 3 ? 29 : 22;
+    const int rowHeight = opt.uiScale >= 3 ? 27 : 20;
     const int count = app.menuItemCount();
     int first = int(app.menu.selection) - visible + 1;
     if (first < 0) first = 0;
     const int maxChars = 128 / MenuFont::Advance;
     for (int row = 0; row < visible && first + row < count; ++row) {
-      const int index = first + row, y = 61 + row * rowHeight;
+      const int index = first + row, y = 73 + row * rowHeight;
       const bool selected = index == app.menu.selection;
-      if (selected) rect(5, y - 4, 134, rowHeight - 2, rgb(239, 199, 91));
+      if (selected) rect(5, y - 4, 134, rowHeight - 2, BittyUi::Amber);
       const char* label = app.menuLabel(uint8_t(index));
       const int length = int(strlen(label));
       if (selected && length > maxChars) {
@@ -727,16 +726,16 @@ class Renderer {
         if (offset > unsigned(length - maxChars)) offset = unsigned(length - maxChars);
         label += offset;
       }
-      const uint16_t color = selected ? rgb(30, 36, 46) : 0xffff;
+      const uint16_t color = selected ? BittyUi::Black : BittyUi::Text;
       menuText(label, 9, y, scale, color, maxChars);
       if (!selected && length > maxChars) {
         rect(9 + (maxChars - 2) * MenuFont::Advance, y,
-             2 * MenuFont::Advance, MenuFont::Height, rgb(26, 35, 49));
+             2 * MenuFont::Advance, MenuFont::Height, BittyUi::Black);
         menuText("..", 9 + (maxChars - 2) * MenuFont::Advance, y, scale, color, 2);
       }
     }
-    menuCentered("MENU NEXT  A SELECT", 217, 1);
-    menuCentered("HOLD MENU TO EXIT", 231, 1);
+    menuCentered("RIGHT NEXT  M5 SELECT", 217, 1, BittyUi::Muted);
+    menuCentered("HOLD RIGHT TO EXIT", 231, 1, BittyUi::Muted);
   }
 };
 

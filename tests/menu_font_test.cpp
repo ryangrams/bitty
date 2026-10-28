@@ -29,8 +29,8 @@ int main() {
   assert(textWidth("Game Settings") == 78);
   assert(textWidth("Game Settings", 2) == 156);
   assert(textWidth("Game Settings", 1, 4) == 24);
-  assert(textWidth("MENU NEXT  A SELECT") == 114);
-  assert(textWidth("HOLD MENU TO EXIT") <= 128);
+  assert(textWidth("RIGHT NEXT  M5 SELECT") == 126);
+  assert(textWidth("HOLD RIGHT TO EXIT") <= 128);
   assert(textWidth("123456789012345678901") == 126);
   assert(textWidth("1234567890123456789012") > 128);
   const char pairs[][2] = {{'M','N'}, {'0','O'}, {'V','W'}, {'B','8'}, {'I','1'}, {'l','I'}};

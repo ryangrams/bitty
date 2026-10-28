@@ -25,19 +25,26 @@ int main(int argc, char** argv) {
   }
   std::vector<uint16_t> pixels(flappy::PixelWidth * flappy::PixelHeight);
   flappy::Renderer render(pixels.data());
-  if (state >= 3) {
+  if (state >= 10) {
+    flappy::BittyUi::splash(pixels.data(),flappy::PixelWidth,flappy::PixelHeight,unsigned(state - 10) * 180);
+  } else if (state >= 3) {
     flappy::AppModel app(2);
     std::vector<const char*> names;
     for (uint8_t index = 0; index < flappy::Renderer::skinCount(); ++index) names.push_back(flappy::Renderer::skinName(index));
     app.setSkinNames(names.data(), uint8_t(names.size()));
     app.openMenu(state >= 6 ? flappy::MenuPage::ChangeGame : flappy::MenuPage::Skins);
+    if (state == 8 || state == 9) {
+      app.openMenu(state == 8 ? flappy::MenuPage::Home : flappy::MenuPage::Controller);
+      app.setControllerStatus("Controller ready");
+    }
     if (state >= 6) {
       app.addCartridgeChoice(1, "Mario"); app.addCartridgeChoice(2, "My homebrew");
       app.setNesAvailable(true); app.setTetrisAvailable(true);
-      app.menu.selection = state == 6 ? 0 : 6;
+      app.menu.selection = state == 7 ? 6 : 0;
     } else app.menu.selection = state == 3 ? 0 : state == 4 ? 10 : app.skinCount();
     flappy::RenderOptions options;
     options.nowMs = state == 4 ? 120 : 0;
+    options.battery = flappy::batteryStatus(true,3900,flappy::PowerSource::External);
     render.draw(app, options);
   } else render.draw(game);
   const int width = std::atoi(argv[1]);
