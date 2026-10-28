@@ -71,6 +71,17 @@ Generic keyboard reports map A, B, arrow keys, Enter to Start, Backspace to Sele
 
 ## Compatibility and status
 
+### Additional controller test targets
+
+The Gamebrick Mini in H mode remains the physically tested controller on the original Plus. New controller models need their own pairing, report-map, combined-button, reconnection and gameplay tests before appearing as compatible purchase recommendations.
+
+| Candidate | Why test it | Evidence and current limit |
+| --- | --- | --- |
+| Xbox Wireless Controller, Series X/S model 1914 | A full-size option with dedicated Start/Menu and View buttons | [Microsoft documents Bluetooth LE](https://news.xbox.com/en-us/2020/03/16/xbox-series-x-controller/). [Bluepad32's device list](https://github.com/ricardoquesada/bluepad32/blob/main/docs/supported_gamepads.md) identifies model 1914 and firmware 5.15 or newer as BLE. Bitty pairing and mapping are untested. |
+| 8BitDo Ultimate 2C Wireless, Windows/Android version | A second full-size test target with an Android Bluetooth mode | [8BitDo specifies Bluetooth for Android](https://www.8bitdo.com/ultimate-2c-wireless-controller/). Confirm its actual BLE transport and HID reports before claiming Bitty support. Similar Ultimate product names refer to different hardware. |
+
+StickS3 supports Bluetooth LE only. Espressif documents that [Bluetooth Classic is unavailable on ESP32-S3](https://docs.espressif.com/projects/esp-idf/en/v5.2/esp32s3/api-guides/bluetooth.html). The original ESP32 has a different radio, while Bitty's current controller stack also uses BLE exclusively. A Bluetooth label or Android compatibility claim alone does not establish compatibility. Several existing 8BitDo models use Classic HID, as listed in the Bluepad32 protocol table. Keep untested controllers out of the supported-device list.
+
 This build supports the BLE HID service (`0x1812`), reads its Report Map and Report Reference descriptors, and subscribes to input notifications. It accepts bounded keyboard and gamepad reports, report IDs, button arrays, directional bits, hats and absolute X/Y axes. Keyboard boot mode is a fallback when available. Proprietary initialization sequences, sparse array maps, mouse control and Bluetooth Classic HID profiles are unsupported.
 
 Connections request encryption with bonding and no man-in-the-middle requirement. A controller that requires entering or confirming a PIN gets a visible status; this build has no PIN-entry or confirmation screen. Disconnects, invalid reports and receive overflow clear affected held inputs.

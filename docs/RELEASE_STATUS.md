@@ -1,6 +1,6 @@
 # Development preview status
 
-The USB-library branch is ready for source review and automated checks. The public interface preview withholds firmware downloads until hardware installation and transfer checks are complete. The new partition layout, browser installation and runtime transfers still await their first complete hardware check. The connected M5 disappeared from the MacBook's USB device list during its read-only backup. No new firmware was flashed after that disconnect. The previous private game build remains the device's last installed release.
+The source and public interface preview are available. Firmware downloads remain disabled until the new partition layout, browser installation and runtime transfers pass hardware checks. On October 28, a full 4 MiB recovery backup was completed and verified against the original Plus. A private Jetpack placement build was then flashed as an app-only update within its existing 3 MiB application partition. This retained its partition table, settings, controller bonds and game records. It does not establish that the new USB-library layout works on hardware.
 
 ## Completed in source
 
@@ -20,15 +20,15 @@ The source suite covers Python import and publication checks, portable C++ state
 
 The private NTSC Mario reference ran 6,000 frames through full and cropped video paths with identical CPU RAM and displayed pixels. The run contained 5,152 moving-platform actor-frames. A separate ROM probe checked standing, crouching and small-player sprite bounds. Platform simulation stayed unchanged. This establishes emulator and crop-path agreement, while controller feel and camera presentation still need a physical playthrough.
 
-Private Jetpack tests retain and collect 10,628 imported formation cells and check the placement changes under sanitizers. The original APK runs offline for reference. Its initial tutorial/revive sequence is not a normal frequency benchmark. Exact vehicle transition choreography, Dragon articulation, finite reel odds, the full gadget catalog and a controlled live course comparison remain open in [the gameplay audit](JETPACK_AUDIT.md).
+Private Jetpack tests retain and collect 10,628 imported formation cells and check the placement changes under sanitizers. The placement build also passed four device probes covering on-foot play, dense magnet coins, Dragon and Rocket Time. Across 2,000 completed LCD intervals, throughput averaged 59.9944 frames per second with Full volume and BLE discovery active. No controller connected. Records and profile stayed unchanged through the probes. Physical sound and controller feel remain unverified for these changes. The original APK runs offline for reference. Its initial tutorial/revive sequence is not a normal frequency benchmark. Exact vehicle transition choreography, Dragon articulation, finite reel odds, the full gadget catalog and a controlled live course comparison remain open in [the gameplay audit](JETPACK_AUDIT.md).
 
 ## Required before calling the USB release hardware verified
 
-1. Reconnect the M5 and finish a verified full-flash recovery backup.
+1. Retain the verified full-flash recovery backup before migration.
 2. Migrate to the new layout, retaining needed settings and controller bonds.
 3. Test fresh browser installation, runtime upload, interrupted upload, removal, replacement, restart, boot choice and controller reconnection on the actual board.
-4. Record completed LCD transfers and simulation timing for the changed game paths.
+4. Record completed LCD transfers and simulation timing for runtime-loaded game paths. The app-only Jetpack timing probes are complete.
 5. Check physical controls, piezo output and gameplay presentation. Two-device links require a second unit.
 6. Publish linked-library notices, corresponding sources and relinking materials alongside any downloadable firmware. The current Pages preview distributes browser code and no firmware image.
 
-The public marketing site at bitty.games is a separate website task. Its kickoff is prepared. This repository supplies the installer and engineering docs. Studio Upgrade channel creation and a verified Discord invite remain pending; unconfigured links stay hidden. GitHub Sponsors is verified, while hardware affiliate destinations still need verification.
+The public marketing site at [bitty.games](https://bitty.games) is maintained separately. This repository supplies the installer and engineering docs. The marketing site maintains its community, Sponsors and hardware links, with compatibility labels and paid-link disclosures.

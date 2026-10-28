@@ -2,7 +2,7 @@
 
 Magnet coins now travel toward the runner, Boost keeps coin formations in play, and Cash Dash ends with falling coins you still have to catch. The current source also adds the recovered vehicle controls, a complete Rocket Time sequence and animated Final Spin reels.
 
-The previous vehicle and bonus firmware passed device timing and sequence checks. Twelve active-gameplay probes averaged 59.9667 completed LCD transfers per second across 6,000 intervals. The newer placement and USB-library changes still need a fresh hardware run. See [verification details](JETPACK.md#verification) for the earlier test conditions and limits, and [release status](RELEASE_STATUS.md) for the current boundary.
+The previous vehicle and bonus firmware passed device timing and sequence checks. Twelve active-gameplay probes averaged 59.9667 completed LCD transfers per second across 6,000 intervals. The newer placement build passed four further probes on the original Plus, covering on-foot play, dense magnet coins, Dragon and Rocket Time: 2,000 completed LCD intervals averaged 59.9944 transfers per second. Volume was Full and BLE discovery was active, with no controller connected. The app-only update retained the existing partition layout, records and saved profile. The USB-library partition migration and browser transfers still need hardware checks. See [verification details](JETPACK.md#verification) for the earlier test conditions and limits, and [release status](RELEASE_STATUS.md) for the current boundary.
 
 ## Evidence and limits
 
