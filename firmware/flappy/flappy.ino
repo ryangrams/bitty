@@ -15,6 +15,7 @@
 #include "speaker_audio.h"
 #include "nes_viewport.h"
 #include "mario_viewport.h"
+#include "mario_controls.h"
 #include "clock_runtime.h"
 #include "clock_overlay.h"
 #include "game_home.h"
@@ -105,8 +106,8 @@ uint32_t handledGeometryRequest = 0;
 flappy::NesViewport nesViewport;
 flappy::MarioViewport marioViewport;
 flappy::MarioCartridge marioCartridge;
-flappy::MarioLauncher marioLauncher;
-flappy::MarioController marioController;
+flappy::MarioFrontend marioFrontend;
+flappy::MarioButtons marioButtons;
 flappy::GameHome gameHome;
 flappy::ClockRuntime homeClocks;
 uint32_t handledHomeGeneration = UINT32_MAX, homeFrames = 0;
@@ -1623,8 +1624,8 @@ void handlePlayGameRequest() {
       tetrisOptions.pal = app.settings.tetrisPal;
     } else if (!zero && !geometry) {
       nativeMario = marioCartridge.supported() && marioViewport.configure(M5.Display.width(), M5.Display.height());
-      marioLauncher.reset(nativeMario);
-      marioController.reset();
+      marioFrontend.reset(nativeMario);
+      marioButtons.reset();
       marioLaunching = nativeMario;
     }
     nextNesTick = micros();
@@ -1797,8 +1798,8 @@ void handleTetrisRequests(uint32_t nowMs) {
         configureNesPerformance();
         nes.setPal(false);
         marioViewport.resetCamera();
-        marioLauncher.reset(true);
-        marioController.reset();
+        marioFrontend.reset(true);
+        marioButtons.reset();
         marioLaunching = true;
         gameMessageShown = 0;
       } else nes.softReset();
@@ -1949,7 +1950,18 @@ void showFrame(uint32_t nowMs) {
     return;
   }
   if (landscape) {
-    if (nativeMario && marioLaunching) showGameMessage(2);
+    if (nativeMario && marioLaunching) {
+      if (marioFrontend.selecting()) {
+        const uint8_t message = uint8_t(5 + marioFrontend.players() + (controllerConnected ? 2 : 0));
+        if (gameMessageShown != message) {
+          gameMessageShown = message;
+          asyncDisplay.drain();
+          invalidateDisplay();
+          renderer->drawMarioPlayers(marioFrontend.players(),controllerConnected);
+          pushGameFrame(240,135);
+        }
+      } else showGameMessage(2);
+    }
     return;
   }
   flappy::RenderOptions options;
@@ -2177,6 +2189,7 @@ void showBootSplash() {
 }
 
 void clearPendingInput() {
+  marioButtons.block();
   pendingHomeNext = false;
   arcadeControls.blockAction();
   arcadeTilt.reset();
@@ -2784,8 +2797,17 @@ void loop() {
       M5.BtnPWR.wasClicked(), geometry && !padConnected && !app.menuOpen() && !gameHome.active(), nowMs);
   geometryHeld = geometryInput.held;
   pendingNesButtons |= geometryInput.pressed;
+  const auto marioScreen = nativeMario ? marioCartridge.screen(nes) : flappy::MarioCartridge::Screen::Other;
+  auto marioContext = flappy::MarioButtons::Context::Off;
+  if (nativeMario && !app.menuOpen() && !gameHome.active()) {
+    if (marioFrontend.launching() || marioScreen == flappy::MarioCartridge::Screen::Title ||
+        marioScreen == flappy::MarioCartridge::Screen::GameOver) marioContext = flappy::MarioButtons::Context::Title;
+    else if (!padConnected) marioContext = flappy::MarioButtons::Context::Play;
+  }
+  marioButtons.poll(M5.BtnA.isPressed(),M5.BtnB.isPressed(),M5.BtnPWR.wasClicked(),marioContext,nowMs);
   pendingNesButtons |= nesSystemButton.update(M5.BtnA.isPressed(),
-      (app.currentGame == flappy::GameTitle::Nes || (geometry && padConnected)) && !app.menuOpen() && !gameHome.active(), nowMs);
+      ((app.currentGame == flappy::GameTitle::Nes && (!nativeMario || (padConnected && marioScreen == flappy::MarioCartridge::Screen::Playing))) ||
+      (geometry && padConnected)) && !app.menuOpen() && !gameHome.active(), nowMs);
   const bool lobby = tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || (zeroLinked() && (zeroLaunching || zeroFinishedRound)));
   const auto internal = tetrisButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
       M5.BtnPWR.wasClicked(), app.settings.tetrisControls,
@@ -2876,14 +2898,18 @@ void loop() {
         uint8_t input1 = 0, input2 = 0;
         bool runFrame = true;
         bool consumedInput = false;
-        if (!frameTetris && !frameZero && nativeMario && marioLaunching) {
-          const auto launch = marioLauncher.step(marioCartridge.sample(nes).playing);
-          input1 = launch.buttons;
-          if (launch.complete) {
-            marioLaunching = false;
-            gameMessageShown = 0;
-            invalidateDisplay();
-          } else if (launch.failed) {
+        if (!frameTetris && !frameZero && nativeMario) {
+          const auto local = marioButtons.frame();
+          const uint8_t controller = uint8_t(nesButtons(padButtons) | pendingControllerNesButtons);
+          const bool wasLaunching = marioLaunching;
+          const auto launch = marioFrontend.step(marioCartridge.screen(nes),
+              uint8_t(controller | (marioButtons.playing() ? 0 : local)),nes.readRam(0x77a) != 0);
+          marioLaunching = marioFrontend.launching();
+          runFrame = launch.runFrame;
+          input1 = launch.gameplay ? uint8_t(controller | pendingNesButtons | (padConnected ? 0 : local)) : launch.buttons;
+          input2 = launch.gameplay ? flappy::marioSecondPort(input1,marioFrontend.players()) : 0;
+          if (wasLaunching != marioLaunching) { gameMessageShown = 0; invalidateDisplay(); }
+          if (launch.failed) {
             marioLaunching = false;
             runtimeNotice = "Mario launch timed out";
             app.openMenu(flappy::MenuPage::GameSettings);
@@ -2994,8 +3020,6 @@ void loop() {
             }
           }
           if (!frameTetris && !frameZero && nativeMario) {
-            if (!marioLaunching) input1 = uint8_t(marioController.step(marioCartridge.screen(nes),
-                uint8_t(nesButtons(padButtons) | pendingControllerNesButtons)) | pendingNesButtons);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
             if (!marioLaunching && marioBenchmarkFrames) {
               const auto screen = marioCartridge.screen(nes);
@@ -3004,6 +3028,7 @@ void loop() {
                   screen == flappy::MarioCartridge::Screen::Playing ? uint8_t(flappy::NesRuntime::Right |
                   flappy::NesRuntime::B | (phase >= 32 && phase < 52 ? flappy::NesRuntime::A : 0)) : 0;
               --marioBenchmarkFrames;
+              input2 = flappy::marioSecondPort(input1,marioFrontend.players());
             }
 #endif
             marioViewport.trackPlayer(marioCartridge.sample(nes));

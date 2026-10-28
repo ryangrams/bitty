@@ -44,17 +44,32 @@ The default build selects DIO 80 MHz flash, matching the [manufacturer's StickC 
 
 ## Screen and controls
 
-NES play rotates the display to landscape. The recognized NTSC Mario revision starts automatically behind an M5 startup screen. Its native layout accepts the exact 40,976-byte NROM image with CRC-32 `3337EC46` and PRG SHA-1 `fefa1097449a3a11ebf8c6199e905996c5dc8fbd`. The firmware uses your local NTSC image. PAL images in this slot return to Change Game with an import notice. No cartridge bytes are included in the public source. Other NTSC cartridge images use the general scaled 4:3 view with side bars.
+NES play rotates the display to landscape. The recognized NTSC Mario revision opens a **1 PLAYER / 2 PLAYERS** selector after leaving its clock home. Tap either side button to change the choice, then press M5 to enter. The game stays paused at this selector until you confirm. Its native layout accepts the exact 40,976-byte NROM image with CRC-32 `3337EC46` and PRG SHA-1 `fefa1097449a3a11ebf8c6199e905996c5dc8fbd`. The firmware uses your local NTSC image. PAL images in this slot return to Change Game with an import notice. No cartridge bytes are included in the public source. Other NTSC cartridge images use the general scaled 4:3 view with side bars.
 
 On a 240×135 display, the native Mario view copies NES columns 8 through 247 at one display pixel per source pixel. The first 16 output rows show source rows 16 through 31 for the HUD. The remaining 119 rows show a world window whose top moves between source rows 32 and 105. The default view ends one block below the ground Mario stands on. The camera leaves six source rows above Mario during high jumps and follows him back down, including the flagpole slide and castle walk. This crop preserves source pixels and trims the outer columns and part of the vertical view. The M5 menus return to portrait.
 
 [Tetris](TETRIS.md) has one launcher entry with **Solo** and **2 players** settings. Solo uses its private TetrisGYM image; two-player play uses its private Tetris Zero image. Both use portrait layouts and M5 settings. You can include those two images, the general NES image and a separate [Geometry Dash](GEOMETRY_DASH.md) image in one build, alongside Flappy Bird.
 
-Use a paired controller for A, B and directions. A and B retain their NES meanings, including jump and run in Super Mario Bros. All D-pad and A/B combinations pass through to the general NES game after automatic startup. Dedicated controller Start, Select and Menu buttons keep their assignments. Use **Game Settings > Restart game** to repeat the recognized standalone Mario's automatic launch. [Mario's clock home](MARIO_CLOCK.md) uses a separate endless scene with native ROM artwork. **Game home** in the main menu returns to it. Other cartridges use the generic NES clock.
+With no Bluetooth controller, Mario uses these built-in controls:
 
-On the recognized Mario cartridge's title screen, Up, Down or B starts a new game. A+B sends native A+Start, continuing at the first stage of the last world reached. A request made during Game Over waits until the title screen. These shortcuts apply outside active play; gameplay keeps ordinary A/B combinations, including running jumps.
+| Input | Action |
+| --- | --- |
+| Hold M5 | Move in the selected direction. Run stays held. |
+| Double-tap M5 | Reverse direction. Hold the second press to keep moving immediately. A fresh game starts facing right. |
+| Tap right | Jump with a twelve-frame A pulse. Holding right for 700 ms opens the system menu and supplies no jump. |
+| Tap left | Briefly release and re-press B to shoot a fireball when Mario has fire power. |
 
-Release the front M5 button before 700 ms (0.7 seconds) to send Start. Hold it for at least 700 ms to send Select once. Hold the right side button for 700 ms to open the M5 menu. While the menu is open, tap right to advance, press front to select, or hold right to exit. These physical buttons supply Start, Select and menu access for controllers such as the IINE Gamebrick Mini. See [pairing and the complete control table](CONTROLLERS.md).
+The first tap starts movement immediately, so reversal adds no waiting period to ordinary movement. The first press must last at most 180 ms, and the second press must begin within 250 ms of release. Direction and jump behavior come from the original NES game, including momentum and collision rules.
+
+A paired controller keeps ordinary NES D-pad and A/B behavior, including running jumps. Its presence disables built-in movement and automatic B. M5 then supplies Start on a short release or Select after a 700 ms hold. At the player selector, use the D-pad or Select to change the choice and A, B or Start to confirm. M5 and side-button selection also remain available.
+
+Two-player mode is the original alternating-turn Mario and Luigi game. The selected mode is applied through native Select and Start inputs. Both NES controller ports receive the shared gameplay controls, allowing players to pass the M5 or its single paired controller between turns. This adds no simultaneous or two-stick Mario mode.
+
+Use **Game Settings > Restart game** to return to player selection. [Mario's clock home](MARIO_CLOCK.md) uses a separate endless scene with native ROM artwork. **Game home** in the main menu returns to it. Other cartridges use the generic NES clock.
+
+At Mario's player selector, controller A+B sends native A+Start, continuing at the first stage of the last world reached. A request made during Game Over waits until the title screen. These shortcuts apply outside active play; gameplay keeps ordinary controller A/B combinations, including running jumps.
+
+In general NES play and controller-driven Mario, release M5 before 700 ms (0.7 seconds) to send Start, or hold it for Select once. Hold the right side button for 700 ms to open the M5 menu. While the menu is open, tap right to advance, press front to select, or hold right to exit. See [pairing and the complete control table](CONTROLLERS.md).
 
 ## Sound
 

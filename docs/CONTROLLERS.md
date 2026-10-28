@@ -37,8 +37,13 @@ The manufacturer's C mode, identified by a red light, advertises **Xbox Wireless
 | NES | D-pad | NES directions. |
 | NES | A and B | NES A and B. In Super Mario Bros., these are jump and run. |
 | NES | Controller Start and Select | NES Start and Select. |
-| Mario title | Up, Down or B | Start a new game. |
-| Mario title | A+B together | Send native A+Start to continue at the first stage of the last world reached. |
+| Mario player selector | Controller D-pad or Select; either M5 side button | Change 1 PLAYER / 2 PLAYERS. |
+| Mario player selector | Controller A, B or Start; front M5 | Confirm the selected mode. |
+| Mario player selector | Controller A+B together | Send native A+Start to continue at the first stage of the last world reached. |
+| Mario, no controller | Hold front M5 | Move with run held. |
+| Mario, no controller | Double-tap front M5 | Reverse direction. Holding the second press continues movement. |
+| Mario, no controller | Right side button, short tap | Jump. |
+| Mario, no controller | Left side button, short tap | Re-press B to shoot when fire-powered. |
 | NES | Front M5 button, short release | Start. |
 | NES | Front M5 button, hold at least 700 ms | Send Select once. |
 | Tetris | Controller Left or Right | Move the piece. |
@@ -57,7 +62,7 @@ The manufacturer's C mode, identified by a red light, advertises **Xbox Wireless
 | Any game | Controller Menu | Open the M5 menu. |
 | Any game | Right side M5 button | Hold for 700 ms to open the menu. Tap to advance while open; hold again to exit. |
 
-During Mario gameplay, ordinary NES directions and A/B combinations pass through, including a held direction with A or B. Its title shortcuts also accept requests during Game Over and wait until the title screen to send them. Tetris uses Up for hard drop and A+B for Hold. Other direction and rotation combinations remain available.
+During controller-driven Mario gameplay, ordinary NES directions and A/B combinations pass through, including a held direction with A or B. Automatic run is limited to the built-in movement controls. Mario waits for an explicit player-mode choice, and A+B continue requests during Game Over wait for the title screen. In two-player Mario, the shared controls reach both NES ports for alternating Mario and Luigi turns. Tetris uses Up for hard drop and A+B for Hold. Other direction and rotation combinations remain available.
 
 Tetris Hold is an M5 frontend extension. The first Hold stores the current piece and consumes NEXT, then advances the cartridge's randomizer for the new NEXT. Later Holds exchange the current and held pieces without changing NEXT. Locking the active piece makes Hold available again, and restart clears the slot. See [Hold and board settings](TETRIS.md#buttons).
 

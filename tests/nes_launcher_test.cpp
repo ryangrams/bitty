@@ -1,6 +1,7 @@
 #include "../firmware/flappy/app_model.h"
 #include "../firmware/flappy/game_home.h"
 #include "../firmware/flappy/mario_viewport.h"
+#include "../firmware/flappy/mario_controls.h"
 #include "../firmware/flappy/nes_runtime.h"
 #include "../firmware/flappy/rom_fingerprint.h"
 #include "../firmware/flappy/tetris_gym.h"
@@ -64,8 +65,8 @@ uint32_t handledRestart = 0, handledTetrisRequest = 0, handledZeroRequest = 0, h
 flappy::NesRuntime nes;
 flappy::MarioCartridge marioCartridge;
 flappy::MarioViewport marioViewport;
-flappy::MarioLauncher marioLauncher;
-flappy::MarioController marioController;
+flappy::MarioFrontend marioFrontend;
+flappy::MarioButtons marioButtons;
 flappy::TetrisGym::Options tetrisOptions;
 Renderer* renderer = &rendererStorage;
 Resettable nesSystemButton, tetrisButtons, tetrisSoftDrop, tetrisActions[2];

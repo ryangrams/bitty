@@ -89,6 +89,7 @@ firmware/flappy/library_protocol.h
 firmware/flappy/library_service.h
 firmware/flappy/mario_clock.h
 firmware/flappy/mario_viewport.h
+firmware/flappy/mario_controls.h
 firmware/flappy/mario_world_clock.h
 firmware/flappy/menu_font.h
 firmware/flappy/nes_runtime.h
@@ -169,6 +170,7 @@ tests/jetpack_vehicle_physics_test.cpp
 tests/library_protocol_test.cpp
 tests/mario_clock_test.cpp
 tests/mario_viewport_test.cpp
+tests/mario_controls_test.cpp
 tests/mario_world_clock_test.cpp
 tests/menu_font_test.cpp
 tests/nes_apu_pcm_test.c
