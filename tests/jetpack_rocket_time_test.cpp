@@ -29,7 +29,7 @@ static void configurationAndEveryEvent() {
       if (event.release) { assert(tick == unsigned(config.durationTicks) + 150); ++releaseEvents; }
       if (event.ended) { assert(tick == unsigned(config.durationTicks) + 240); ++endEvents; }
     }
-    assert(waves == level + 1 && choiceEvents == 1 && releaseEvents == 1 && endEvents == 1);
+    assert(waves == unsigned(level) + 1 && choiceEvents == 1 && releaseEvents == 1 && endEvents == 1);
     assert(!rocket.active() && rocket.phase() == Rocket::Phase::Inactive);
     const auto again = rocket.advance(UINT16_MAX);
     assert(!again.waveMask && !again.choiceCount && !again.release && !again.ended);

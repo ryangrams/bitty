@@ -397,7 +397,7 @@ static void scanPhaseQualificationAndBoundedGate() {
         assert(full.rowMinNs() >= 46000 && full.rowMaxNs() <= 52000);
         assert(full.rowMinNs() <= rowUs * 1000 && full.rowMaxNs() >= rowUs * 1000);
       }
-    for (const auto timing : {std::pair<uint32_t, uint32_t>{45, 16000}, {53, 18500}, {50, 18000}}) {
+    for (const auto& timing : {std::pair<uint32_t, uint32_t>{45, 16000}, {53, 18500}, {50, 18000}}) {
       const auto invalid = fullScanProbe(timing.first, timing.second, start);
       assert(invalid.failed() && !invalid.complete());
     }

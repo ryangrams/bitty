@@ -139,7 +139,7 @@ class CartridgeStore {
     uint32_t crc = 0xffffffffu;
     uint8_t bytes[Chunk];
     for (uint32_t offset = 0; offset < record.length;) {
-      const uint32_t count = record.length - offset < Chunk ? record.length - offset : Chunk;
+      const uint32_t count = record.length - offset < Chunk ? record.length - offset : uint32_t(Chunk);
       if (!flash_.read(record.offset + offset, bytes, count)) return false;
       crc = cartridgeCrc(bytes, count, crc); offset += count;
     }

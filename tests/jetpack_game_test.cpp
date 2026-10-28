@@ -533,7 +533,8 @@ static void finalSpinAndCrashRewards() {
     if (reward == 0) assert(game.phase() == Phase::Running);
     if (reward == 1) {
       assert(game.phase() == Phase::Crashing); const uint32_t before = game.distance();
-      for(unsigned i=0;i<50;++i)game.tick(Input{}); assert(game.distance()>before);
+      for(unsigned i=0;i<50;++i)game.tick(Input{});
+      assert(game.distance()>before);
       for(unsigned i=0;i<400 && !game.gameOver();++i)game.tick(Input{});
       assert(game.gameOver() && game.playerY() == Game::Floor && Access::velocity(game) == 0);
     }
