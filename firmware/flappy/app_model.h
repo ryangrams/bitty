@@ -4,22 +4,23 @@
 #include <stdio.h>
 #include "game_core.h"
 #include "jetpack_profile.h"
+#include "hockey_state.h"
 
 namespace flappy {
 
 enum class GameTitle : uint8_t {
   FlappyBird = 0, Nes = 1, Tetris = 2, TetrisZero = 3, GeometryDash = 4, Galaga = 5, Arkanoid = 6,
-  JetpackJoyride = 7
+  JetpackJoyride = 7, HockeyQueen = 8
 };
-constexpr uint8_t GameTitleCount = 8;
-constexpr uint8_t VisibleGameCount = 7;
+constexpr uint8_t GameTitleCount = 9;
+constexpr uint8_t VisibleGameCount = 8;
 
 inline bool nativeArcadeGame(GameTitle title) {
-  return title == GameTitle::Galaga || title == GameTitle::Arkanoid || title == GameTitle::JetpackJoyride;
+  return title == GameTitle::Galaga || title == GameTitle::Arkanoid || title == GameTitle::JetpackJoyride || title == GameTitle::HockeyQueen;
 }
 
 inline GameTitle visibleGameTitle(uint8_t index) {
-  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride};
+  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride, GameTitle::HockeyQueen};
   return index < VisibleGameCount ? titles[index] : GameTitle(UINT8_MAX);
 }
 
@@ -33,6 +34,7 @@ inline uint8_t visibleGameIndex(GameTitle title) {
     case GameTitle::Galaga: return 4;
     case GameTitle::Arkanoid: return 5;
     case GameTitle::JetpackJoyride: return 6;
+    case GameTitle::HockeyQueen: return 7;
     default: return UINT8_MAX;
   }
 }
@@ -41,7 +43,7 @@ inline Mode playModeChoice(uint8_t index) {
   static constexpr Mode choices[] = {Mode::Original, Mode::Demo, Mode::Arcade, Mode::Big, Mode::Coop};
   return index < 5 ? choices[index] : Mode::Original;
 }
-enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions, HockeyLink, HockeyMap, HockeyColors };
 
 constexpr uint8_t GeometryLevelCount = 22;
 
@@ -91,6 +93,7 @@ struct Settings {
   uint8_t jetpackGadget = 0;
   bool jetpackHeadstart = false;
   bool jetpackPractice = false;
+  hockey::Options hockeyOptions;
 };
 
 struct MenuState {
@@ -151,6 +154,8 @@ class AppModel {
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
   uint32_t arcadeCalibrateRequest = 0;
+  uint32_t hockeyLinkRequest = 0;
+  uint8_t hockeyLinkRole = 0;
   uint32_t jetpackUpgradeRequest = 0;
   uint8_t jetpackUpgradeKind = 0;
   uint32_t tetrisRequest = 0;
@@ -252,6 +257,14 @@ class AppModel {
     settings.arcadeAutoFire = enabled;
   }
 
+  void setHockeyOptions(hockey::Options options) {
+    if (options.map>hockey::MapCount || options.palette>3 || uint8_t(options.powers)>2) return;
+    hockey::Options checked;
+    if (!hockey::Options::decode(options.encode(),checked)) return;
+    if (settings.hockeyOptions.encode()!=checked.encode()) settingsDirty=true;
+    settings.hockeyOptions=checked;
+  }
+
   void setArcadeDifficulty(uint8_t difficulty) {
     if (difficulty > 2) difficulty = 1;
     if (settings.arcadeDifficulty != difficulty) settingsDirty = true;
@@ -319,6 +332,7 @@ class AppModel {
   }
 
   const char* gameLabel(GameTitle title) const {
+    if (title == GameTitle::HockeyQueen) return "Hockey Queen";
     if (title == GameTitle::Galaga) return "Galaga";
     if (title == GameTitle::Arkanoid) return "Arkanoid";
     if (title == GameTitle::JetpackJoyride) return "Bitty Jet";
@@ -607,6 +621,9 @@ class AppModel {
       case MenuPage::JetpackUpgrades: return "Power-up upgrades";
       case MenuPage::JetpackMissions: return "Mission goals";
       case MenuPage::Coop: return "Co-op link";
+      case MenuPage::HockeyLink: return "Two-stick link";
+      case MenuPage::HockeyMap: return "Starting map";
+      case MenuPage::HockeyColors: return "Rink colors";
       default: return "Menu";
     }
   }
@@ -617,6 +634,7 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceCount() + 1;
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::HockeyQueen) return 7;
         if (currentGame == GameTitle::FlappyBird) return 4;
         if (currentGame == GameTitle::Tetris) return 9;
         if (currentGame == GameTitle::TetrisZero) return 8;
@@ -640,6 +658,9 @@ class AppModel {
       case MenuPage::JetpackUpgrades: return 6;
       case MenuPage::JetpackMissions: return 5;
       case MenuPage::Coop: return 4;
+      case MenuPage::HockeyLink: return 4;
+      case MenuPage::HockeyMap: return hockey::MapCount+2;
+      case MenuPage::HockeyColors: return 5;
       default: return 0;
     }
   }
@@ -656,6 +677,10 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceLabel(index);
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::HockeyQueen) {
+          constexpr const char* labels[]={"Two-stick link", "Map", "Colors", "Power-ups", "Zero tilt", "Sensitivity"};
+          return labels[index];
+        }
         if (currentGame == GameTitle::FlappyBird) {
           constexpr const char* labels[] = {"Mode", "Skins", "Co-op link"};
           return labels[index];
@@ -679,6 +704,13 @@ class AppModel {
         }
         return "Restart game";
       case MenuPage::GeometryLevel: return geometryLevelLabel(index);
+      case MenuPage::HockeyMap: return index ? hockey::mapName(uint8_t(index-1)) : "Random";
+      case MenuPage::HockeyColors: {
+        constexpr const char* labels[]={"Map colors", "Night", "Neon", "Pastel"}; return labels[index];
+      }
+      case MenuPage::HockeyLink: {
+        constexpr const char* labels[]={"Host as Queen", "Join as Peasant", "Disconnect"}; return labels[index];
+      }
       case MenuPage::JetpackPractice: {
         constexpr const char* labels[] = {"Practice mode", "Starting ride", "Starting bonus", "Headstart"};
         return labels[index];
@@ -762,7 +794,14 @@ class AppModel {
         if (index == 8) return gameLabel(currentGame);
         break;
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::FlappyBird) {
+        if (currentGame == GameTitle::HockeyQueen) {
+          if(index==0) return hockeyLinkRole==1 ? "Queen" : hockeyLinkRole==2 ? "Peasant" : "Off";
+          if(index==1) return settings.hockeyOptions.map ? hockey::mapName(uint8_t(settings.hockeyOptions.map-1)) : "Random";
+          if(index==2) { constexpr const char* labels[]={"Map colors", "Night", "Neon", "Pastel"}; return labels[settings.hockeyOptions.palette]; }
+          if(index==3) return settings.hockeyOptions.powers==hockey::Powers::Queen ? "Queen only" : settings.hockeyOptions.powers==hockey::Powers::Both ? "Both players" : "Off";
+          if(index==4) return "Hold unit steady";
+          if(index==5) return settings.arcadeSensitivity==0 ? "Low" : settings.arcadeSensitivity==2 ? "High" : "Normal";
+        } else if (currentGame == GameTitle::FlappyBird) {
           if (index == 0) return modeName(settings.mode);
           if (index == 1) return skinNames_ ? skinNames_[settings.skinIndex] : "";
           if (index == 2) return settings.coopRole == 1 ? "Host" : settings.coopRole == 2 ? "Join" : "Off";
@@ -1065,7 +1104,8 @@ class AppModel {
                menu.page == MenuPage::TetrisType || menu.page == MenuPage::TetrisControls ||
                menu.page == MenuPage::TetrisLink || menu.page == MenuPage::TetrisZeroPlayers ||
                menu.page == MenuPage::GeometryLevel || menu.page == MenuPage::JetpackPractice ||
-               menu.page == MenuPage::JetpackUpgrades || menu.page == MenuPage::JetpackMissions) openMenu(MenuPage::GameSettings);
+               menu.page == MenuPage::JetpackUpgrades || menu.page == MenuPage::JetpackMissions ||
+               menu.page == MenuPage::HockeyLink || menu.page == MenuPage::HockeyMap || menu.page == MenuPage::HockeyColors) openMenu(MenuPage::GameSettings);
       else openMenu();
       return;
     }
@@ -1091,7 +1131,14 @@ class AppModel {
         break;
       }
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::FlappyBird) {
+        if (currentGame == GameTitle::HockeyQueen) {
+          if(menu.selection==0) openMenu(MenuPage::HockeyLink);
+          else if(menu.selection==1) openMenu(MenuPage::HockeyMap);
+          else if(menu.selection==2) openMenu(MenuPage::HockeyColors);
+          else if(menu.selection==3) { auto options=settings.hockeyOptions; options.powers=hockey::Powers((uint8_t(options.powers)+1)%3); setHockeyOptions(options); }
+          else if(menu.selection==4) ++arcadeCalibrateRequest;
+          else if(menu.selection==5) setArcadeSensitivity(uint8_t((settings.arcadeSensitivity+1)%3));
+        } else if (currentGame == GameTitle::FlappyBird) {
           constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Coop};
           openMenu(destinations[menu.selection]);
         } else if (currentGame == GameTitle::Tetris) {
@@ -1134,6 +1181,15 @@ class AppModel {
         else if (menu.selection == 2) setJetpackGadget(uint8_t((settings.jetpackGadget + 1) % 7));
         else if (menu.selection == 3) setJetpackHeadstart(!settings.jetpackHeadstart);
         break;
+      case MenuPage::HockeyLink:
+        hockeyLinkRole=menu.selection==0 ? 1 : menu.selection==1 ? 2 : 0;
+        ++hockeyLinkRequest; closeMenu(); break;
+      case MenuPage::HockeyMap: {
+        auto options=settings.hockeyOptions; options.map=menu.selection; setHockeyOptions(options); break;
+      }
+      case MenuPage::HockeyColors: {
+        auto options=settings.hockeyOptions; options.palette=menu.selection; setHockeyOptions(options); break;
+      }
       case MenuPage::JetpackUpgrades:
         if (menu.selection > 0 && menu.selection < 5) {
           jetpackUpgradeKind = uint8_t(menu.selection - 1); ++jetpackUpgradeRequest;

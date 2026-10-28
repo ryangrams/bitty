@@ -104,6 +104,7 @@ class BleLink {
   bool zeroInputs(uint32_t frame, uint8_t& local, uint8_t& remote) { return session_.zeroInputs(frame, local, remote); }
   uint32_t zeroFrame() const { return session_.zeroFrame(); }
   const Session& session() const { return session_; }
+  hockey::Channel& hockeyChannel() { return session_.hockeyChannel(); }
   const char* deviceName() const { return deviceName_; }
   const char* peerName() const { return peerName_; }
   bool multipleHostsFound() const { return multipleHosts_; }
@@ -120,7 +121,7 @@ class BleLink {
       case Phase::Waiting: return session_.role() == Role::Host ? "Waiting for player" : "No host found";
       case Phase::Lobby: return session_.localReady() ? "Waiting for other player" : "Action: ready";
       case Phase::Countdown: return "Get ready";
-      case Phase::Playing: return gameProfile() == GameProfile::TetrisZero ? "Tetris Zero linked" :
+      case Phase::Playing: return gameProfile() == GameProfile::Hockey ? "Hockey Queen linked" : gameProfile() == GameProfile::TetrisZero ? "Tetris Zero linked" :
           gameProfile() == GameProfile::Tetris ? "Tetris competition" : "Same course race";
       case Phase::Disconnected: return "Connection lost";
     }
@@ -289,7 +290,7 @@ class BleLink {
       snprintf(detail_, sizeof(detail_), "Link queue unavailable");
       fault_ = true; return false;
     }
-    snprintf(deviceName_, sizeof(deviceName_), gameProfile() == GameProfile::TetrisZero ? "M5Zero-%06lX" :
+    snprintf(deviceName_, sizeof(deviceName_), gameProfile() == GameProfile::Hockey ? "M5Hockey-%06lX" : gameProfile() == GameProfile::TetrisZero ? "M5Zero-%06lX" :
              gameProfile() == GameProfile::Tetris ? "M5Tetris-%06lX" : "M5Flap-%06lX",
              static_cast<unsigned long>((ESP.getEfuseMac() >> 24) & 0xffffff));
     radio::EspBackend backend;

@@ -3,6 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "hockey_protocol.h"
+#include <memory>
+#include <new>
+#include <utility>
 
 namespace flappy {
 namespace coop {
@@ -22,7 +26,10 @@ constexpr uint32_t ZeroInputIntervalMs = 16;
 constexpr uint32_t ZeroProgressIntervalMs = 32;
 constexpr uint32_t ZeroStatsIntervalMs = 200;
 
-enum class GameProfile : uint8_t { Flappy, Tetris, TetrisZero };
+enum class GameProfile : uint8_t { Flappy, Tetris, TetrisZero, Hockey };
+constexpr const char* HockeyServiceUuid = "a8ed0500-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* HockeyHostTxUuid = "a8ed0501-3fec-4f60-a066-83ae580bbed0";
+constexpr const char* HockeyGuestTxUuid = "a8ed0502-3fec-4f60-a066-83ae580bbed0";
 constexpr const char* ServiceUuid = "a8ed0200-3fec-4f60-a066-83ae580bbed0";
 constexpr const char* HostTxUuid = "a8ed0201-3fec-4f60-a066-83ae580bbed0";
 constexpr const char* GuestTxUuid = "a8ed0202-3fec-4f60-a066-83ae580bbed0";
@@ -34,15 +41,18 @@ constexpr const char* ZeroHostTxUuid = "a8ed0401-3fec-4f60-a066-83ae580bbed0";
 constexpr const char* ZeroGuestTxUuid = "a8ed0402-3fec-4f60-a066-83ae580bbed0";
 
 inline bool validGameProfile(GameProfile profile) {
-  return profile == GameProfile::Flappy || profile == GameProfile::Tetris || profile == GameProfile::TetrisZero;
+  return profile == GameProfile::Flappy || profile == GameProfile::Tetris || profile == GameProfile::TetrisZero || profile == GameProfile::Hockey;
 }
 inline const char* serviceUuid(GameProfile profile) {
+  if (profile == GameProfile::Hockey) return HockeyServiceUuid;
   return profile == GameProfile::TetrisZero ? ZeroServiceUuid : profile == GameProfile::Tetris ? TetrisServiceUuid : ServiceUuid;
 }
 inline const char* hostTxUuid(GameProfile profile) {
+  if (profile == GameProfile::Hockey) return HockeyHostTxUuid;
   return profile == GameProfile::TetrisZero ? ZeroHostTxUuid : profile == GameProfile::Tetris ? TetrisHostTxUuid : HostTxUuid;
 }
 inline const char* guestTxUuid(GameProfile profile) {
+  if (profile == GameProfile::Hockey) return HockeyGuestTxUuid;
   return profile == GameProfile::TetrisZero ? ZeroGuestTxUuid : profile == GameProfile::Tetris ? TetrisGuestTxUuid : GuestTxUuid;
 }
 
@@ -53,7 +63,7 @@ inline bool matchesGameService(GameProfile profile, const char* uuid) {
 enum class Role : uint8_t { Off, Host, Guest };
 enum class Phase : uint8_t { Off, Waiting, Lobby, Countdown, Playing, Disconnected };
 enum class Life : uint8_t { Ready, Alive, Dying, GameOver };
-enum class MessageType : uint8_t { Hello = 1, Offer, Ready, Start, StartAck, Snapshot, Bye, TetrisStats, ZeroInputWindow, ZeroProgress };
+enum class MessageType : uint8_t { Hello = 1, Offer, Ready, Start, StartAck, Snapshot, Bye, TetrisStats, ZeroInputWindow, ZeroProgress, HockeyInput, HockeyMotion, HockeyBoard };
 
 struct ZeroInputWindow {
   uint32_t frame = 0;
@@ -113,7 +123,13 @@ struct Message {
   uint16_t tetrisSequence = 0;
   ZeroInputWindow zero;
   uint32_t zeroProgress = 0;
+  hockey::Frame hockeyFrame;
+  hockey::Input hockeyInput;
 };
+
+inline hockey::Part hockeyPart(MessageType type) {
+  return type == MessageType::HockeyInput ? hockey::Part::Input : type == MessageType::HockeyMotion ? hockey::Part::Motion : hockey::Part::Board;
+}
 
 // Unsigned subtraction keeps ordering valid across tick and millis() wrap.
 // Sessions never compare timestamps more than 2^31 ticks apart.
@@ -181,6 +197,9 @@ inline uint8_t wireLength(MessageType type) {
     case MessageType::TetrisStats: return 19;
     case MessageType::ZeroInputWindow: return 18;
     case MessageType::ZeroProgress: return 13;
+    case MessageType::HockeyInput: return 14;
+    case MessageType::HockeyMotion:
+    case MessageType::HockeyBoard: return 20;
   }
   return 0;
 }
@@ -247,6 +266,11 @@ inline bool encode(const Message& message, Packet& packet) {
     case MessageType::Hello:
     case MessageType::StartAck:
     case MessageType::Bye: break;
+    case MessageType::HockeyInput:
+    case MessageType::HockeyMotion:
+    case MessageType::HockeyBoard:
+      if (!hockey::encodePayload(hockeyPart(message.type),message.hockeyFrame,message.hockeyInput,packet.bytes+9)) return false;
+      break;
   }
   return true;
 }
@@ -314,6 +338,11 @@ inline bool decode(const uint8_t* bytes, size_t length, Message& message) {
     case MessageType::Hello:
     case MessageType::StartAck:
     case MessageType::Bye: break;
+    case MessageType::HockeyInput:
+    case MessageType::HockeyMotion:
+    case MessageType::HockeyBoard:
+      if (!hockey::decodePayload(hockeyPart(decoded.type),bytes+9,length-9,decoded.hockeyFrame,decoded.hockeyInput)) return false;
+      break;
   }
   message = decoded;
   return true;
@@ -415,9 +444,19 @@ class ZeroInputBuffer {
 // All state changes happen on the game task. BLE callbacks only queue bytes.
 class Session {
  public:
+  Session() = default;
+  Session(Session&&) = default;
+  Session& operator=(Session&&) = default;
+  Session(const Session&) = delete;
+  Session& operator=(const Session&) = delete;
   bool setGameProfile(GameProfile profile) {
     if (!validGameProfile(profile)) return false;
+    if (profile == GameProfile::Hockey && !hockey_) {
+      hockey_.reset(new(std::nothrow) hockey::Channel);
+      if (!hockey_) return false;
+    }
     if (profile_ != profile) { stop(); profile_ = profile; }
+    if (profile != GameProfile::Hockey) hockey_.reset();
     return true;
   }
 
@@ -465,6 +504,8 @@ class Session {
   }
 
   void setLocalTetris(const TetrisStats& stats) { localTetris_ = stats; }
+  hockey::Channel& hockeyChannel() { return *hockey_; }
+  const hockey::Channel& hockeyChannel() const { return *hockey_; }
 
   bool submitZeroInput(uint32_t frame, uint8_t pad) {
     return profile_ == GameProfile::TetrisZero && connected_ &&
@@ -511,6 +552,7 @@ class Session {
       localTetris_ = TetrisStats();
       tetrisSequence_ = 0;
       zero_.reset();
+      if (hockey_) hockey_->reset();
       controlSentMs_ = now - 50;
     }
     if (phase_ == Phase::Countdown && reached(now, startMs_)) {
@@ -551,6 +593,8 @@ class Session {
     }
     if (message.type == MessageType::Offer) {
       if (profile_ == GameProfile::Tetris && message.hue > 1) return false;
+      hockey::Options options;
+      if (profile_ == GameProfile::Hockey && !hockey::Options::decode(message.hue,options)) return false;
       if (role_ != Role::Guest || (phase_ != Phase::Waiting && phase_ != Phase::Lobby &&
           !(phase_ == Phase::Countdown && message.round == round_))) return false;
       if (session_ && message.session != session_) return false;
@@ -571,6 +615,8 @@ class Session {
     if (message.type == MessageType::Start) {
       if (role_ != Role::Guest) return false;
       if (profile_ == GameProfile::Tetris && message.hue > 1) return false;
+      hockey::Options options;
+      if (profile_ == GameProfile::Hockey && !hockey::Options::decode(message.hue,options)) return false;
       const bool initial = phase_ == Phase::Lobby && message.round == round_ && localReady_;
       const bool restart = phase_ == Phase::Playing && message.round == nextRound(round_) &&
                            localReady_ && localFinished();
@@ -591,6 +637,7 @@ class Session {
         localTetris_ = TetrisStats();
         tetrisSequence_ = 0;
         zero_.reset();
+        if (hockey_) hockey_->reset();
       } else if (phase_ == Phase::Countdown) {
         const uint32_t corrected = now + message.remainingMs;
         // Choose the earliest observed deadline so late packets cannot delay play.
@@ -630,7 +677,7 @@ class Session {
         }
         break;
       case MessageType::TetrisStats: {
-        if (profile_ == GameProfile::Flappy || (phase_ != Phase::Playing && phase_ != Phase::Countdown)) return false;
+        if ((profile_ != GameProfile::Tetris && profile_ != GameProfile::TetrisZero) || (phase_ != Phase::Playing && phase_ != Phase::Countdown)) return false;
         const uint16_t difference = uint16_t(message.tetrisSequence - remoteTetrisSequence_);
         if (remoteTetrisReceived_ && (!difference || difference >= 0x8000)) return false;
         remoteTetrisStats_ = message.tetris;
@@ -650,6 +697,14 @@ class Session {
       case MessageType::Bye:
         transportDisconnected();
         return true;
+      case MessageType::HockeyInput:
+        if (profile_ != GameProfile::Hockey || role_ != Role::Host || phase_ != Phase::Playing || !hockey_->receiveInput(message.hockeyInput,now)) return false;
+        break;
+      case MessageType::HockeyMotion:
+      case MessageType::HockeyBoard:
+        if (profile_ != GameProfile::Hockey || role_ != Role::Guest || phase_ != Phase::Playing ||
+            !hockey_->receiveFrame(hockeyPart(message.type),message.hockeyFrame,now)) return false;
+        break;
       default: return false;
     }
     lastReceivedMs_ = now;
@@ -690,6 +745,10 @@ class Session {
       readySentMs_ = now;
     } else if (profile_ == GameProfile::TetrisZero && phase_ == Phase::Playing) {
       if (!nextZeroPacket(now, message)) return false;
+    } else if (profile_ == GameProfile::Hockey && phase_ == Phase::Playing) {
+      hockey::Part part;
+      if (!hockey_->next(role_==Role::Host,now,part,message.hockeyFrame,message.hockeyInput)) return false;
+      message.type = part==hockey::Part::Input ? MessageType::HockeyInput : part==hockey::Part::Motion ? MessageType::HockeyMotion : MessageType::HockeyBoard;
     } else if (profile_ != GameProfile::TetrisZero && phase_ == Phase::Playing &&
                uint32_t(now - snapshotSentMs_) >= SnapshotIntervalMs) {
       if (profile_ != GameProfile::Flappy) {
@@ -804,6 +863,7 @@ class Session {
   uint16_t remoteTetrisSequence_ = 0;
   bool remoteTetrisReceived_ = false;
   ZeroInputBuffer zero_;
+  std::unique_ptr<hockey::Channel> hockey_;
   uint32_t zeroInputSentMs_ = 0, zeroProgressSentMs_ = 0;
   uint32_t zeroProgressMs_ = 0, observedZeroFrame_ = 0;
   uint8_t zeroPacketTurn_ = 0;
@@ -832,8 +892,9 @@ class Session {
     return false;
   }
 
-  bool localFinished() const { return profile_ != GameProfile::Flappy ? localTetris_.toppedOut : local_.life == Life::GameOver; }
+  bool localFinished() const { return profile_ == GameProfile::Hockey ? hockey_->finished(role_==Role::Host) : profile_ != GameProfile::Flappy ? localTetris_.toppedOut : local_.life == Life::GameOver; }
   bool remoteFinished() const {
+    if (profile_ == GameProfile::Hockey) return hockey_->peerFinished(role_==Role::Host);
     return profile_ != GameProfile::Flappy ? remoteTetrisReceived_ && remoteTetrisStats_.toppedOut :
            remoteCount_ && current_.player.life == Life::GameOver;
   }
@@ -845,8 +906,11 @@ class Session {
   }
   void resetState() {
     const GameProfile profile = profile_;
+    auto channel = std::move(hockey_);
     *this = Session();
     profile_ = profile;
+    hockey_ = std::move(channel);
+    if (hockey_) hockey_->reset();
   }
 
   void resetTimers(uint32_t now) {

@@ -32,14 +32,14 @@ static void lifecycle() {
 
 static void cycleAvailabilityAndCartridges() {
   AppModel app(31); GameHome home; home.observe(app);
-  const GameTitle publicOrder[] = {GameTitle::Galaga,GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::FlappyBird};
+  const GameTitle publicOrder[] = {GameTitle::Galaga,GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::FlappyBird};
   for (auto title : publicOrder) { assert(home.cycle(app)); assert(app.currentGame == title && home.active()); }
   app.setNesAvailable(true); app.setTetrisAvailable(true); app.setTetrisZeroAvailable(true);
   app.setGeometryDashAvailable(true);
   app.addCartridgeChoice(11,"Mario"); app.addCartridgeChoice(22,"Another NES");
   app.addCartridgeChoice(33,"Third NES");
   const GameTitle fullOrder[] = {GameTitle::Nes,GameTitle::Tetris,GameTitle::GeometryDash,GameTitle::Galaga,
-    GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::Nes,GameTitle::Nes,GameTitle::FlappyBird};
+    GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::Nes,GameTitle::Nes,GameTitle::FlappyBird};
   unsigned nesIndex = 0;
   for (auto title : fullOrder) {
     assert(home.cycle(app)); assert(app.currentGame == title);

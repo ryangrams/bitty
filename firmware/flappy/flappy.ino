@@ -45,6 +45,7 @@
 #include "galaga_game.h"
 #include "arkanoid_game.h"
 #include "jetpack_game.h"
+#include "hockey_renderer.h"
 
 flappy::AppModel app;
 #ifdef M5FLAP_USB_LIBRARY
@@ -55,6 +56,10 @@ bool serviceLibrary();
 flappy::GalagaGame* galagaGame = nullptr;
 flappy::ArkanoidGame* arkanoidGame = nullptr;
 flappy::JetpackGame* jetpackGame = nullptr;
+flappy::HockeyGame* hockeyGame = nullptr;
+uint32_t handledHockeyLink = 0;
+bool hockeyRoundPrepared = false;
+uint8_t hockeySoundEvent = 0;
 flappy::JetpackProfile jetpackProfile;
 uint32_t handledJetpackUpgrade = 0;
 flappy::ArcadeTilt arcadeTilt;
@@ -515,6 +520,8 @@ void loadSettings() {
   app.setArcadeSensitivity(preferences.getUChar("arcsens", 1));
   app.setArcadeAutoFire(preferences.getBool("arcauto", false));
   app.setArcadeDifficulty(preferences.getUChar("arcdiff", 1));
+  flappy::hockey::Options hockeyOptions;
+  if (flappy::hockey::Options::decode(preferences.getUShort("hockeyopts",0),hockeyOptions)) app.setHockeyOptions(hockeyOptions);
   uint8_t jetpackSaved[flappy::JetpackProfile::StorageSize];
   if (preferences.getBytesLength("jetprofile") == sizeof(jetpackSaved) &&
       preferences.getBytes("jetprofile", jetpackSaved, sizeof(jetpackSaved)) == sizeof(jetpackSaved))
@@ -568,6 +575,7 @@ void saveSettings() {
   preferences.putUChar("arcsens", app.settings.arcadeSensitivity);
   preferences.putBool("arcauto", app.settings.arcadeAutoFire);
   preferences.putUChar("arcdiff", app.settings.arcadeDifficulty);
+  preferences.putUShort("hockeyopts",app.settings.hockeyOptions.encode());
   preferences.putBool("jetprac", app.settings.jetpackPractice);
   preferences.putUChar("jetdiff", app.settings.jetpackDifficulty);
   preferences.putUChar("jetride", app.settings.jetpackRide);
@@ -675,6 +683,8 @@ void stopCoop() {
   zeroDrop2.reset();
   zeroPadArmed = false;
   app.tetrisLinkRole = 0;
+  app.hockeyLinkRole = 0;
+  hockeyRoundPrepared = false;
   app.settings.coopRole = 0;
   app.settingsDirty = true;
   if (app.settings.mode == flappy::Mode::Coop) app.restart(nonzeroRandom());
@@ -705,7 +715,7 @@ void handleCoopRequest(uint32_t nowMs) {
 }
 
 void updateCoop(uint32_t nowMs) {
-  if (tetrisLinkActive()) return;
+  if (tetrisLinkActive() || coopLink.gameProfile()==flappy::coop::GameProfile::Hockey) return;
   coopLink.setLocal(localSnapshot());
   coopLink.update(nowMs, app.game.worldTick());
   flappy::coop::StartInfo start;
@@ -1226,9 +1236,11 @@ void releaseNativeArcade() {
   delete galagaGame;
   delete arkanoidGame;
   delete jetpackGame;
+  delete hockeyGame;
   galagaGame = nullptr;
   arkanoidGame = nullptr;
   jetpackGame = nullptr;
+  hockeyGame = nullptr;
   arcadePaused = arcadePauseRequested = jetpackCashRequested = false;
   arcadeControls.reset();
   arcadeTilt.reset();
@@ -1260,6 +1272,7 @@ void resetNativeArcade() {
   saveArcadeScores();
   if (galagaGame) galagaGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
   if (arkanoidGame) arkanoidGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
+  if (hockeyGame) { hockeyGame->reset(nonzeroRandom(),app.settings.hockeyOptions); hockeyRoundPrepared=false; }
   if (jetpackGame) {
     jetpackGame->settleRun();
     saveJetpackProfile();
@@ -1278,8 +1291,9 @@ bool beginNativeArcade() {
   if (M5.Display.width() != width || M5.Display.height() != height) return false;
   if (app.currentGame == flappy::GameTitle::Galaga) galagaGame = new (std::nothrow) flappy::GalagaGame;
   else if (jetpackSelected()) jetpackGame = new (std::nothrow) flappy::JetpackGame;
+  else if (app.currentGame==flappy::GameTitle::HockeyQueen) hockeyGame = new (std::nothrow) flappy::HockeyGame;
   else arkanoidGame = new (std::nothrow) flappy::ArkanoidGame;
-  if (!galagaGame && !arkanoidGame && !jetpackGame) return false;
+  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame) return false;
   if (jetpackGame) jetpackGame->attachProfile(&jetpackProfile);
   resetNativeArcade();
   return true;
@@ -1300,7 +1314,109 @@ void calibrateArcadeTilt(uint32_t nowMs) {
   arcadeControls.blockAction();
 }
 
+void hockeySound(flappy::ArcadeCue cue,uint32_t nowMs) {
+  switch(cue) {
+    case flappy::ArcadeCue::Fire: playCue(flappy::PiezoCue::Move,nowMs); break;
+    case flappy::ArcadeCue::Hit: playCue(flappy::PiezoCue::Lock,nowMs); break;
+    case flappy::ArcadeCue::Power: playCue(flappy::PiezoCue::Coin,nowMs); break;
+    case flappy::ArcadeCue::Win: playCue(flappy::PiezoCue::LevelUp,nowMs); break;
+    default: break;
+  }
+}
+
+void handleHockeyRequest(uint32_t nowMs) {
+  if(handledHockeyLink==app.hockeyLinkRequest) return;
+  handledHockeyLink=app.hockeyLinkRequest;
+  const uint8_t role=app.hockeyLinkRole;
+  stopCoop();
+  if(!hockeyGame || !role) return;
+  if(bluetoothPad) bluetoothPad->stop();
+  controllerConnected=false; padButtons=previousPadButtons=0; pendingPadAction=false;
+  app.hockeyLinkRole=role; hockeySoundEvent=0;
+  if(!coopLink.setGameProfile(flappy::coop::GameProfile::Hockey)) { runtimeNotice="Hockey link unavailable"; app.hockeyLinkRole=0; return; }
+  if(role==1) coopLink.beginHost(nowMs,nonzeroRandom(),nonzeroRandom(),app.settings.hockeyOptions.encode());
+  else coopLink.beginJoin(nowMs);
+  nextTick=micros()+TickMicros;
+}
+
+void updateHockeyLink(uint32_t nowMs) {
+  if(!hockeyGame || coopLink.gameProfile()!=flappy::coop::GameProfile::Hockey) return;
+  const bool host=coopLink.session().role()==flappy::coop::Role::Host;
+  auto& channel=coopLink.hockeyChannel();
+  auto frame=hockeyGame->frame();
+  if(host && coopLink.session().phase()==flappy::coop::Phase::Playing && !channel.inputFresh(nowMs)) frame.phase=flappy::hockey::Phase::LinkWait;
+  channel.setLocal(frame);
+  channel.setInput(arcadeMove,channel.finished(false),channel.fresh(nowMs));
+  coopLink.update(nowMs);
+  flappy::coop::StartInfo start;
+  if(coopLink.consumeStart(start)) {
+    flappy::hockey::Options options;
+    if(!flappy::hockey::Options::decode(start.baseHue,options)) { stopCoop(); return; }
+    hockeyGame->reset(start.seed,options); hockeyRoundPrepared=true; hockeySoundEvent=0;
+  }
+}
+
+void tickHockey(bool actionEdge,uint32_t nowMs) {
+  using flappy::coop::Phase;
+  using flappy::coop::Role;
+  const auto phase=coopLink.session().phase();
+  if(phase==Phase::Off || phase==Phase::Disconnected || phase==Phase::Waiting) {
+    if(arcadePauseRequested || (actionEdge && phase!=Phase::Waiting)) {
+      app.hockeyLinkRole=arcadePauseRequested ? 2 : 1; ++app.hockeyLinkRequest;
+      arcadePauseRequested=false; handleHockeyRequest(nowMs); return;
+    }
+    if(actionEdge && phase==Phase::Waiting && coopLink.session().role()==Role::Off) {
+      app.hockeyLinkRole=1; ++app.hockeyLinkRequest; handleHockeyRequest(nowMs);
+    }
+  }
+  arcadePauseRequested=false; arcadePaused=false;
+  if(actionEdge && (phase==Phase::Lobby || (phase==Phase::Playing && coopLink.hockeyChannel().finished(coopLink.session().role()==Role::Host)))) {
+    calibrateArcadeTilt(nowMs); coopLink.requestReady(nowMs);
+  }
+  arcadeMove=arcadeTilt.update(tiltX,haveTiltSample && uint32_t(nowMs-lastTiltSampleMs)<200,app.settings.arcadeSensitivity);
+  if(phase!=Phase::Playing || !hockeyRoundPrepared) return;
+  if(coopLink.session().role()==Role::Host) {
+    if(coopLink.hockeyChannel().inputFresh(nowMs)) hockeyGame->tick(int16_t(-arcadeMove),coopLink.hockeyChannel().move(nowMs));
+    else hockeyGame->hold();
+    hockeySound(hockeyGame->takeCue(),nowMs);
+  } else if(coopLink.hockeyChannel().fresh(nowMs)) {
+    const uint8_t event=coopLink.hockeyChannel().latest().event;
+    if(event!=hockeySoundEvent) { hockeySoundEvent=event; hockeySound(flappy::ArcadeCue(event&7),nowMs); }
+  }
+  ++arcadeFrames;
+}
+
+void drawHockey(uint32_t nowMs) {
+  using flappy::coop::Phase;
+  const bool host=coopLink.session().role()==flappy::coop::Role::Host;
+  auto frame=hockeyGame->frame();
+  if(coopLink.session().role()==flappy::coop::Role::Guest && coopLink.gameProfile()==flappy::coop::GameProfile::Hockey) coopLink.hockeyChannel().display(nowMs,frame);
+  else if(coopLink.session().phase()==Phase::Playing && !coopLink.hockeyChannel().inputFresh(nowMs)) frame.phase=flappy::hockey::Phase::LinkWait;
+  flappy::HockeyRenderer::draw(canvasStorage,frame,host ? 0 : 1);
+  flappy::ArcadeCanvas c(canvasStorage);
+  const auto phase=coopLink.session().phase();
+  if(phase!=Phase::Playing) {
+    c.rect(7,75,121,100,0x0842);
+    c.text("HOCKEY QUEEN",31,81,0xfaf7);
+    c.text(host ? "YOU ARE THE QUEEN" : "YOU ARE THE PEASANT",host ? 16 : 13,99,0xffff);
+    if(coopLink.fault()) c.text("BLUETOOTH ERROR",22,116,0xffff);
+    else if(phase==Phase::Countdown) c.text("GET READY",40,116,0xffff);
+    else if(phase==Phase::Lobby) {
+      c.text(coopLink.session().localReady() ? "WAITING FOR PLAYER" : "PRESS M5 WHEN READY",13,116,0xffff);
+      c.text("HOLD LEVEL TO ZERO",16,133,0xc7ff);
+      c.text(host ? coopLink.deviceName() : coopLink.peerName(),16,150,0xffff);
+    } else {
+      c.text(phase==Phase::Disconnected ? "CONNECTION LOST" : coopLink.scanning() ? "SEARCHING..." : "WAITING FOR PLAYER",13,116,0xffff);
+      c.text("M5: HOST AS QUEEN",19,133,0xc7ff);
+      c.text("RIGHT: JOIN PEASANT",13,149,0xc7ff);
+    }
+  } else if(frame.phase==flappy::hockey::Phase::Finished) {
+    c.rect(0,226,135,14,0x0842); c.text("M5: READY FOR REMATCH",7,227,0xffff);
+  }
+}
+
 void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
+  if (hockeyGame) { tickHockey(actionEdge,nowMs); return; }
   if (!galagaGame && !arkanoidGame && !jetpackGame) return;
   if (jetpackCashRequested) {
     jetpackCashRequested = false;
@@ -1362,13 +1478,14 @@ void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
 }
 
 void drawNativeArcade() {
-  if (!galagaGame && !arkanoidGame && !jetpackGame) return;
+  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame) return;
   asyncDisplay.drain();
   const uint32_t drawnAt = micros();
-  if (galagaGame) galagaGame->draw(canvasStorage, arcadeBestGalaga);
+  if (hockeyGame) drawHockey(millis());
+  else if (galagaGame) galagaGame->draw(canvasStorage, arcadeBestGalaga);
   else if (arkanoidGame) arkanoidGame->draw(canvasStorage, arcadeBestArkanoid);
   else jetpackGame->draw(canvasStorage, arcadeBestJetpack);
-  if (arcadePaused) {
+  if (arcadePaused && !hockeyGame) {
     if (jetpackGame) {
       for (int y = 49; y < 86; ++y)
         for (int x = 60; x < 180; ++x) canvasStorage[y * 240 + x] = 0;
@@ -1865,8 +1982,9 @@ void showFrame(uint32_t nowMs) {
 void handleHomePlayRequests(bool coopStart) {
   gameHome.observe(app);
   const bool tetrisLinkStart = gameHome.active() && app.tetrisLinkRole && app.tetrisLinkRequest != handledTetrisLink;
-  if (tetrisLinkStart) app.closeMenu();
-  if (gameHome.active() && !app.menuOpen() && (coopStart || tetrisLinkStart || app.gameRestartRequest != handledRestart ||
+  const bool hockeyStart = gameHome.active() && app.hockeyLinkRole && app.hockeyLinkRequest != handledHockeyLink;
+  if (tetrisLinkStart || hockeyStart) app.closeMenu();
+  if (gameHome.active() && !app.menuOpen() && (coopStart || tetrisLinkStart || hockeyStart || app.gameRestartRequest != handledRestart ||
       app.geometryRequest != handledGeometryRequest || app.tetrisRequest != handledTetrisRequest ||
       app.tetrisZeroRequest != handledZeroRequest)) gameHome.play();
 }
@@ -1942,13 +2060,14 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   playEvents(events);
   if (previousHour != app.settings.clockHour || previousMinute != app.settings.clockMinute) writeClock(nowMs);
   if (!menuWasOpen && app.menuOpen() && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
-  if (!tetrisLinkActive() && app.settings.mode != flappy::Mode::Coop && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+  if (!hockeyGame && !tetrisLinkActive() && app.settings.mode != flappy::Mode::Coop && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   const bool coopStart = app.coopRequest != handledCoopRequest && app.settings.coopRole;
   handleCoopRequest(nowMs);
   handleControllerRequest(nowMs);
   handleHomePlayRequests(coopStart);
   handleGameRequest();
   handleTetrisRequests(nowMs);
+  handleHockeyRequest(nowMs);
   handleJetpackUpgrade();
   if (handledArcadeCalibrate != app.arcadeCalibrateRequest) {
     handledArcadeCalibrate = app.arcadeCalibrateRequest;
@@ -2645,6 +2764,7 @@ void loop() {
   updateController(nowMs);
   updateCoop(nowMs);
   updateTetrisLink(nowMs);
+  updateHockeyLink(nowMs);
   updateTetrisFrontend(nowMs);
   serviceSound(nowMs);
   const bool tetris = tetrisLike();
@@ -2703,7 +2823,7 @@ void loop() {
       else arcadePauseRequested = true;
     } else {
       calibrateArcadeTilt(nowMs);
-      arcadePaused = true;
+      if (!hockeyGame) arcadePaused = true;
     }
   }
   const uint32_t now = micros();

@@ -227,5 +227,5 @@ int main(int argc,char** argv) {
       writePpm(canvas,std::string(argv[1]) + "-" + std::to_string(title) + ".ppm");
     }
   }
-  std::cout << "Clock runtime: all eight game identifiers, NES fallback, deterministic rollover, 1200 switches, single-state allocation and exhaustion recovery passed\n";
+  std::cout << "Clock runtime: all game identifiers, NES fallback, deterministic rollover, 1200 switches, single-state allocation and exhaustion recovery passed\n";
 }

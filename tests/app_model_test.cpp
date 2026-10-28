@@ -262,8 +262,8 @@ static void launcherBootAndImmediateChanges() {
     assert(std::string(d.app.menuLabel(4)) == "Galaga");
     assert(std::string(d.app.menuLabel(5)) == "Arkanoid");
     assert(std::string(d.app.menuLabel(6)) == "Bitty Jet");
-    assert(std::string(d.app.menuLabel(7)) == "Back");
-    assert(std::string(d.app.menuLabel(8)).empty());
+    assert(std::string(d.app.menuLabel(VisibleGameCount)) == "Back");
+    assert(std::string(d.app.menuLabel(VisibleGameCount+1)).empty());
     for (uint8_t index : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
       d.app.menu.selection = index; d.tick(true);
       assert(d.app.menu.page == page && d.app.gameRequest == 0 && !d.app.settingsDirty);
@@ -323,8 +323,8 @@ static void geometryDashLauncherSettingsAndAvailability() {
   static_assert(uint8_t(GameTitle::Tetris) == 2, "Existing game ordinals remain stable");
   static_assert(uint8_t(GameTitle::TetrisZero) == 3, "Existing game ordinals remain stable");
   static_assert(uint8_t(GameTitle::GeometryDash) == 4, "Geometry Dash is appended to the game enum");
-  assert(GameTitleCount == 8 && VisibleGameCount == 7);
-  const GameTitle visible[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride};
+  assert(GameTitleCount == 9 && VisibleGameCount == 8);
+  const GameTitle visible[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride, GameTitle::HockeyQueen};
   for (uint8_t index = 0; index < VisibleGameCount; ++index) {
     assert(visibleGameTitle(index) == visible[index]);
     assert(visibleGameIndex(visible[index]) == index);
@@ -459,7 +459,7 @@ static void nativeArcadeLauncherAndBoot() {
   static_assert(uint8_t(GameTitle::Galaga) == 5, "Galaga keeps its persisted game ID");
   static_assert(uint8_t(GameTitle::Arkanoid) == 6, "Arkanoid keeps its persisted game ID");
   static_assert(uint8_t(GameTitle::JetpackJoyride) == 7, "Jetpack Joyride is appended to the game enum");
-  assert(GameTitleCount == 8 && VisibleGameCount == 7);
+  assert(GameTitleCount == 9 && VisibleGameCount == 8);
   for (GameTitle title : {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::TetrisZero,
                           GameTitle::GeometryDash, GameTitle(UINT8_MAX)}) assert(!nativeArcadeGame(title));
   const GameTitle titles[] = {GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride};
@@ -858,7 +858,7 @@ static void perGameSettingsAndZeroRequests() {
 
 static void unifiedTetrisLauncherAndPlayers() {
   Driver d;
-  assert(GameTitleCount == 8 && VisibleGameCount == 7);
+  assert(GameTitleCount == 9 && VisibleGameCount == 8);
   assert(d.app.settings.tetrisPlayers == 1 && d.app.selectedTetrisEngine() == GameTitle::Tetris);
   d.app.openTetrisSettings();
   assert(!d.app.menuOpen() && !d.app.tetrisFrontendActive());

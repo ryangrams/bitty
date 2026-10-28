@@ -60,7 +60,7 @@ flappy::AppModel app;
 flappy::GameHome gameHome;
 flappy::ArcadeControls arcadeControls;
 flappy::JetpackGame* jetpackGame = nullptr;
-uint32_t handledRestart = 0, handledTetrisRequest = 0, handledZeroRequest = 0, handledTetrisLink = 0;
+uint32_t handledRestart = 0, handledTetrisRequest = 0, handledZeroRequest = 0, handledTetrisLink = 0, handledHockeyLink = 0;
 flappy::NesRuntime nes;
 flappy::MarioCartridge marioCartridge;
 flappy::MarioViewport marioViewport;
@@ -191,7 +191,7 @@ static void checkGeometrySlot() {
 static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
   auto mario = cartridge(false, false, 0);
   FlappyRom::data = mario.data(); FlappyRom::length = mario.size();
-  for (const auto title : {flappy::GameTitle::Galaga, flappy::GameTitle::Arkanoid, flappy::GameTitle::JetpackJoyride}) {
+  for (const auto title : {flappy::GameTitle::Galaga, flappy::GameTitle::Arkanoid, flappy::GameTitle::JetpackJoyride, flappy::GameTitle::HockeyQueen}) {
     app = flappy::AppModel();
     app.setNesAvailable(true);
     app.setCurrentGame(flappy::GameTitle::Nes);
@@ -219,6 +219,13 @@ static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
 }
 
 static void homePlayIntentsAndInactiveCoop() {
+  for(unsigned role=1;role<=2;++role) {
+    app=flappy::AppModel(); gameHome=flappy::GameHome(); app.setCurrentGame(flappy::GameTitle::HockeyQueen); gameHome.observe(app);
+    handledHockeyLink=app.hockeyLinkRequest;
+    app.openMenu(flappy::MenuPage::HockeyLink); app.menu.selection=uint8_t(role-1); app.step(true,false,17,false);
+    handleHomePlayRequests(false);
+    assert(!gameHome.active() && !app.menuOpen() && app.hockeyLinkRole==role);
+  }
   for (unsigned role = 1; role <= 2; ++role) {
     app = flappy::AppModel(); gameHome = flappy::GameHome();
     app.setTetrisAvailable(true); app.activateTetris(); gameHome.observe(app);

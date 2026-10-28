@@ -228,3 +228,12 @@ web/package-lock.json
 web/package.json
 web/protocol.mjs
 web/style.css
+firmware/flappy/hockey_state.h
+firmware/flappy/hockey_game.h
+firmware/flappy/hockey_renderer.h
+firmware/flappy/hockey_protocol.h
+firmware/flappy/hockey_clock.h
+tests/hockey_game_test.cpp
+tests/hockey_protocol_test.cpp
+docs/HOCKEY_QUEEN.md
+tools/preview_hockey.py

@@ -669,6 +669,10 @@ class Renderer {
       } else if (title == GameTitle::JetpackJoyride) {
         rect(cx - 3, cy - 7, 6, 5, ink); rect(cx - 5, cy - 1, 10, 8, ink);
         rect(cx - 10, cy, 4, 6, ink); rect(cx - 10, cy + 7, 3, 4, ink);
+      } else if (title == GameTitle::HockeyQueen) {
+        rect(cx - 11, cy + 1, 15, 5, ink);
+        rect(cx - 11, cy - 6, 3, 7, ink); rect(cx - 5, cy - 9, 3, 10, ink);
+        rect(cx + 1, cy - 6, 3, 7, ink); rect(cx + 8, cy + 3, 7, 4, ink);
       } else if (title == GameTitle::GeometryDash) {
         rect(cx - 11, cy - 6, 12, 12, ink); rect(cx - 8, cy - 3, 2, 2, fill);
         rect(cx - 3, cy - 3, 2, 2, fill); rect(cx + 7, cy + 2, 8, 4, ink);

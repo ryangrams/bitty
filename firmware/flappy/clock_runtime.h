@@ -10,6 +10,7 @@
 #include "geometry_clock.h"
 #include "galaga_clock.h"
 #include "arkanoid_clock.h"
+#include "hockey_clock.h"
 #include "menu_font.h"
 
 namespace flappy {
@@ -56,6 +57,7 @@ class ClockRuntime {
       case GameTitle::Galaga: state_=new(std::nothrow) GalagaClock; break;
       case GameTitle::Arkanoid: state_=new(std::nothrow) ArkanoidClock; break;
       case GameTitle::JetpackJoyride: state_=new(std::nothrow) JetpackClock; break;
+      case GameTitle::HockeyQueen: state_=new(std::nothrow) HockeyClock; break;
     }
     if(!state_) return false;
     dispatchReset(seed);
@@ -74,6 +76,7 @@ class ClockRuntime {
       case GameTitle::Galaga: cast<GalagaClock>()->step(time); break;
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->step(time); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->step(time); break;
+      case GameTitle::HockeyQueen: cast<HockeyClock>()->step(time); break;
     }
   }
   void draw(uint16_t* pixels,const ClockTime& time,const Skins& skin) const {
@@ -89,6 +92,7 @@ class ClockRuntime {
       case GameTitle::Galaga: cast<GalagaClock>()->draw(pixels,time); break;
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->draw(pixels,time); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->draw(pixels,time); break;
+      case GameTitle::HockeyQueen: cast<HockeyClock>()->draw(pixels,time); break;
     }
   }
   void release() {
@@ -103,6 +107,7 @@ class ClockRuntime {
       case GameTitle::Galaga: delete cast<GalagaClock>(); break;
       case GameTitle::Arkanoid: delete cast<ArkanoidClock>(); break;
       case GameTitle::JetpackJoyride: delete cast<JetpackClock>(); break;
+      case GameTitle::HockeyQueen: delete cast<HockeyClock>(); break;
     }
     state_=nullptr;
   }
@@ -119,6 +124,7 @@ class ClockRuntime {
       case GameTitle::Galaga: return sizeof(GalagaClock);
       case GameTitle::Arkanoid: return sizeof(ArkanoidClock);
       case GameTitle::JetpackJoyride: return sizeof(JetpackClock);
+      case GameTitle::HockeyQueen: return sizeof(HockeyClock);
     }
     return 0;
   }
@@ -140,6 +146,7 @@ class ClockRuntime {
       case GameTitle::Galaga: cast<GalagaClock>()->reset(seed); break;
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->reset(seed); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->reset(seed); break;
+      case GameTitle::HockeyQueen: cast<HockeyClock>()->reset(seed); break;
     }
   }
 };
