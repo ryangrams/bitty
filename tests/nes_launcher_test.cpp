@@ -7,6 +7,7 @@
 #include "../firmware/flappy/geometry_input.h"
 #include "../firmware/flappy/geometry_launcher.h"
 #include "../firmware/flappy/geometry_level.h"
+#include "../firmware/flappy/speaker_audio.h"
 
 #include <cassert>
 #include <cstring>
@@ -65,12 +66,12 @@ uint32_t tetrisFrontendAt = 0;
 constexpr uint32_t TickMicros = 16667;
 uint8_t pendingNesButtons = 0, pendingControllerNesButtons = 0, gameMessageShown = 0;
 uint8_t tetrisLaunchStage = 0, tetrisStableFrames = 0;
-bool piezoDriver = true, pendingTetrisDrop = false, pendingControllerTetrisDrop = false;
+bool piezoDriver = true, soundReady = true, pendingTetrisDrop = false, pendingControllerTetrisDrop = false;
 bool controllerDownTracking = false, pendingPadAction = false, pendingAction = false;
 bool tetrisLaunching = false, zeroLaunching = false, marioLaunching = false, nativeMario = false;
 bool nativeGeometry = false;
 bool landscape = false;
-int16_t (*nesAudioBuffers)[512] = nullptr;
+flappy::SpeakerPcmQueue* nesAudioQueue = nullptr;
 const char* runtimeNotice = "";
 unsigned audioStops = 0;
 
@@ -86,8 +87,12 @@ bool jetpackSelected() { return app.currentGame == flappy::GameTitle::JetpackJoy
 bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird && !nativeArcade(); }
 void setNesDisplay(bool enabled) { landscape = enabled; }
 void nesVideo(void*, int, int, int, int, const uint16_t*) {}
-void nesAudio(void*, const int16_t*, size_t, uint32_t) {}
-void configureNesPerformance() { nes.setPcmEnabled(false); }
+unsigned audioFrames = 0;
+void nesAudio(void*, const int16_t* samples, size_t count, uint32_t rate) {
+  assert(samples && count == 400 && rate == 24000);
+  ++audioFrames;
+}
+void configureNesPerformance() { nes.setPcmEnabled(!piezoDriver && soundReady && nesAudioQueue); }
 bool beginZero(int) { return false; }
 int zeroSettings() { return 0; }
 uint32_t micros() { return 1234; }
@@ -215,6 +220,15 @@ int main() {
   geometryPresentation = new GeometryPresentation;
   checkGeometrySlot();
   nativeGamesReleaseTheEmulatorAndHandleFailure();
-  assert(nesAudioBuffers == nullptr);
+  assert(nesAudioQueue == nullptr && audioFrames == 0);
+  piezoDriver = false;
+  checkLoad(false, false, 0);
+  assert(nesAudioQueue && audioFrames >= 3);
+  const unsigned heard = audioFrames;
+  soundReady = false;
+  checkLoad(false, false, 0);
+  assert(audioFrames == heard);
+  delete nesAudioQueue;
+  nesAudioQueue = nullptr;
   std::cout << "Firmware launcher accepts NTSC, rejects PAL and resets game state\n";
 }

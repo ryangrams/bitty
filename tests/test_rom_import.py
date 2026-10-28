@@ -435,7 +435,11 @@ class RomImportTests(unittest.TestCase):
         import setup_nes
         sketch = self.directory / 'sketch'
         library = self.directory / 'PeakNES'
+        image = self.directory / '.local/build/flappy.ino.bin'
+        image.parent.mkdir(parents=True)
+        image.write_bytes(b'synthetic firmware')
         with mock.patch.object(build, 'prepare_sketch', return_value=sketch) as stage, \
+                mock.patch.object(build, 'ROOT', self.directory), \
                 mock.patch.object(build, 'arduino_cli', return_value='arduino-cli'), \
                 mock.patch.object(build, 'ensure_config', return_value=self.directory / 'config'), \
                 mock.patch.object(setup_nes, 'prepare', return_value=library) as prepare, \
@@ -445,7 +449,7 @@ class RomImportTests(unittest.TestCase):
             build.main()
         prepare.assert_called_once_with()
         stage.assert_called_once_with(self.directory.resolve(), None, None, None, None, None, None, None,
-                                     public=False, library=False)
+                                     public=False, library=False, board='stickc')
         command = execute.call_args.args[0]
         self.assertEqual(command[command.index('--library') + 1], str(library))
         self.assertEqual(command[-1], str(sketch))

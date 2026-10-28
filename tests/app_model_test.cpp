@@ -122,6 +122,12 @@ static void volumeSettingsAndMenuNavigation() {
   Driver d;
   const uint8_t values[] = {0, 51, 102, 153, 204, 255};
   const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
+  d.app.openMenu(MenuPage::Volume);
+  d.app.speakerBatteryCap = true;
+  assert(std::string(d.app.menuLabel(4)) == "80% (72% battery)");
+  assert(std::string(d.app.menuLabel(5)) == "Full (72% battery)");
+  d.app.speakerBatteryCap = false;
+  d.app.closeMenu();
   assert(d.app.settings.volumeIndex == 2 && d.app.volume() == 102 && !d.app.settingsDirty);
   d.app.setVolume(2);
   assert(!d.app.settingsDirty);

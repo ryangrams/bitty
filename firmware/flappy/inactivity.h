@@ -6,6 +6,12 @@ namespace flappy {
 
 enum class PowerSource : uint8_t { Unknown, Battery, External };
 
+inline PowerSource pm1PowerSource(bool readOk, uint8_t source) {
+  if (!readOk) return PowerSource::Unknown;
+  if (source & 3u) return PowerSource::External;
+  return source & 4u ? PowerSource::Battery : PowerSource::Unknown;
+}
+
 inline PowerSource axp192PowerSource(bool readOk, uint8_t inputStatus, uint8_t batteryStatus) {
   if (!readOk) return PowerSource::Unknown;
   if (inputStatus & 0xa0u) return PowerSource::External;

@@ -81,6 +81,8 @@ Use Python 3.11 or newer, [Arduino CLI](https://arduino.github.io/arduino-cli/la
 
    Use `--display stickc` for the original StickC and `--display auto` for automatic detection on other boards. An explicit choice is saved in private `.local/display-profile.json` and reused by later builds. `--display auto` also resets a saved manual choice. Build and flash again after changing the profile.
 
+For the speaker-equipped **StickS3**, build with `--board sticks3` and flash with the same option. It has a separate ESP32-S3 image and automatic display driver. See [StickS3 audio, build commands and verification status](docs/STICKS3_AUDIO.md).
+
 Imported files, generated headers, staged sketches, firmware, and release output stay under ignored `.local/`. Dependencies use the existing Arduino data directory and a private sketchbook. The build prepares the pinned NES core in `.local/nes-deps/` and includes `.local/nes-rom/`, `.local/tetris-rom/`, `.local/tetris-zero-rom/` and `.local/geometry-rom/` when present. Use `--rom-dir`, `--tetris-dir`, `--zero-dir` or `--geometry-dir` to choose private import folders. [Custom skin imports](assets/README.md#custom-skin-folders) can add up to ten local packs to a build.
 
 ## Buttons and menus

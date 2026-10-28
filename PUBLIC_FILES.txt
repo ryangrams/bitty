@@ -195,3 +195,8 @@ web/package-lock.json
 web/package.json
 web/protocol.mjs
 web/style.css
+firmware/flappy/speaker_audio.h
+firmware/flappy/partitions_sticks3.csv
+tests/speaker_audio_test.cpp
+tests/test_board_targets.py
+docs/STICKS3_AUDIO.md

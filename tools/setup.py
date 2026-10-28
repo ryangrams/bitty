@@ -10,7 +10,19 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = "esp32:esp32@3.3.11"
 LIBRARIES = ("M5Unified@0.2.21", "M5GFX@0.2.28", "NimBLE-Arduino@2.3.6")
 FQBN = "esp32:esp32:esp32:FlashMode=dio,FlashFreq=80,FlashSize=4M,PSRAM=disabled,PartitionScheme=huge_app,UploadSpeed=115200,EraseFlash=none"
+BOARD_FQBN = {
+    "stickc": FQBN,
+    "sticks3": "esp32:esp32:esp32s3:CPUFreq=240,FlashMode=qio,FlashSize=8M,PSRAM=opi,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc,UploadMode=default,UploadSpeed=115200,EraseFlash=none",
+}
 INDEX = "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json"
+
+
+def build_directory(board="stickc"):
+    return ROOT / ".local" / ("build-sticks3" if board == "sticks3" else "build")
+
+
+def sketch_directory(board="stickc"):
+    return ROOT / ".local" / ("sketch-sticks3" if board == "sticks3" else "sketch") / "flappy"
 
 
 def arduino_cli():

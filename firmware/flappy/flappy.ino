@@ -12,6 +12,7 @@
 #include "nes_sound_events.h"
 #include "piezo_sound.h"
 #include "piezo_output.h"
+#include "speaker_audio.h"
 #include "nes_viewport.h"
 #include "mario_viewport.h"
 #include "rom_fingerprint.h"
@@ -106,6 +107,8 @@ flappy::DamageRows displayDamage;
 flappy::AsyncDisplay asyncDisplay;
 flappy::InactivityPolicy inactivity;
 flappy::PowerSource powerSource = flappy::PowerSource::Unknown;
+flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false);
+void servicePiezoOutput();
 uint32_t lastPowerPollMs = 0;
 bool powerPolled = false;
 struct PeerTetrisHud {
@@ -142,8 +145,8 @@ uint8_t pendingControllerNesButtons = 0;
 bool pendingPadAction = false;
 bool nesLandscape = false;
 bool geometryScanOrder = false;
-int16_t (*nesAudioBuffers)[512] = nullptr;
-uint8_t nesAudioIndex = 0;
+flappy::SpeakerPcmQueue* nesAudioQueue = nullptr;
+uint8_t appliedSpeakerVolume = UINT8_MAX;
 const char* runtimeNotice = "";
 bool pendingAction = false;
 bool pendingTetrisDrop = false;
@@ -188,7 +191,7 @@ uint16_t marioBenchmarkFrames = 0, diagnosticPadFrames = 0;
 uint8_t diagnosticPad = 0;
 uint8_t benchmarkPrgCache = 0, benchmarkVideoDivisor = 0;
 uint8_t benchmarkIdleJump = 2;
-bool benchmarkPcm = false;
+bool benchmarkPcm = false, benchmarkPcmOverride = false;
 bool timingProbe = false;
 uint16_t timingIntervals = 0;
 uint32_t timingStart = 0, timingPrevious = 0, timingMin = UINT32_MAX, timingMax = 0;
@@ -251,9 +254,9 @@ void recordFrameTiming(uint32_t sourceFrames, uint8_t hz) {
 #endif
 
 void configureNesPerformance() {
-  nes.setPcmEnabled(!piezoDriver);
+  nes.setPcmEnabled(!piezoDriver && soundReady && nesAudioQueue);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
-  nes.setPcmEnabled(benchmarkPcm);
+  if (benchmarkPcmOverride) nes.setPcmEnabled(benchmarkPcm);
   nes.setPrgCache(benchmarkPrgCache);
   if (benchmarkIdleJump < 2) nes.setIdleJump(benchmarkIdleJump != 0);
 #endif
@@ -285,6 +288,7 @@ void stopGameAudio() {
   piezo.stop();
   resetSoundTracking();
   if (!piezoDriver) M5.Speaker.stop();
+  else if (soundReady) { piezoOutput.request(0, 0); servicePiezoOutput(); }
 }
 
 void playCue(flappy::PiezoCue cue, uint32_t nowMs) {
@@ -319,7 +323,23 @@ void initializeSound() {
       soundReady = ledcWrite(2, 0);
       if (soundReady) piezoOutput.reset(2500, 0);
     }
-  } else soundReady = M5.Speaker.isEnabled();
+  } else {
+    // M5Unified owns ES8311 clocking, codec power and the M5PM1 amplifier gate.
+    // isEnabled() only checks the pin configuration; begin() checks I2S startup.
+    M5.Speaker.setVolume(0);
+    if (M5.getBoard() == m5::board_t::board_M5StickS3) {
+      auto config = M5.Speaker.config();
+      config.sample_rate = 24000;
+      M5.Speaker.config(config);
+    }
+    soundReady = M5.Speaker.isEnabled() && M5.Speaker.begin();
+    if (soundReady && M5.getBoard() == m5::board_t::board_M5StickS3) {
+      uint8_t codec = 0, amplifier = 0;
+      soundReady = M5.In_I2C.readRegister(0x18, 0x00, &codec, 1, 100000) &&
+          M5.In_I2C.readRegister(0x6e, 0x11, &amplifier, 1, 100000) && (amplifier & 8u);
+      if (!soundReady) M5.Speaker.end();
+    }
+  }
 }
 
 void serviceSound(uint32_t nowMs) {
@@ -360,6 +380,9 @@ void menuSound(flappy::MenuPage before, uint8_t selection, bool action, uint32_t
 }
 
 void updateNesSound(uint8_t input1, uint8_t input2, uint32_t nowMs) {
+  // Speaker devices play the cartridge's mixed APU output, including music.
+  // Input-based cue approximations are reserved for the passive buzzer.
+  if (!piezoDriver) return;
   if (!nes.ready() || app.menuOpen() || tetrisLaunching || zeroLaunching ||
       (nativeGeometry && geometryLauncher.active()) ||
       (tetrisLinkActive() && coopLink.session().phase() != flappy::coop::Phase::Playing)) {
@@ -399,7 +422,6 @@ void updateNesSound(uint8_t input1, uint8_t input2, uint32_t nowMs) {
     if (pressed & flappy::NesRuntime::A) playCue(flappy::PiezoCue::Jump, nowMs);
     else if (pressed & flappy::NesRuntime::B) playCue(flappy::PiezoCue::Action, nowMs);
   }
-  if (!piezoDriver) return;
   const nes_t* core = nes.core();
   const pulse_t* channels[] = {&core->nes_apu.pulse1, &core->nes_apu.pulse2};
   uint16_t frequency = 0;
@@ -563,20 +585,30 @@ void saveScores() {
   app.highScoresDirty = false;
 }
 
-void playSound(const FlappySounds::Sound& sound) {
-  if (!piezoDriver && app.volume() && sound.length && sound.samples && M5.Speaker.isEnabled()) {
-    M5.Speaker.playRaw(sound.samples, sound.length, sound.sampleRate, false, 1, 0, true);
-  }
+bool playSound(const FlappySounds::Sound& sound) {
+  if (piezoDriver || !soundReady || !app.volume() || !sound.length || !sound.samples) return false;
+  if (!M5.Speaker.playRaw(sound.samples, sound.length, sound.sampleRate, false, 1, 2, true)) return false;
+  piezo.stop();
+  return true;
 }
 
 void applyOutputSettings() {
   if (appliedVolume != app.settings.volumeIndex) {
     const bool preview = appliedVolume != UINT8_MAX && app.menu.page == flappy::MenuPage::Volume;
     piezo.setVolumeIndex(app.settings.volumeIndex);
-    if (!piezoDriver) M5.Speaker.setVolume(app.volume());
     appliedVolume = app.settings.volumeIndex;
     if (!app.volume()) stopGameAudio();
     else if (preview) playCue(flappy::PiezoCue::Preview, millis());
+  }
+  if (!piezoDriver && soundReady) {
+    const bool stickS3 = M5.getBoard() == m5::board_t::board_M5StickS3;
+    const bool external = pollPowerSource(millis()) == flappy::PowerSource::External;
+    app.speakerBatteryCap = stickS3 && !external;
+    const uint8_t level = flappy::speakerVolume(app.volume(), stickS3, external);
+    if (appliedSpeakerVolume != level) {
+      M5.Speaker.setVolume(level);
+      appliedSpeakerVolume = level;
+    }
   }
   if (appliedBrightness != app.settings.brightnessIndex) {
     asyncDisplay.drain();
@@ -592,16 +624,16 @@ void applyOutputSettings() {
 
 void playEvents(uint8_t flags) {
   if (app.currentGame != flappy::GameTitle::FlappyBird || app.autoPlaying()) return;
-  if (piezoDriver) {
-    if (flags & (flappy::Hit | flappy::Die)) playCue(flappy::PiezoCue::Crash, millis());
-    else if (flags & flappy::Point) playCue(flappy::PiezoCue::Point, millis());
-    else if (flags & flappy::Flap) playCue(flappy::PiezoCue::Flap, millis());
-    return;
+  // Authored tones also cover builds whose local sample imports are empty.
+  if (flags & flappy::Hit) {
+    if (!playSound(FlappySounds::hit)) playCue(flappy::PiezoCue::Crash, millis());
+  } else if (flags & flappy::Die) {
+    if (!playSound(FlappySounds::die)) playCue(flappy::PiezoCue::Crash, millis());
+  } else if (flags & flappy::Point) {
+    if (!playSound(FlappySounds::point)) playCue(flappy::PiezoCue::Point, millis());
+  } else if (flags & flappy::Flap) {
+    if (!playSound(FlappySounds::wing)) playCue(flappy::PiezoCue::Flap, millis());
   }
-  if (flags & flappy::Hit) playSound(FlappySounds::hit);
-  else if (flags & flappy::Die) playSound(FlappySounds::die);
-  else if (flags & flappy::Point) playSound(FlappySounds::point);
-  else if (flags & flappy::Flap) playSound(FlappySounds::wing);
 }
 
 flappy::coop::PlayerSnapshot localSnapshot() {
@@ -972,12 +1004,11 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
 }
 
 void nesAudio(void*, const int16_t* samples, size_t count, uint32_t rate) {
-  if (piezoDriver) return;
+  if (piezoDriver || !soundReady) return;
   if (tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || zeroLaunching)) return;
-  if (!nesAudioBuffers || !app.volume() || app.menuOpen() || !M5.Speaker.isEnabled() || count > 512 || M5.Speaker.isPlaying(1) >= 2) return;
-  int16_t* target = nesAudioBuffers[nesAudioIndex];
-  memcpy(target, samples, count * sizeof(int16_t));
-  if (M5.Speaker.playRaw(target, count, rate, false, 1, 1, false)) nesAudioIndex = uint8_t((nesAudioIndex + 1) % 3);
+  if (!nesAudioQueue || !app.volume() || app.menuOpen() || tetrisLaunching || zeroLaunching ||
+      (nativeGeometry && geometryLauncher.active())) return;
+  nesAudioQueue->submit(M5.Speaker, samples, count, rate);
 }
 
 uint8_t nesButtons(uint16_t buttons) {
@@ -1095,7 +1126,8 @@ bool beginZero(const flappy::TetrisZero::Options& options) {
     runtimeNotice = "Unsupported Tetris cartridge";
     return false;
   }
-  nes.setCallbacks(nesVideo, piezoDriver ? nullptr : nesAudio, nullptr);
+  if (!piezoDriver && soundReady && !nesAudioQueue) nesAudioQueue = new (std::nothrow) flappy::SpeakerPcmQueue;
+  nes.setCallbacks(nesVideo, piezoDriver || !soundReady ? nullptr : nesAudio, nullptr);
   if (!nes.load(TetrisZeroRom::data, TetrisZeroRom::length)) return false;
   configureNesPerformance();
   nes.setPal(false);
@@ -1394,8 +1426,8 @@ void handleGameRequest() {
   } else if (emulatedGame()) {
     renderer->setBackgroundCacheEnabled(false);
     if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
-    if (!piezoDriver && !nesAudioBuffers) nesAudioBuffers = new (std::nothrow) int16_t[3][512];
-    nes.setCallbacks(nesVideo, piezoDriver ? nullptr : nesAudio, nullptr);
+    if (!piezoDriver && soundReady && !nesAudioQueue) nesAudioQueue = new (std::nothrow) flappy::SpeakerPcmQueue;
+    nes.setCallbacks(nesVideo, piezoDriver || !soundReady ? nullptr : nesAudio, nullptr);
     const bool tetris = app.currentGame == flappy::GameTitle::Tetris;
     const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
     const bool geometry = app.currentGame == flappy::GameTitle::GeometryDash;
@@ -1813,16 +1845,25 @@ void startupFailure(const char* message) {
   }
 }
 
-flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false) {
+flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force) {
   if (!force && powerPolled && uint32_t(nowMs - lastPowerPollMs) < 1000) return powerSource;
   powerPolled = true;
   lastPowerPollMs = nowMs;
   const auto board = M5.getBoard();
+  if (board == m5gfx::board_t::board_M5StickS3) {
+    uint8_t source = 0;
+    const bool readOk = M5.In_I2C.readRegister(0x6e, 0x04, &source, 1, 100000);
+    return powerSource = flappy::pm1PowerSource(readOk, source);
+  }
   if (board != m5gfx::board_t::board_M5StickC && board != m5gfx::board_t::board_M5StickCPlus)
     return powerSource = flappy::PowerSource::Unknown;
+#if defined(CONFIG_IDF_TARGET_ESP32)
   uint8_t status[2] = {};
   const bool readOk = M5.Power.Axp192.readRegister(0, status, 2);
   return powerSource = flappy::axp192PowerSource(readOk, status[0], status[1]);
+#else
+  return powerSource = flappy::PowerSource::Unknown;
+#endif
 }
 
 void clearPendingInput() {
@@ -1867,15 +1908,19 @@ bool sleepOnBattery() {
   stopGameAudio();
   soundOverride = false;
   if (piezoDriver) { piezoOutput.request(0, 0); servicePiezoOutput(); }
+  else if (soundReady) M5.Speaker.end();
   asyncDisplay.drain();
-  const bool frontWake = gpio_wakeup_enable(GPIO_NUM_37, GPIO_INTR_LOW_LEVEL) == ESP_OK;
-  const bool sideWake = gpio_wakeup_enable(GPIO_NUM_39, GPIO_INTR_LOW_LEVEL) == ESP_OK;
+  const bool stickS3 = M5.getBoard() == m5gfx::board_t::board_M5StickS3;
+  const gpio_num_t frontPin = stickS3 ? GPIO_NUM_11 : GPIO_NUM_37;
+  const gpio_num_t sidePin = stickS3 ? GPIO_NUM_12 : GPIO_NUM_39;
+  const bool frontWake = gpio_wakeup_enable(frontPin, GPIO_INTR_LOW_LEVEL) == ESP_OK;
+  const bool sideWake = gpio_wakeup_enable(sidePin, GPIO_INTR_LOW_LEVEL) == ESP_OK;
   const bool gpioWake = frontWake && sideWake && esp_sleep_enable_gpio_wakeup() == ESP_OK;
   if (gpioWake) {
     M5.Display.sleep();
     esp_sleep_enable_timer_wakeup(1000000ULL);
     while (pollPowerSource(millis(), true) == flappy::PowerSource::Battery &&
-           gpio_get_level(GPIO_NUM_37) && gpio_get_level(GPIO_NUM_39)) {
+           gpio_get_level(frontPin) && gpio_get_level(sidePin)) {
       if (esp_light_sleep_start() != ESP_OK) break;
       if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO) break;
       M5.update();
@@ -1885,8 +1930,8 @@ bool sleepOnBattery() {
     delay(120);
     M5.Display.setBrightness(app.brightness());
   }
-  gpio_wakeup_disable(GPIO_NUM_37);
-  gpio_wakeup_disable(GPIO_NUM_39);
+  gpio_wakeup_disable(frontPin);
+  gpio_wakeup_disable(sidePin);
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
   M5.update();
@@ -1894,6 +1939,12 @@ bool sleepOnBattery() {
   inactivity.resumed(millis());
   invalidateDisplay();
   lastClockReadMs = millis() - 1000;
+  if (!piezoDriver && soundReady) {
+    M5.Speaker.setVolume(0);
+    soundReady = M5.Speaker.begin();
+    appliedSpeakerVolume = UINT8_MAX;
+    applyOutputSettings();
+  }
   if (resumeController && bluetoothPad) {
     bluetoothPad->resumePeer(millis());
     app.setControllerStatus(bluetoothPad->statusText());
@@ -1926,11 +1977,19 @@ void setup() {
   cfg.external_display_value = 0;
   cfg.output_power = false;
   M5.begin(cfg);
+#ifdef M5FLAP_BOARD_STICKS3
+  if (M5.getBoard() != m5::board_t::board_M5StickS3) {
+    startupFailure("StickS3 hardware not detected");
+    return;
+  }
+#endif
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   Serial.printf("BOOT board=%u display=%ux%u heap=%u cpu_mhz=%u boot_flash_hz=%u\n", unsigned(M5.getBoard()), M5.Display.width(), M5.Display.height(), ESP.getFreeHeap(), ESP.getCpuFreqMHz(), ESP.getFlashChipSpeed());Serial.flush();
 #endif
+#if defined(CONFIG_IDF_TARGET_ESP32)
   rtc_gpio_pullup_dis(GPIO_NUM_2);
   rtc_gpio_pulldown_en(GPIO_NUM_2);
+#endif
   initializeSound();
   M5.Display.setRotation(0);
   M5.Display.fillScreen(TFT_BLACK);
@@ -2166,6 +2225,7 @@ void serviceDiagnostics() {
       unsigned enabled = 0;
       if (sscanf(command + 6, "%u", &enabled) == 1) {
         benchmarkPcm = enabled != 0;
+        benchmarkPcmOverride = true;
         nes.setPcmEnabled(benchmarkPcm);
       }
     } else if (!strncmp(command, "M5IDLE ", 7)) {
@@ -2264,9 +2324,11 @@ void serviceDiagnostics() {
       Serial.printf("ARCADE_RECORDS galaga=%lu arkanoid=%lu jetpack=%lu testing=%u\n",
           (unsigned long)arcadeBestGalaga, (unsigned long)arcadeBestArkanoid,
           (unsigned long)arcadeBestJetpack, unsigned(diagnosticArcadeTesting));
-      Serial.printf("SOUND driver=%s ready=%u volume=%u frequency=%u duty=%u override=%u active=%u\n",
+      Serial.printf("SOUND driver=%s ready=%u volume=%u frequency=%u duty=%u override=%u active=%u speaker_volume=%u pcm_blocks=%lu pcm_dropped=%lu\n",
           piezoDriver ? "GPIO2-LEDC" : "M5Speaker", unsigned(soundReady), unsigned(app.settings.volumeIndex),
-          unsigned(soundFrequency), unsigned(soundDuty), unsigned(soundOverride), unsigned(piezo.active()));
+          unsigned(soundFrequency), unsigned(soundDuty), unsigned(soundOverride), unsigned(piezo.active()),
+          unsigned(appliedSpeakerVolume), (unsigned long)(nesAudioQueue ? nesAudioQueue->submitted() : 0),
+          (unsigned long)(nesAudioQueue ? nesAudioQueue->dropped() : 0));
       Serial.printf("APP ticks=%lu draws=%lu mode=%u skin=%u\n", (unsigned long)appTicks,
           (unsigned long)appDrawFrames, unsigned(app.settings.mode), unsigned(app.settings.skinIndex));
       Serial.printf("SLEEP source=%u timeout_s=%lu idle_ms=%lu index=%u\n", unsigned(powerSource),

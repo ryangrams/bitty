@@ -4,6 +4,10 @@
 // Enable the StickC LCD rails before the display controller is identified.
 // Rail values follow m5stack/M5StickC AXP192.cpp.
 inline bool prepareStickDisplayPower() {
+#if !defined(CONFIG_IDF_TARGET_ESP32)
+  // M5Unified initializes the StickS3 M5PM1 rail on its own I2C pins.
+  return true;
+#else
   TwoWire powerBus(1);
   if (!powerBus.begin(21, 22, 100000)) return false;
   auto readRegister = [&](uint8_t reg) -> int {
@@ -27,4 +31,5 @@ inline bool prepareStickDisplayPower() {
   powerBus.end();
   if (enabled) delay(20);
   return enabled;
+#endif
 }

@@ -14,6 +14,8 @@ The USB-library branch is ready for source review and automated checks. The publ
 
 ## Verification
 
+The [StickS3 audio target](STICKS3_AUDIO.md) adds a separate ESP32-S3 build, native codec output, NES PCM music and effects, authored Flappy fallback sounds, menu volume previews and a battery volume cap. Both hardware families compile. Portable tests cover audio buffer ownership, backpressure, target isolation, flash receipt validation and power detection. These are software checks. Audible output and simultaneous audio, video and Bluetooth performance still need a connected StickS3.
+
 The source suite covers Python import and publication checks, portable C++ state machines, storage interruption tests, renderer bounds and asynchronous display ownership. AddressSanitizer and UndefinedBehaviorSanitizer are enabled for portable runtime checks. The browser protocol has a mocked Web Serial test for fragmented replies, delayed duplicates, CRCs, upload acknowledgements and receive limits. These tests do not substitute for a physical USB session.
 
 The private NTSC Mario reference ran 6,000 frames through full and cropped video paths with identical CPU RAM and displayed pixels. The run contained 5,152 moving-platform actor-frames. A separate ROM probe checked standing, crouching and small-player sprite bounds. Platform simulation stayed unchanged. This establishes emulator and crop-path agreement, while controller feel and camera presentation still need a physical playthrough.

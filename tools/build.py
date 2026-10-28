@@ -7,7 +7,7 @@ import json
 import hashlib
 import shutil
 import subprocess
-from setup import ROOT, FQBN, arduino_cli, ensure_config
+from setup import ROOT, BOARD_FQBN, arduino_cli, ensure_config
 
 HEADERS = ("generated_assets.h", "generated_sounds.h", "generated_collision.h")
 DISPLAY_PROFILES = {"auto": 0, "stickc": 1, "stickc-plus": 2}
@@ -38,8 +38,14 @@ def resolve_display_profile(display=None):
     return saved
 
 
-def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None, jetpack=None, public=False, library=False):
-    (ROOT / ".local" / "build" / "public-origin.json").unlink(missing_ok=True)
+def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero=None, geometry=None, jetpack=None, public=False, library=False, board="stickc"):
+    if board not in BOARD_FQBN:
+        raise SystemExit("Choose board stickc or sticks3")
+    if board == "sticks3" and display not in (None, "auto"):
+        raise SystemExit("StickS3 uses its own automatic LCD driver. Use --display auto")
+    build_name = "build-sticks3" if board == "sticks3" else "build"
+    (ROOT / ".local" / build_name / "public-origin.json").unlink(missing_ok=True)
+    (ROOT / ".local" / build_name / "build-target.json").unlink(missing_ok=True)
     if public:
         if any(value is not None and value is not False for value in (skins, rom, tetris, zero, geometry, jetpack)):
             raise SystemExit("Public builds accept only project-created inputs")
@@ -89,8 +95,8 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
             jetpack_header = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise SystemExit("Cannot read private Jetpack import header: " + str(exc)) from exc
-    selected_display = resolve_display_profile(display)
-    target = ROOT / ".local" / "sketch" / "flappy"
+    selected_display = "auto" if board == "sticks3" else resolve_display_profile(display)
+    target = ROOT / ".local" / ("sketch-sticks3" if board == "sticks3" else "sketch") / "flappy"
     target.mkdir(parents=True, exist_ok=True)
     for existing in target.iterdir():
         if existing.is_file():
@@ -99,7 +105,8 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
         if path.suffix in (".h", ".ino"):
             shutil.copy2(path, target / path.name)
     if library:
-        shutil.copy2(ROOT / "firmware" / "flappy" / "partitions.csv", target / "partitions.csv")
+        partitions = "partitions_sticks3.csv" if board == "sticks3" else "partitions.csv"
+        shutil.copy2(ROOT / "firmware" / "flappy" / partitions, target / "partitions.csv")
     for name in HEADERS:
         shutil.copy2(assets / name, target / name)
     if skins is None:
@@ -123,6 +130,7 @@ def prepare_sketch(assets, skins=None, rom=None, display=None, tetris=None, zero
         (target / "jetpack_imported.h").write_text(jetpack_header, encoding="utf-8")
     (target / "build_display.h").write_text(
         "#pragma once\n#define M5FLAP_DISPLAY_PROFILE " + str(DISPLAY_PROFILES[selected_display]) + "\n" +
+        ("#define M5FLAP_BOARD_STICKS3 1\n" if board == "sticks3" else "") +
         ("#define M5FLAP_USB_LIBRARY 1\n" if library else "") +
         ("#define M5FLAP_JETPACK_IMPORTED 1\n" if jetpack_header is not None else ""),
         encoding="utf-8")
@@ -151,6 +159,7 @@ def main():
     parser.add_argument("--check-only", action="store_true", help="Prepare the private sketch without compiling")
     parser.add_argument("--public", action="store_true", help="Build exclusively from project-created assets, with no local ROM or APK discovery")
     parser.add_argument("--library", action="store_true", help="Use the USB cartridge partition instead of embedded ROMs")
+    parser.add_argument("--board", choices=tuple(BOARD_FQBN), default="stickc", help="Hardware family (default: original ESP32 StickC/Plus)")
     args = parser.parse_args()
     sketch = prepare_sketch(args.assets_dir.resolve(), args.skins_dir.resolve() if args.skins_dir else None,
                             args.rom_dir.resolve() if args.rom_dir else None, args.display,
@@ -158,24 +167,29 @@ def main():
                             args.zero_dir.resolve() if args.zero_dir else None,
                             args.geometry_dir.resolve() if args.geometry_dir else None,
                             False if args.no_jetpack_import else args.jetpack_dir.resolve() if args.jetpack_dir else None,
-                            public=args.public, library=args.library)
+                            public=args.public, library=args.library, board=args.board)
     if args.check_only:
         print("Private sketch prepared. Generated assets remain outside the public source tree.")
         return
     from setup_nes import prepare
     library = prepare()
-    build = ROOT / ".local" / "build"
-    subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", FQBN,
-                    "--build-property", "compiler.optimization_flags=-O2 -mno-fix-esp32-psram-cache-issue",
+    build = ROOT / ".local" / ("build-sticks3" if args.board == "sticks3" else "build")
+    optimization = "-O2" if args.board == "sticks3" else "-O2 -mno-fix-esp32-psram-cache-issue"
+    subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", BOARD_FQBN[args.board],
+                    "--build-property", "compiler.optimization_flags=" + optimization,
                     "--build-path", str(build), "--library", str(library), str(sketch)], check=True)
+    image = build / "flappy.ino.bin"
+    receipt = {"board": args.board, "fqbn": BOARD_FQBN[args.board], "library": args.library,
+               "image_sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
+    (build / "build-target.json").write_text(json.dumps(receipt, indent=2) + "\n")
     if args.public:
-        image = build / "flappy.ino.bin"
-        origin = {"public": True, "library": args.library, "display": resolve_display_profile(),
+        origin = {"public": True, "library": args.library, "board": args.board,
+                  "display": "auto" if args.board == "sticks3" else resolve_display_profile(),
                   "image_sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
                   "sketch_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                     for p in sorted(sketch.iterdir()) if p.is_file()}}
         (build / "public-origin.json").write_text(json.dumps(origin, indent=2) + "\n")
-    print("Firmware is in .local/build. Keep asset-bearing firmware private.")
+    print("Firmware is in " + str(build.relative_to(ROOT)) + ". Keep asset-bearing firmware private.")
 
 
 if __name__ == "__main__":

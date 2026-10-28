@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 #include <M5Unified.h>
+#if defined(CONFIG_IDF_TARGET_ESP32)
 #include <lgfx/v1/Light.hpp>
 #include <lgfx/v1/panel/Panel_ST7735.hpp>
 #include <lgfx/v1/panel/Panel_ST7789.hpp>
@@ -130,3 +131,6 @@ inline bool configureStickDisplay(uint8_t profile) {
   M5.Display = display;
   return true;
 }
+#else
+inline bool configureStickDisplay(uint8_t profile) { return profile == 0; }
+#endif

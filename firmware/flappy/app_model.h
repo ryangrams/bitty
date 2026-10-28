@@ -156,6 +156,7 @@ class AppModel {
   uint32_t controllerRequest = 0;
   uint8_t controllerAction = 0;
   const char* controllerStatus = "Off";
+  bool speakerBatteryCap = false;
   bool settingsDirty = false;
   bool highScoresDirty = false;
   uint32_t coopRequest = 0;
@@ -703,6 +704,8 @@ class AppModel {
         return labels[index];
       }
       case MenuPage::Volume: {
+        if (speakerBatteryCap && index == 4) return "80% (72% battery)";
+        if (speakerBatteryCap && index == 5) return "Full (72% battery)";
         constexpr const char* labels[] = {"Off", "20%", "40%", "60%", "80%", "Full"};
         return labels[index];
       }

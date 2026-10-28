@@ -7,6 +7,11 @@ using flappy::InactivityPolicy;
 using flappy::PowerSource;
 
 static void powerDetectionUsesPresenceAndReadValidity() {
+  assert(flappy::pm1PowerSource(false, 7) == PowerSource::Unknown);
+  assert(flappy::pm1PowerSource(true, 0) == PowerSource::Unknown);
+  assert(flappy::pm1PowerSource(true, 4) == PowerSource::Battery);
+  for (uint8_t source : {1, 2, 3, 5, 6, 7})
+    assert(flappy::pm1PowerSource(true, source) == PowerSource::External);
   for (unsigned charge : {0u, 4u}) {
     assert(flappy::axp192PowerSource(true, uint8_t(0x20 | charge), 0x20) == PowerSource::External);
     assert(flappy::axp192PowerSource(true, uint8_t(0x80 | charge), 0x20) == PowerSource::External);
