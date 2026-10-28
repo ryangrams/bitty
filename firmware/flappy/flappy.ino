@@ -20,6 +20,7 @@
 #include "generated_geometry_rom.h"
 #include "geometry_input.h"
 #include "geometry_scene.h"
+#include "geometry_level.h"
 #include "geometry_renderer.h"
 #include "geometry_launcher.h"
 #include "tetris_gym.h"
@@ -55,6 +56,11 @@ flappy::NesSystemButton nesSystemButton;
 flappy::GeometryButtons geometryButtons;
 uint8_t geometryHeld = 0;
 flappy::GeometryRenderer geometryRenderer;
+struct GeometryPresentation {
+  flappy::GeometryWorld world;
+  flappy::GeometryLevelReader level;
+};
+GeometryPresentation* geometryPresentation = nullptr;
 flappy::GeometryController geometryController;
 flappy::GeometryLauncher geometryLauncher;
 uint32_t handledGeometryRequest = 0;
@@ -106,6 +112,7 @@ uint8_t pendingNesButtons = 0;
 uint8_t pendingControllerNesButtons = 0;
 bool pendingPadAction = false;
 bool nesLandscape = false;
+bool geometryScanOrder = false;
 int16_t (*nesAudioBuffers)[512] = nullptr;
 uint8_t nesAudioIndex = 0;
 const char* runtimeNotice = "";
@@ -141,6 +148,13 @@ uint8_t appliedSkin = UINT8_MAX;
 uint64_t nesWorkUs = 0, nesVideoUs = 0;
 uint32_t nesRenderedFrames = 0, lcdFrames = 0, lcdRows = 0, appTicks = 0, appDrawFrames = 0;
 uint64_t lcdUs = 0, appRenderUs = 0;
+uint64_t geometryStageUs[6] = {};
+uint32_t geometryProfileFrames = 0;
+void geometryTimeStage(unsigned stage, uint32_t& started) {
+  const uint32_t now = micros();
+  geometryStageUs[stage] += uint32_t(now - started);
+  started = now;
+}
 uint16_t marioBenchmarkFrames = 0, diagnosticPadFrames = 0;
 uint8_t diagnosticPad = 0;
 uint8_t benchmarkPrgCache = 0, benchmarkVideoDivisor = 0;
@@ -583,17 +597,21 @@ void updateCoop(uint32_t nowMs) {
 }
 
 void setNesDisplay(bool landscape) {
-  if (nesLandscape == landscape) return;
+  const bool scanOrder = landscape && nativeGeometry;
+  if (nesLandscape == landscape && geometryScanOrder == scanOrder) return;
   asyncDisplay.drain();
+  asyncDisplay.configureScanSync(false);
   nesLandscape = landscape;
+  geometryScanOrder = scanOrder;
   invalidateDisplay();
-  M5.Display.setRotation(landscape ? 1 : 0);
+  M5.Display.setRotation(landscape && !scanOrder ? 1 : 0);
   M5.Display.fillScreen(TFT_BLACK);
-  if (landscape) {
+  if (scanOrder) asyncDisplay.configureScanSync(true);
+  if (landscape && !scanOrder) {
     nesViewport.configure(M5.Display.width(), M5.Display.height());
     marioViewport.configure(M5.Display.width(), M5.Display.height());
   }
-  else viewport.configure(M5.Display.width(), M5.Display.height());
+  else if (!landscape) viewport.configure(M5.Display.width(), M5.Display.height());
 }
 
 void submitDisplay(int x, int y, int width, int height, const uint16_t* pixels, int stride = 0) {
@@ -1037,6 +1055,10 @@ void handleGameRequest() {
   marioLaunching = false;
   nativeMario = false;
   nativeGeometry = false;
+  if (app.currentGame != flappy::GameTitle::GeometryDash) {
+    delete geometryPresentation;
+    geometryPresentation = nullptr;
+  }
   gameMessageShown = 0;
   tetrisFrontendAt = 0;
   runtimeNotice = "";
@@ -1057,18 +1079,24 @@ void handleGameRequest() {
     const bool validCartridge = geometry ? flappy::RomFingerprint::famidash(GeometryRom::data, GeometryRom::length) :
         tetris ? flappy::RomFingerprint::tetris(TetrisRom::data, TetrisRom::length, false) :
         !zero || flappy::RomFingerprint::tetris(TetrisZeroRom::data, TetrisZeroRom::length, true);
-    const bool loaded = displayReady && validCartridge && (zero ? beginZero(zeroSettings()) :
+    if (geometry && displayReady && validCartridge && !geometryPresentation)
+      geometryPresentation = new (std::nothrow) GeometryPresentation;
+    const bool presentationReady = !geometry || geometryPresentation;
+    const bool loaded = displayReady && validCartridge && presentationReady && (zero ? beginZero(zeroSettings()) :
         nes.load(tetris ? TetrisRom::data : geometry ? GeometryRom::data : FlappyRom::data,
                  tetris ? TetrisRom::length : geometry ? GeometryRom::length : FlappyRom::length));
     const bool ntscCartridge = tetris || zero || !loaded || nes.frameRate() == 60;
     if (!loaded || !ntscCartridge) {
       runtimeNotice = !ntscCartridge ? "Import an NTSC ROM" : !validCartridge ?
-          (geometry ? "Import Famidash v1.2.8" : "Unsupported Tetris cartridge") :
-          displayReady ? nes.error() : geometry ? "Geometry needs 240x135" : "Tetris needs a 135x240 display";
+          (geometry ? "Geometry Dash ROM mismatch" : "Unsupported Tetris cartridge") :
+          !displayReady ? geometry ? "Geometry needs 240x135" : "Tetris needs a 135x240 display" :
+          !presentationReady ? "Geometry memory unavailable" : nes.error();
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
       handledGameRequest = app.gameRequest;
       app.openMenu(flappy::MenuPage::ChangeGame);
       nes.unload();
+      delete geometryPresentation;
+      geometryPresentation = nullptr;
       renderer->setBackgroundCacheEnabled(true);
       return;
     }
@@ -1077,6 +1105,8 @@ void handleGameRequest() {
     if (geometry) {
       nativeGeometry = true;
       geometryRenderer.reset();
+      geometryPresentation->world.reset();
+      geometryPresentation->level.reset();
       geometryController.reset();
       geometryLauncher.request(app.settings.geometryLevel);
       runtimeNotice = "";
@@ -1155,6 +1185,8 @@ void handleTetrisRequests(uint32_t nowMs) {
       stopGameAudio();
       nes.softReset();
       geometryRenderer.reset();
+      geometryPresentation->world.reset();
+      geometryPresentation->level.reset();
       geometryController.reset();
       geometryLauncher.request(app.settings.geometryLevel);
       runtimeNotice = "";
@@ -1648,7 +1680,54 @@ void serviceDiagnostics() {
       }
     } else if (!strcmp(command, "M5RUN")) {
       marioBenchmarkFrames = 600;
+    } else if (!strcmp(command, "M5SCAN")) {
+      asyncDisplay.drain();
+      uint32_t stamps[96];
+      uint16_t lines[96];
+      for (unsigned i = 0; i < 96; ++i) {
+        stamps[i] = micros();
+        lines[i] = M5.Display.getScanLine();
+        delayMicroseconds(500);
+      }
+      for (unsigned i = 0; i < 96; ++i)
+        Serial.printf("SCAN sample=%u t=%lu line=%u\n", i, (unsigned long)stamps[i], unsigned(lines[i]));
+    } else if (!strcmp(command, "M5PANEL")) {
+      asyncDisplay.drain();
+      auto* bus = M5.Display.panel()->getBus();
+      const uint32_t priorClock = bus->getReadClock();
+      const auto burst = [bus](uint8_t reg, uint8_t dummy, uint8_t bits) {
+        M5.Display.startWrite();
+        bus->writeCommand(reg, 8);
+        bus->wait();
+        bus->beginRead(dummy);
+        const uint32_t result = bus->readData(bits);
+        bus->endRead();
+        M5.Display.endWrite();
+        return result;
+      };
+      const uint8_t dummyBits[] = {0, 1, 8, 9};
+      const uint32_t clocks[] = {1000000, 5000000, 15000000};
+      for (uint32_t clock : clocks) {
+        bus->setReadClock(clock);
+        for (uint8_t dummy : dummyBits) {
+          uint32_t stamps[96], raw[96];
+          for (unsigned i = 0; i < 96; ++i) {
+            stamps[i] = micros();
+            raw[i] = burst(0x45, dummy, 16);
+            delayMicroseconds(500);
+          }
+          Serial.printf("PANEL clock=%lu dummy=%u madctl=%08lx colmod=%08lx\n",
+              (unsigned long)clock, unsigned(dummy),
+              (unsigned long)burst(0x0b, dummy, 16), (unsigned long)burst(0x0c, dummy, 16));
+          for (unsigned i = 0; i < 96; ++i)
+            Serial.printf("RAWSCAN sample=%u t=%lu raw=%08lx\n", i,
+                (unsigned long)stamps[i], (unsigned long)raw[i]);
+        }
+      }
+      bus->setReadClock(priorClock);
     } else if (!strcmp(command, "M5TIMING")) {
+      for (auto& value : geometryStageUs) value = 0;
+      geometryProfileFrames = 0;
       timingProbe = true;
       timingIntervals = 0;
       timingStart = timingPrevious = 0;
@@ -1745,6 +1824,14 @@ void serviceDiagnostics() {
           (unsigned long)nesRenderedFrames, (unsigned long)lcdFrames, (unsigned long)lcdRows,
           (unsigned long long)lcdUs, ESP.getMaxAllocHeap());
       const auto asyncStats = asyncDisplay.stats();
+      Serial.printf("GEOPERF frames=%lu step_us=%llu drain_us=%llu sample_us=%llu decode_us=%llu draw_us=%llu submit_us=%llu\n",
+          (unsigned long)geometryProfileFrames, (unsigned long long)geometryStageUs[0],
+          (unsigned long long)geometryStageUs[1], (unsigned long long)geometryStageUs[2],
+          (unsigned long long)geometryStageUs[3], (unsigned long long)geometryStageUs[4],
+          (unsigned long long)geometryStageUs[5]);
+      Serial.printf("DISPLAY rotation=%u width=%u height=%u logical_landscape=%u scan_order=%u\n",
+          unsigned(M5.Display.getRotation()), unsigned(M5.Display.width()), unsigned(M5.Display.height()),
+          unsigned(nesLandscape), unsigned(geometryScanOrder));
       Serial.printf("ASYNC strips=%lu bytes=%llu work_us=%llu pending=%u\n",
           (unsigned long)asyncStats.strips, (unsigned long long)asyncStats.bytes,
           (unsigned long long)asyncStats.workUs, asyncStats.pending);
@@ -1755,6 +1842,17 @@ void serviceDiagnostics() {
           (unsigned long)asyncStats.maxWaitUs, (unsigned long)asyncStats.maxCopyUs,
           (unsigned long)asyncStats.maxWorkUs, asyncStats.maxPending,
           (unsigned long)asyncStats.completedFrames, (unsigned long long)asyncStats.frameIntervalUs);
+      Serial.printf("SCANSYNC enabled=%u probes=%lu passed=%lu reads=%lu probe_us=%llu period_us=%lu low_us=%lu high_us=%lu frames=%lu waits=%lu wait_us=%llu max_wait_us=%lu timeouts=%lu invalid=%lu\n",
+          unsigned(asyncStats.scanSyncEnabled), (unsigned long)asyncStats.scanProbeAttempts,
+          (unsigned long)asyncStats.scanProbePasses, (unsigned long)asyncStats.scanProbeReads,
+          (unsigned long long)asyncStats.scanProbeUs, (unsigned long)asyncStats.scanPeriodUs,
+          (unsigned long)asyncStats.scanLowUs, (unsigned long)asyncStats.scanHighUs,
+          (unsigned long)asyncStats.scanFrames, (unsigned long)asyncStats.scanWaits,
+          (unsigned long long)asyncStats.scanWaitUs, (unsigned long)asyncStats.maxScanWaitUs,
+          (unsigned long)asyncStats.scanTimeouts, (unsigned long)asyncStats.scanInvalidReads);
+      Serial.printf("SCANDETAIL row_min_ns=%lu row_max_ns=%lu max_launch_us=%lu stale_reads=%lu\n",
+          (unsigned long)asyncStats.scanRowMinNs, (unsigned long)asyncStats.scanRowMaxNs,
+          (unsigned long)asyncStats.maxScanLaunchUs, (unsigned long)asyncStats.scanStaleReads);
 #if defined(NES_TEST_PROFILE) && NES_TEST_PROFILE == 1
       const auto* profile = nes_test_profile_get();
       Serial.printf("PROFILE frames=%llu frame=%llu cpu=%llu bg=%llu sprite=%llu apu=%llu draw=%llu\n",
@@ -2013,9 +2111,18 @@ void loop() {
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
           if (diagnosticPadFrames) { input1 |= diagnosticPad; --diagnosticPadFrames; }
 #endif
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+          uint32_t geometryStageStarted = micros();
+#endif
           stepped = nes.step(input1, input2);
           if (stepped && nativeGeometry) {
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(0, geometryStageStarted);
+#endif
             asyncDisplay.drain();
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(1, geometryStageStarted);
+#endif
             const uint32_t drawnAt = micros();
             const auto readRam = [](uint16_t address) { return nes.readRam(address); };
             const auto readRom = [](uint32_t offset) {
@@ -2023,12 +2130,21 @@ void loop() {
             };
             flappy::GeometryScene scene;
             scene.sample(readRam);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(2, geometryStageStarted);
+#endif
+            geometryPresentation->level.prepare(scene, readRom, geometryPresentation->world);
+            scene.bindWorld(&geometryPresentation->world);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(3, geometryStageStarted);
+#endif
             flappy::GeometryRenderOptions options;
             options.attempt = scene.attempt;
             options.progress = scene.percentage(readRom);
             options.useSourceColor = true;
             options.backgroundColor = nes.core()->nes_ppu.palette[0];
             options.wireOrder = asyncDisplay.enabled();
+            options.physicalScanOrder = geometryScanOrder;
             if (geometryLauncher.active()) {
               scene.state = 1;
               options.status = "PREPARING LEVEL";
@@ -2036,16 +2152,26 @@ void loop() {
               options.footer = "Hold right: menu";
             }
             geometryRenderer.draw(scene, readRam, readRom, canvasStorage, options);
-            if (asyncDisplay.submitBorrowedFrame(canvasStorage, 240, 135, options.wireOrder)) {
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(4, geometryStageStarted);
+#endif
+            const int transferWidth = geometryScanOrder ? 135 : 240;
+            const int transferHeight = geometryScanOrder ? 240 : 135;
+            if (asyncDisplay.submitBorrowedFrame(canvasStorage, transferWidth, transferHeight,
+                options.wireOrder, geometryScanOrder)) {
               asyncDisplay.submitEndFrame();
             } else {
               if (options.wireOrder) for (unsigned i = 0; i < 240u * 135u; ++i) {
                 const uint16_t color = canvasStorage[i];
                 canvasStorage[i] = uint16_t((color << 8) | (color >> 8));
               }
-              submitDisplay(0, 0, 240, 135, canvasStorage);
+              submitDisplay(0, 0, transferWidth, transferHeight, canvasStorage);
               if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
             }
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+            geometryTimeStage(5, geometryStageStarted);
+            ++geometryProfileFrames;
+#endif
             recordLcdFrame(135, drawnAt);
           }
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS

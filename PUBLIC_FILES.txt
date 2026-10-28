@@ -31,6 +31,8 @@ firmware/flappy/flappy.ino
 firmware/flappy/game_core.h
 firmware/flappy/geometry_input.h
 firmware/flappy/geometry_scene.h
+firmware/flappy/geometry_collision.h
+firmware/flappy/geometry_level.h
 firmware/flappy/geometry_renderer.h
 firmware/flappy/geometry_launcher.h
 firmware/flappy/menu_font.h
@@ -62,7 +64,10 @@ tests/ble_radio_test.cpp
 tests/game_core_test.cpp
 tests/geometry_input_test.cpp
 tests/geometry_scene_test.cpp
+tests/geometry_collision_test.cpp
+tests/geometry_level_test.cpp
 tests/geometry_renderer_test.cpp
+tests/geometry_scanorder_test.cpp
 tests/geometry_launcher_test.cpp
 tests/menu_font_test.cpp
 tests/mario_viewport_test.cpp

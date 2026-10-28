@@ -31,6 +31,7 @@ struct Memory {
 static void snapshotsUseTheVerifiedLayout() {
   Memory m;
   m.ram[0x498] = 2; m.ram[0x47b] = 21; m.ram[0x7a] = 6; m.ram[0x96] = 1;
+  m.ram[0x369] = 13; m.ram[0x36a] = 2;
   m.word(0x4a2, 0x1234); m.word(0x4a4, 0x89ab); m.word(0x4a6, 0x2ef);
   m.word(0x43d, 0x5012); m.word(0x43f, 0x9876);
   m.word(0x441, 0xb123); m.word(0x443, 0x4567);
@@ -49,7 +50,7 @@ static void snapshotsUseTheVerifiedLayout() {
   GeometryScene s; s.sample([&](uint16_t a) { return m.readRam(a); });
   assert(s.playing() && s.state == 2 && s.level == 21 && s.mode == 6 && s.dual);
   assert(s.scrollX == 0x89ab1234 && s.scrollY == 0x2ef);
-  assert(s.attempt == 7654321);
+  assert(s.attempt == 7654321 && s.ringColumn == 13 && s.drawingFrame == 2);
   assert(s.linearScrollY() == 719 && s.groundY() == 193);
   assert(s.players[0].x == 0x5012 && s.players[1].x == 0x9876);
   assert(s.players[0].y == 0xb123 && s.players[1].y == 0x4567);
@@ -61,7 +62,7 @@ static void snapshotsUseTheVerifiedLayout() {
   assert(s.players[0].mini && !s.players[1].mini);
   for (unsigned i = 0; i < 16; ++i) {
     const auto& o = s.objects[i];
-    assert(o.type == i && o.x == 30 + i && o.y == 80 + i);
+    assert(o.type == i && o.x == int(30 + i) && o.y == int(80 + i));
     assert(o.active == bool(i & 1) && o.activated == bool(i & 2));
   }
   assert(m.ram == before && m.romReads == 0);
@@ -125,6 +126,71 @@ static void invalidSamplesDoNotReadMemory() {
   assert(s.tileAtScreen(ram, rom, std::numeric_limits<int>::max(), 0).valid);
 }
 
+static void retainedColumnsNeverAliasNewlyStreamedTiles() {
+  Memory m;
+  auto ram = [&](uint16_t a) { return m.readRam(a); };
+  auto rom = [&](uint32_t a) { return m.readRom(a); };
+  auto fillColumn = [&](unsigned column) {
+    for (unsigned row = 0; row < 60; ++row)
+      m.ram[0x6000 + (row / 15) * 256 + (row % 15) * 16 + (column & 15)] =
+        uint8_t(column * 7 + row);
+  };
+  GeometryWorld world;
+  GeometryScene s; s.state = 2; s.attempt = 1; s.drawingFrame = 1;
+  s.bindWorld(&world);
+  assert(!s.tileAtWorld(ram, rom, 0, 0).valid);
+  for (unsigned col = 0; col < 16; ++col) fillColumn(col);
+  assert(world.capture(s, ram));
+  assert(m.ramReads == 960);
+  for (unsigned row = 0; row < 60; ++row) {
+    const auto t = s.tileAtWorld(ram, rom, 0, int(row * 16));
+    assert(t.valid && t.id == row);
+  }
+  assert(!s.tileAtWorld(ram, rom, 256, 0).valid);
+  const unsigned before = m.ramReads;
+  assert(world.capture(s, ram) && m.ramReads == before);
+  // A snapshot can interrupt the native column copy after its ring index advances.
+  s.scrollX = 1; s.ringColumn = 1; s.drawingFrame = 0;
+  fillColumn(16);
+  assert(world.capture(s, ram) && m.ramReads == before);
+  assert(!s.tileAtWorld(ram, rom, 256, 0).valid);
+  assert(s.tileAtWorld(ram, rom, 0, 0).id == 0);
+  s.drawingFrame = 1;
+  for (unsigned col = 16; col < 48; ++col) {
+    fillColumn(col);
+    s.scrollX = (col - 16) * 16 + 1;
+    s.ringColumn = uint8_t((col + 1) & 15);
+    assert(world.capture(s, ram));
+    assert(m.ramReads == before + (col - 15) * 60);
+    const unsigned first = col < 32 ? 0 : col - 31;
+    for (unsigned x = first; x <= col; ++x) {
+      for (unsigned row : {0u, 14u, 15u, 29u, 30u, 44u, 45u, 59u}) {
+        uint8_t id = 0;
+        assert(world.tileId(int64_t(x * 16 + 15), int(row * 16 + 15), id));
+        assert(id == uint8_t(x * 7 + row));
+      }
+    }
+    if (first) assert(!s.tileAtWorld(ram, rom, int64_t(first - 1) * 16, 0).valid);
+    assert(!s.tileAtWorld(ram, rom, int64_t(col + 1) * 16, 0).valid);
+  }
+  // A new attempt invalidates columns retained from the previous run.
+  s.attempt = 2; s.scrollX = 0; s.ringColumn = 0;
+  for (unsigned col = 0; col < 16; ++col) fillColumn(col);
+  assert(world.capture(s, ram));
+  assert(s.tileAtWorld(ram, rom, 0, 959).valid);
+  assert(!s.tileAtWorld(ram, rom, 47 * 16, 0).valid);
+  // Priming subtracts 256 from scrollX. Those frames must expose no old geometry.
+  s.scrollX = 0xffffff00u;
+  assert(!world.capture(s, ram));
+  assert(!s.tileAtWorld(ram, rom, 0, 0).valid);
+  s.scrollX = 0; s.state = 1;
+  assert(!world.capture(s, ram));
+  s.state = 2; s.attempt = 0;
+  assert(!world.capture(s, ram));
+  s.attempt = 3; assert(world.capture(s, ram));
+  world.reset(); assert(!s.tileAtWorld(ram, rom, 0, 0).valid);
+}
+
 static void collisionKindsPreserveGapsAndPartialShapes() {
   GeometryTile tile; tile.valid = true; tile.id = 7;
   assert(!tile.hasSolidRegion() && !tile.isHazard() && !tile.isSlope());
@@ -138,11 +204,27 @@ static void collisionKindsPreserveGapsAndPartialShapes() {
     tile.collision = collision; assert(tile.isSlope() && tile.hasSolidRegion() && !tile.isHazard());
   }
   for (auto collision : {GeometryCollision::LeftSpikeBlock, GeometryCollision::RightSpikeBlock,
+                         GeometryCollision::BottomLeftSpike, GeometryCollision::BottomRightSpike,
+                         GeometryCollision::BottomSpikes, GeometryCollision::TopSpikes,
                          GeometryCollision::BottomCenterSpike, GeometryCollision::TopCenterSpike}) {
     tile.collision = uint8_t(collision); assert(tile.hasSolidRegion() && tile.isHazard());
   }
   tile.collision = 0xff; assert(!tile.hasSolidRegion() && !tile.isHazard());
   tile.valid = false; tile.collision = 7; assert(!tile.hasSolidRegion());
+}
+
+static void playerCollisionDimensionsKeepNativeAnchors() {
+  GeometryPlayer player;
+  for (uint8_t mode = 0; mode < 9; ++mode) {
+    player.mini = false;
+    assert(player.collisionWidth(mode) == (mode == 6 ? 8 : 15));
+    assert(player.collisionHeight(mode) == (mode == 6 ? 8 : 15));
+    assert(player.collisionOffsetY(mode) == (mode == 6 ? 4 : 0));
+    player.mini = true;
+    assert(player.collisionWidth(mode) == 8);
+    assert(player.collisionHeight(mode) == (mode == 6 ? 8 : 7));
+    assert(player.collisionOffsetY(mode) == 4);
+  }
 }
 
 static void objectsKeepPortalsPadsCoinsAndTriggersDistinct() {
@@ -171,6 +253,8 @@ static void objectsKeepPortalsPadsCoinsAndTriggersDistinct() {
   o.type = 0x4a; assert(o.kind() == GeometryObjectKind::Decoration);
   o.type = 0; o.x = 240; o.y = 240; assert(o.visible());
   o.x = 241; assert(!o.visible()); o.x = 10; o.y = 241; assert(!o.visible());
+  o.preview = true; o.x = 320; o.y = -64; assert(o.visible());
+  o.x = 321; assert(!o.visible()); o.preview = false;
   o.y = 10; o.active = false; assert(!o.visible());
 }
 
@@ -201,7 +285,9 @@ int main() {
   snapshotsUseTheVerifiedLayout();
   mapPagesAndColumnRingMatchNativeCoordinates();
   invalidSamplesDoNotReadMemory();
+  retainedColumnsNeverAliasNewlyStreamedTiles();
   collisionKindsPreserveGapsAndPartialShapes();
+  playerCollisionDimensionsKeepNativeAnchors();
   objectsKeepPortalsPadsCoinsAndTriggersDistinct();
   progressUsesTheNativeLevelDivisor();
   std::cout << "Geometry scene checks passed\n";

@@ -6,6 +6,7 @@
 #include "../firmware/flappy/geometry_renderer.h"
 #include "../firmware/flappy/geometry_input.h"
 #include "../firmware/flappy/geometry_launcher.h"
+#include "../firmware/flappy/geometry_level.h"
 
 #include <cassert>
 #include <cstring>
@@ -40,6 +41,11 @@ struct Link {
 
 GeometryButtons geometryButtons;
 flappy::GeometryRenderer geometryRenderer;
+struct GeometryPresentation {
+  flappy::GeometryWorld world;
+  flappy::GeometryLevelReader level;
+};
+GeometryPresentation* geometryPresentation = nullptr;
 flappy::GeometryController geometryController;
 flappy::GeometryLauncher geometryLauncher;
 uint32_t handledGeometryRequest = 0;
@@ -110,6 +116,7 @@ static void checkLoad(bool nes2, bool pal, unsigned mapper) {
   pendingNesButtons = pendingControllerNesButtons = 0xff;
   tetrisLaunching = zeroLaunching = marioLaunching = nativeMario = true;
   handleGameRequest();
+  assert(geometryPresentation == nullptr);
   assert(pendingNesButtons == 0 && pendingControllerNesButtons == 0);
   assert(!tetrisLaunching && !zeroLaunching);
   if (pal) {
@@ -148,7 +155,8 @@ static void checkGeometrySlot() {
   nativeMario = marioLaunching = true;
   handleGameRequest();
   assert(!nes.ready() && !nativeMario && !nativeGeometry && !marioLaunching);
-  assert(std::strcmp(runtimeNotice, "Import Famidash v1.2.8") == 0);
+  assert(geometryPresentation == nullptr);
+  assert(std::strcmp(runtimeNotice, "Geometry Dash ROM mismatch") == 0);
   assert(app.currentGame == flappy::GameTitle::FlappyBird);
   assert(app.menu.page == flappy::MenuPage::ChangeGame);
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
@@ -161,12 +169,14 @@ static void checkGeometrySlot() {
 }
 
 int main() {
+  geometryPresentation = new GeometryPresentation;
   checkLoad(false, false, 0);
   checkLoad(false, true, 0);
   checkLoad(true, false, 0);
   checkLoad(true, true, 0);
   checkLoad(true, true, 37);
   checkLoad(true, false, 37);
+  geometryPresentation = new GeometryPresentation;
   checkGeometrySlot();
   assert(nesAudioBuffers == nullptr);
   std::cout << "Firmware launcher accepts NTSC, rejects PAL and resets game state\n";

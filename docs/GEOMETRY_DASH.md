@@ -22,11 +22,29 @@ The Geometry Dash slot requires the exact v1.2.8 main cartridge: **786,448 bytes
 
 ## Screen and timing
 
-Gameplay fills the StickC Plus's **240×135 landscape display**. World geometry uses **16-pixel blocks at a 1:1 pixel scale**. The viewport trims eight source columns from each side and follows the character vertically through jumps, landings and flight. The shorter view shows a portion of the cartridge's vertical playfield. The M5 menus use portrait orientation and the native-size menu font.
+Gameplay fills the StickC Plus's **240×135 landscape display**. World geometry uses **16-pixel blocks at a 1:1 pixel scale**. Once the character enters, its usual position is 40 pixels from the left edge, leaving more room to see upcoming obstacles. A read-only decoder reads upcoming terrain from your supplied cartridge, so the forward view can extend beyond the native collision buffer. Previously streamed columns keep their absolute world positions, preventing reused buffer columns from appearing at the left edge.
 
-The procedural renderer paints directly into the display-sized RGB565 canvas. It preserves the scale of terrain and hazards without stretching the NES picture. The NES core skips RGB pixel composition while retaining CPU, APU, logical PPU and mapper behavior. Colors are prepared in display byte order as they are drawn, avoiding a full-frame conversion pass. The display worker sends the shared canvas through DMA while the main CPU advances the next game frame, and the canvas remains reserved until the transfer finishes.
+The vertical camera keeps its position in world coordinates. Ordinary jumps stay inside a wide quiet zone, so they do not move the camera. Taller movement receives an eased follow with bounded acceleration. The cartridge's own vertical scrolling does not move this camera a second time. The shorter view shows a portion of the cartridge's vertical playfield. The M5 menus use portrait orientation and the native-size menu font.
 
-The cartridge declares multiregion support; this launcher selects **NTSC 60 Hz timing**. Simulation timing remains independent of display transfer performance. Three probes of 500 completed SPI frame intervals took 8.334499, 8.367268 and 8.331629 seconds. Their combined 1,500 intervals took 25.033396 seconds: **59.9200 completed display frames per second**. Tests used Stereo Madness, Geometrical Dominator and Dash, Bluetooth LE scanning, Full volume and held action with native retries. A connected controller was unavailable for this measurement. Panel scanout, flight sections, upper camera behavior and complete level playthroughs remain unverified on hardware. Portable raster tests cover all nine forms, dual and mini states, gravity, camera limits and terrain classes.
+The procedural renderer paints directly into the display-sized RGB565 canvas. Hazard artwork distinguishes full spikes, half spikes, repeated teeth, saw quadrants and diagonal hazards. Source-derived collision masks expose the native cube collision areas, and mini characters use the native anchor. It preserves the scale of terrain and hazards without stretching the NES picture. The NES core skips RGB pixel composition while retaining CPU, APU, logical PPU and mapper behavior. Colors are prepared in display byte order as they are drawn, avoiding a full-frame conversion pass. Geometry frames are stored in the panel's portrait scan order while remaining landscape on screen. The display worker sends this contiguous canvas through DMA while the main CPU advances the next game frame, and the canvas remains reserved until the transfer finishes. Completion wakes the producer directly.
+
+On the supported StickC Plus panel, the worker qualifies two clean scan cycles and their row timing before using scan synchronization. It starts transfers after the beam has passed the first visible rows and checks that the scan reading is fresh before launch. Invalid readings, a timeout or excessive launch delay disable synchronization. The panel refresh clock remains unchanged.
+
+The cartridge declares multiregion support; this launcher selects **NTSC 60 Hz timing**. The emulator advances NTSC game frames on a 60 Hz schedule. The renderer uses every frame, with no regular frame-skipping divisor. Completed SPI transfers and the panel's own scan cycle are measured separately. The panel scan period is about 16.8 ms, or 59.5 Hz, with its refresh clock unchanged.
+
+Hardware probes use Stereo Madness, Geometrical Dominator and Dash, Bluetooth LE scanning, Full volume and held action with native retries. A connected controller is unavailable for this audit. The final release's transfer measurements are recorded below.
+
+| Level | 500 completed SPI intervals | Completed SPI FPS |
+| --- | ---: | ---: |
+| Stereo Madness | 8.333656 s | 60.00 |
+| Geometrical Dominator | 8.469372 s | 59.04 |
+| Dash | 8.334976 s | 59.99 |
+
+The Mario regression probe measured 500 completed SPI intervals in 8.333910 seconds (60.00 FPS). Scan synchronization was enabled at the end of the Geometrical Dominator probe. Its conservative launch-delay guard disabled synchronization during the other two Geometry probes. These transfer measurements do not establish tear-free panel output.
+
+Portable raster tests cover all nine forms, dual and mini states, gravity, world-camera invariance, terrain classes and exact equivalence between both framebuffer layouts. Independent collision tests cover all 256 metatiles and verify that every fatal point from the cube-mode oracle is painted. A tile comparison checks 1,193,010 cells across all 22 authored levels, including chunk continuations. Native launch checks compare 10,544 cells with the cartridge's committed collision map. An object-stream check covers 334,102 horizontal positions across those levels.
+
+These checks cover geometry, memory safety and presentation logic. Direct inspection of tearing, flight sections, upper camera behavior and complete level playthroughs remains pending. Battery sleep and wake also remain unverified physically.
 
 ## Controls
 
@@ -49,6 +67,6 @@ The StickC Plus passive buzzer uses the existing monophonic NES approximation. I
 
 ## Source and rights
 
-The author's [MIT software license](../LICENSES/Famidash-MIT.txt) and [upstream credits](https://github.com/tfdsoft/famidash/blob/0df680d0e02f0ccb438f1224d162a0ab073b7204/README.md) accompany this integration's references. The M5 launcher, state adapter, input adapter and procedural renderer are project code. The public source package excludes Famidash's ROM, game implementation, graphics, music and generated ROM headers.
+The author's [MIT software license](../LICENSES/Famidash-MIT.txt) and [upstream credits](https://github.com/tfdsoft/famidash/blob/0df680d0e02f0ccb438f1224d162a0ab073b7204/README.md) accompany this integration's references. The M5 launcher, state adapter, input adapter and procedural renderer are project code. The public source package excludes Famidash's ROM, level data, graphics, music and generated ROM headers.
 
 Importing records your rights acknowledgment and grants no license. Keep the downloaded cartridge and firmware containing it private unless you have the permissions needed for distribution. Famidash's software license does not establish permission to redistribute RobTop assets or third-party musical compositions. [RobTop's published policy](https://www.robtopgames.com/youtube.html) also distinguishes third-party rights. See the [project's rights boundary](RIGHTS.md).

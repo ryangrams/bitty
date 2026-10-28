@@ -50,9 +50,8 @@ struct GeometryTile {
   bool hasSolidRegion() const {
     return valid && ((collision >= 5 && collision <= 7) || collision == 9 ||
                      (collision >= 0x0b && collision <= 0x27) ||
-                     collision == 0x2b || collision == 0x2c ||
-                     (collision >= 0x37 && collision <= 0x3a) ||
-                     collision == 0x3c || collision == 0x3d);
+                     (collision >= 0x2b && collision <= 0x2f) ||
+                     (collision >= 0x37 && collision <= 0x3d));
   }
 };
 
@@ -63,11 +62,15 @@ struct GeometryPlayer {
 
   int pixelX() const { return x >> 8; }
   int pixelY() const { return y >> 8; }
+  int collisionWidth(uint8_t mode) const { return mode == 6 ? 8 : (mini ? 8 : 15); }
+  int collisionHeight(uint8_t mode) const { return mode == 6 ? 8 : (mini ? 7 : 15); }
+  int collisionOffsetY(uint8_t mode) const { return (16 - collisionHeight(mode)) / 2; }
 };
 
 struct GeometryObject {
-  uint8_t type = 0xff, x = 0, y = 0;
-  bool active = false, activated = false;
+  uint8_t type = 0xff;
+  int16_t x = 0, y = 0;
+  bool active = false, activated = false, preview = false;
 
   GeometryObjectKind kind() const {
     if ((type >= 0x2a && type <= 0x3f) || type == 0x4a)
@@ -93,9 +96,87 @@ struct GeometryObject {
     }
   }
   bool visible() const {
-    return active && x <= 0xf0 && y <= 0xf0 && kind() != GeometryObjectKind::Hidden;
+    return active && x >= 0 && x <= (preview ? 320 : 240) &&
+           y >= (preview ? -1024 : 0) && y <= (preview ? 1024 : 240) &&
+           kind() != GeometryObjectKind::Hidden;
   }
   bool collectedCoin() const { return type >= 0x1c && type <= 0x1e; }
+};
+
+// Retains previously streamed columns so left-edge pixels cannot alias future tiles.
+// The native ring contains 16 columns. This cache records their absolute positions.
+class GeometryWorld {
+ public:
+  static constexpr unsigned ColumnCount = 32, RowCount = 60;
+
+  GeometryWorld() { reset(); }
+  void reset() {
+    for (unsigned i = 0; i < ColumnCount; ++i) tags_[i] = InvalidTag;
+    initialized_ = false;
+  }
+
+  template <class Scene> bool prepareFrame(const Scene& scene) {
+    if (!scene.playing() || !scene.attempt || (scene.scrollX & 0x80000000u)) {
+      reset();
+      return false;
+    }
+    if (!initialized_ || level_ != scene.level || attempt_ != scene.attempt ||
+        scene.scrollX < lastScrollX_) {
+      reset();
+      initialized_ = true;
+      level_ = scene.level;
+      attempt_ = scene.attempt;
+    }
+    lastScrollX_ = scene.scrollX;
+    return true;
+  }
+
+  template <class Scene, class ReadRam> bool capture(const Scene& scene, ReadRam readRam) {
+    if (!prepareFrame(scene)) return false;
+    const int64_t base = scene.scrollX >> 4;
+    const int delta = int((unsigned(scene.ringColumn) - unsigned(base & 15) + 8) & 15) - 8;
+    const int64_t first = base + delta;
+    for (int64_t column = first; column < first + 16; ++column) {
+      if (column < 0) continue;
+      const uint32_t tag = uint32_t(column);
+      const unsigned slot = tag & (ColumnCount - 1);
+      if (tags_[slot] == tag) continue;
+      // The decoder increments rld_column before committing the map column.
+      if (scene.drawingFrame == 0 && column == first + 15) continue;
+      for (unsigned row = 0; row < RowCount; ++row) {
+        const uint16_t address = uint16_t(0x6000 + (row / 15) * 256 +
+                                          (row % 15) * 16 + (tag & 15));
+        tiles_[slot][row] = readRam(address);
+      }
+      tags_[slot] = tag;
+    }
+    return true;
+  }
+
+  void storeLevelColumn(uint32_t column, const uint8_t* rows) {
+    initialized_ = true;
+    const unsigned slot = column & (ColumnCount - 1);
+    for (unsigned row = 0; row < 57; ++row) tiles_[slot][row] = rows[row];
+    tags_[slot] = column;
+  }
+
+  bool tileId(int64_t worldX, int worldY, uint8_t& id) const {
+    if (!initialized_ || worldX < 0 || worldY < 0 || worldY >= 960) return false;
+    const uint64_t column = uint64_t(worldX) >> 4;
+    if (column >= InvalidTag) return false;
+    const unsigned slot = unsigned(column) & (ColumnCount - 1);
+    if (tags_[slot] != uint32_t(column)) return false;
+    id = tiles_[slot][unsigned(worldY) / 16];
+    return true;
+  }
+
+ private:
+  static constexpr uint32_t InvalidTag = 0xffffffffu;
+  uint8_t tiles_[ColumnCount][RowCount] = {};
+  uint32_t tags_[ColumnCount];
+  uint32_t attempt_ = 0, lastScrollX_ = 0;
+  uint8_t level_ = 0;
+  bool initialized_ = false;
 };
 
 struct GeometryScene {
@@ -104,15 +185,18 @@ struct GeometryScene {
   static constexpr uint32_t CollisionTableFileOffset = 0x7dae0;
   static constexpr uint32_t LevelLengthsFileOffset = 0x7fd32;
   static constexpr unsigned OfficialLevelCount = 22, LevelCount = 43;
-  static constexpr unsigned PlayerCount = 2, ObjectCount = 16;
+  static constexpr unsigned PlayerCount = 2, ObjectCount = 16, PreviewCount = 8;
 
   uint8_t state = 0, level = 0, mode = 0;
+  uint8_t ringColumn = 0, drawingFrame = 0;
   uint32_t scrollX = 0;
   uint32_t attempt = 0;
   uint16_t scrollY = 0;
   bool dual = false;
   GeometryPlayer players[PlayerCount];
   GeometryObject objects[ObjectCount];
+  GeometryObject previews[PreviewCount];
+  uint8_t previewCount = 0;
 
   static bool matchesCartridge(size_t bytes, uint32_t crc32) {
     return bytes == RomBytes && crc32 == RomCrc32;
@@ -121,8 +205,10 @@ struct GeometryScene {
   // Readers return one byte from a CPU RAM address or a ROM file offset.
   // Callers verify matchesCartridge before sampling this release-specific layout.
   template <class ReadRam> void sample(ReadRam readRam) {
+    previewCount = 0;
     state = readRam(0x0498); level = readRam(0x047b); mode = readRam(0x007a);
     dual = readRam(0x0096) != 0;
+    ringColumn = readRam(0x0369); drawingFrame = readRam(0x036a);
     scrollX = read32(readRam, 0x04a2); scrollY = read16(readRam, 0x04a6);
     attempt = 0;
     uint32_t place = 1;
@@ -144,8 +230,11 @@ struct GeometryScene {
       o.x = readRam(uint16_t(0x0545 + i)); o.y = readRam(uint16_t(0x0555 + i));
       o.active = readRam(uint16_t(0x0565 + i)) != 0;
       o.activated = readRam(uint16_t(0x0575 + i)) != 0;
+      o.preview = false;
     }
   }
+
+  void bindWorld(const GeometryWorld* world) { world_ = world; }
 
   bool playing() const { return state == 2; }
   int linearScrollY() const { return (scrollY >> 8) * 240 + (scrollY & 255); }
@@ -170,7 +259,11 @@ struct GeometryScene {
     const unsigned column = unsigned(uint64_t(worldX) >> 4) & 15;
     const uint16_t address = uint16_t(0x6000 + page * 256 + row * 16 + column);
     GeometryTile tile;
-    tile.id = readRam(address);
+    if (world_ && worldY < 912) {
+      if (!world_->tileId(worldX, worldY, tile.id)) return tile;
+    } else {
+      tile.id = readRam(address);
+    }
     tile.collision = readRom(CollisionTableFileOffset + tile.id);
     tile.valid = true;
     return tile;
@@ -184,6 +277,8 @@ struct GeometryScene {
   }
 
  private:
+  const GeometryWorld* world_ = nullptr;
+
   template <class ReadRam> static uint16_t read16(ReadRam r, uint16_t a) {
     return uint16_t(uint16_t(r(a)) | uint16_t(uint16_t(r(uint16_t(a + 1))) << 8));
   }

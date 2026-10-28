@@ -12,6 +12,122 @@
 
 namespace flappy {
 
+// A continuous 16-bit read of command 0x45 captures the panel's scanline.
+// Continuous samples qualify the period and active row cadence before DMA.
+class DisplayScanProbe {
+ public:
+  static uint32_t lineFromWireWord(uint32_t word) {
+    if (word > 0xffffu) return 512;
+    const uint16_t line = uint16_t((word >> 8) | (word << 8));
+    return line < 512 ? line : 512;
+  }
+  static uint32_t phaseFromWireWord(uint32_t word) {
+    const uint32_t line = lineFromWireWord(word);
+    return line < 512 ? unsigned(line >> 8) : 2;
+  }
+  bool observeLine(uint32_t line, uint32_t nowUs) {
+    requireLines_ = true;
+    if (failed_ || complete()) return complete();
+    if (line > 351 || (haveLine_ && line < previousLine_ &&
+        (previousLine_ < 300 || line > 31))) {
+      failed_ = true;
+      return false;
+    }
+    if (haveLine_ && line < previousLine_) rowAnchor_ = false;
+    if (line >= 64 && line <= 80 && !rowAnchor_) {
+      rowAnchor_ = true;
+      rowMeasured_ = false;
+      anchorLine_ = line;
+      anchorUs_ = nowUs;
+    }
+    if (rowAnchor_ && !rowMeasured_ && line >= 224 && line <= 280) {
+      const uint32_t rows = line - anchorLine_;
+      const uint32_t elapsed = nowUs - anchorUs_;
+      // Counter quantization costs one row. Read timing gets another 20 us.
+      if (elapsed < (rows + 1) * 46 + 20 || elapsed + 20 > (rows - 1) * 52) {
+        failed_ = true;
+        return false;
+      }
+      const uint32_t minimum = (elapsed - 20) * 1000 / (rows + 1);
+      const uint32_t maximum = ((elapsed + 20) * 1000 + rows - 2) / (rows - 1);
+      if (!rowSamples_ || minimum < rowMinNs_) rowMinNs_ = minimum;
+      if (maximum > rowMaxNs_) rowMaxNs_ = maximum;
+      ++rowSamples_;
+      rowMeasured_ = true;
+    }
+    if (line > maxLine_) maxLine_ = line;
+    previousLine_ = line;
+    haveLine_ = true;
+    return observe(line >> 8, nowUs);
+  }
+  bool observe(uint32_t phase, uint32_t nowUs) {
+    if (failed_ || complete()) return complete();
+    if (phase > 1 || (sampled_ && uint32_t(nowUs - previousSample_) > 1000)) {
+      failed_ = true;
+      return false;
+    }
+    previousSample_ = nowUs;
+    if (!sampled_) { sampled_ = true; high_ = phase; return false; }
+    if (high_ == bool(phase)) return false;
+    if (haveTransition_) {
+      const uint32_t duration = nowUs - transitionUs_;
+      if (high_) { highUs_ = duration; haveHigh_ = true; }
+      else { lowUs_ = duration; haveLow_ = true; }
+    }
+    transitionUs_ = nowUs;
+    haveTransition_ = true;
+    high_ = phase;
+    if (high_) {
+      if (haveRise_ && haveLow_ && haveHigh_) {
+        periodUs_ = nowUs - riseUs_;
+        if (periodUs_ < (requireLines_ ? 16000u : 14000u) ||
+            periodUs_ > (requireLines_ ? 17500u : 20000u) || lowUs_ < 12500 || lowUs_ > 19000 ||
+            highUs_ < 1000 || highUs_ > 6500) failed_ = true;
+        else ++cycles_;
+      }
+      riseUs_ = nowUs;
+      haveRise_ = true;
+    }
+    return complete();
+  }
+  bool complete() const {
+    return cycles_ >= 2 && !failed_ && (!requireLines_ || (rowSamples_ >= 2 && maxLine_ >= 320));
+  }
+  bool failed() const { return failed_; }
+  uint32_t periodUs() const { return periodUs_; }
+  uint32_t lowUs() const { return lowUs_; }
+  uint32_t highUs() const { return highUs_; }
+  uint32_t rowMinNs() const { return rowMinNs_; }
+  uint32_t rowMaxNs() const { return rowMaxNs_; }
+
+ private:
+  uint32_t previousSample_ = 0, transitionUs_ = 0, riseUs_ = 0;
+  uint32_t periodUs_ = 0, lowUs_ = 0, highUs_ = 0;
+  uint32_t anchorUs_ = 0, rowMinNs_ = 0, rowMaxNs_ = 0;
+  uint16_t previousLine_ = 0, anchorLine_ = 0, maxLine_ = 0;
+  uint8_t cycles_ = 0;
+  uint8_t rowSamples_ = 0;
+  bool sampled_ = false, high_ = false, haveTransition_ = false, haveRise_ = false;
+  bool haveLow_ = false, haveHigh_ = false, failed_ = false;
+  bool requireLines_ = false, haveLine_ = false, rowAnchor_ = false, rowMeasured_ = false;
+};
+
+class DisplayScanGate {
+ public:
+  enum class Result : uint8_t { Waiting, Ready, Invalid, TimedOut };
+  static constexpr uint32_t TimeoutUs = 20000;
+  static constexpr uint32_t FirstLine = 64, LastLine = 320;
+  static constexpr uint32_t MaxDecisionAgeUs = 250, MaxLaunchUs = 350;
+  explicit DisplayScanGate(uint32_t startedUs) : startedUs_(startedUs) {}
+  Result observe(uint32_t line, uint32_t nowUs) const {
+    if (line > 351) return Result::Invalid;
+    if (uint32_t(nowUs - startedUs_) >= TimeoutUs) return Result::TimedOut;
+    return line >= FirstLine && line <= LastLine ? Result::Ready : Result::Waiting;
+  }
+ private:
+  uint32_t startedUs_;
+};
+
 struct DisplayStrip {
   enum { MaxWidth = 240, MaxRows = 8, MaxFrameRows = 240 };
   int16_t x = 0, y = 0;
@@ -20,12 +136,14 @@ struct DisplayStrip {
 
   bool isFrameBoundary() const { return width == 0 && height == 0; }
   bool isBorrowed() const { return borrowed_ != nullptr; }
+  bool scanSynchronized() const { return scanSynchronized_; }
   uint16_t* pixelData() { return borrowed_ ? borrowed_ : pixels; }
   const uint16_t* pixelData() const { return borrowed_ ? borrowed_ : pixels; }
   void markFrameBoundary() {
     x = y = 0; width = height = 0;
     borrowed_ = nullptr;
     wireEncoded_ = false;
+    scanSynchronized_ = false;
   }
 
   static bool validBorrowedFrame(const uint16_t* surface, int columns, int rows) {
@@ -37,12 +155,14 @@ struct DisplayStrip {
     return reinterpret_cast<uintptr_t>(surface) <= UINTPTR_MAX - (bytes - 1);
   }
 
-  bool borrowFrame(uint16_t* surface, int columns, int rows, bool wireOrder = false) {
+  bool borrowFrame(uint16_t* surface, int columns, int rows, bool wireOrder = false, bool scanSync = false) {
     if (!validBorrowedFrame(surface, columns, rows)) return false;
+    if (scanSync && (columns != 135 || rows != 240)) return false;
     x = y = 0;
     width = uint16_t(columns); height = uint16_t(rows);
     borrowed_ = surface;
     wireEncoded_ = wireOrder;
+    scanSynchronized_ = scanSync;
     return true;
   }
 
@@ -68,6 +188,7 @@ struct DisplayStrip {
     width = uint16_t(columns); height = uint16_t(rows);
     borrowed_ = nullptr;
     wireEncoded_ = wireOrder;
+    scanSynchronized_ = false;
     for (int row = 0; row < rows; ++row) {
       const uint16_t* input = source + size_t(row) * unsigned(stride);
       if (wireOrder) {
@@ -85,6 +206,7 @@ struct DisplayStrip {
  private:
   uint16_t* borrowed_ = nullptr;
   bool wireEncoded_ = false;
+  bool scanSynchronized_ = false;
 };
 
 // One producer and one consumer own opposite ends. A front strip remains
@@ -113,10 +235,10 @@ class DisplayStripFifo {
     return true;
   }
 
-  bool tryPushBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false) {
+  bool tryPushBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false, bool scanSync = false) {
     const uint32_t written = written_.load(std::memory_order_relaxed);
     if (uint32_t(written - completed_.load(std::memory_order_acquire)) >= Capacity) return false;
-    if (!strips_[writeSlot_].borrowFrame(surface, width, height, wireOrder)) return false;
+    if (!strips_[writeSlot_].borrowFrame(surface, width, height, wireOrder, scanSync)) return false;
     writeSlot_ = uint8_t((writeSlot_ + 1u) % Capacity);
     written_.store(written + 1u, std::memory_order_release);
     return true;
@@ -177,6 +299,12 @@ class AsyncDisplay {
     uint32_t firstFrameUs = 0, lastFrameUs = 0;
     uint32_t minFrameUs = UINT32_MAX, maxFrameUs = 0;
     uint32_t maxWaitUs = 0, maxCopyUs = 0, maxWorkUs = 0;
+    uint64_t scanWaitUs = 0, scanProbeUs = 0;
+    uint32_t scanFrames = 0, scanWaits = 0, scanTimeouts = 0, scanInvalidReads = 0;
+    uint32_t scanProbeAttempts = 0, scanProbePasses = 0, scanProbeReads = 0;
+    uint32_t scanPeriodUs = 0, scanLowUs = 0, scanHighUs = 0, maxScanWaitUs = 0;
+    uint32_t scanRowMinNs = 0, scanRowMaxNs = 0, maxScanLaunchUs = 0, scanStaleReads = 0;
+    bool scanSyncEnabled = false;
     unsigned pending = 0, maxPending = 0;
   };
 
@@ -187,6 +315,7 @@ class AsyncDisplay {
 
   bool begin() {
     if (task_) return true;
+    scanSyncEnabled_.store(false, std::memory_order_relaxed);
     stopping_.store(false, std::memory_order_relaxed);
     stopped_.store(false, std::memory_order_relaxed);
     void* storage = heap_caps_malloc(sizeof(DisplayStripFifo), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
@@ -194,10 +323,12 @@ class AsyncDisplay {
     fifo_ = new (storage) DisplayStripFifo;
     free_ = xSemaphoreCreateCountingStatic(DisplayStripFifo::Capacity, DisplayStripFifo::Capacity, &freeStorage_);
     ready_ = xSemaphoreCreateCountingStatic(DisplayStripFifo::Capacity, 0, &readyStorage_);
-    if (!free_ || !ready_ || xTaskCreatePinnedToCore(runTask, "M5 LCD", 4096, this, 1, &task_, 0) != pdPASS) {
+    completed_ = xSemaphoreCreateBinaryStatic(&completedStorage_);
+    if (!free_ || !ready_ || !completed_ || xTaskCreatePinnedToCore(runTask, "M5 LCD", 4096, this, 1, &task_, 0) != pdPASS) {
       if (free_) vSemaphoreDelete(free_);
       if (ready_) vSemaphoreDelete(ready_);
-      free_ = ready_ = nullptr;
+      if (completed_) vSemaphoreDelete(completed_);
+      free_ = ready_ = completed_ = nullptr;
       task_ = nullptr;
       freeFifo();
       return false;
@@ -206,6 +337,49 @@ class AsyncDisplay {
   }
 
   bool enabled() const { return task_ != nullptr; }
+
+  // Call after setting the physical portrait orientation. Qualification keeps
+  // all display access on the main task while the worker queue is empty.
+  bool configureScanSync(bool enabled) {
+    drain();
+    scanSyncEnabled_.store(false, std::memory_order_release);
+    if (!enabled || !task_ || M5.Display.width() != 135 || M5.Display.height() != 240 ||
+        M5.Display.getRotation() != 0) return false;
+    DisplayScanProbe probe;
+    const uint32_t started = micros();
+    uint32_t reads = 0, attempts = 0;
+    auto* bus = M5.Display.panel()->getBus();
+    const uint32_t priorClock = bus->getReadClock();
+    bus->setReadClock(5000000);
+    do {
+      probe = DisplayScanProbe();
+      const uint32_t attemptStarted = micros();
+      ++attempts;
+      while (uint32_t(micros() - attemptStarted) < 60000 && !probe.complete() && !probe.failed()) {
+        const uint32_t line = readScanLine();
+        ++reads;
+        probe.observeLine(line, micros());
+        if (!probe.complete() && !probe.failed()) delayMicroseconds(50);
+      }
+    } while (!probe.complete() && attempts < 3);
+    bus->setReadClock(priorClock);
+    const uint32_t elapsed = micros() - started;
+    portENTER_CRITICAL(&statsMux_);
+    stats_.scanProbeAttempts += attempts;
+    stats_.scanProbePasses += probe.complete();
+    stats_.scanProbeReads += reads;
+    stats_.scanProbeUs += elapsed;
+    stats_.scanPeriodUs = probe.periodUs();
+    stats_.scanLowUs = probe.lowUs();
+    stats_.scanHighUs = probe.highUs();
+    stats_.scanRowMinNs = probe.rowMinNs();
+    stats_.scanRowMaxNs = probe.rowMaxNs();
+    portEXIT_CRITICAL(&statsMux_);
+    scanSyncEnabled_.store(probe.complete(), std::memory_order_release);
+    return probe.complete();
+  }
+
+  bool scanSyncEnabled() const { return scanSyncEnabled_.load(std::memory_order_acquire); }
 
   bool submit(int x, int y, int width, int height, const uint16_t* pixels, int stride) {
     if (!task_ || !pixels || width < 1 || width > DisplayStrip::MaxWidth ||
@@ -227,16 +401,17 @@ class AsyncDisplay {
 
   // Keep the complete surface alive and untouched until drain() returns. The
   // worker converts native colors in place. Set wireOrder for preencoded pixels.
-  bool submitBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false) {
+  bool submitBorrowedFrame(uint16_t* surface, int width, int height, bool wireOrder = false, bool scanSync = false) {
     if (!task_ || !DisplayStrip::validBorrowedFrame(surface, width, height) ||
         reinterpret_cast<uintptr_t>(surface) % 4) return false;
+    if (scanSync && (width != 135 || height != 240 || M5.Display.getRotation() != 0)) return false;
     const size_t bytes = size_t(width) * size_t(height) * sizeof(uint16_t);
     const uintptr_t last = reinterpret_cast<uintptr_t>(surface) + bytes - 1;
     if (!esp_ptr_dma_capable(surface) || !esp_ptr_dma_capable(reinterpret_cast<const void*>(last))) return false;
     uint32_t waitUs = 0;
     bool waited = false;
     if (!takeFree(waited, waitUs)) return false;
-    if (!fifo_->tryPushBorrowedFrame(surface, width, height, wireOrder)) {
+    if (!fifo_->tryPushBorrowedFrame(surface, width, height, wireOrder, scanSync && scanSyncEnabled())) {
       xSemaphoreGive(free_);
       return false;
     }
@@ -272,7 +447,7 @@ class AsyncDisplay {
   }
 
   void drain() {
-    while (fifo_ && fifo_->pending()) vTaskDelay(1);
+    while (fifo_ && fifo_->pending()) xSemaphoreTake(completed_, portMAX_DELAY);
   }
 
   Stats stats() const {
@@ -280,12 +455,14 @@ class AsyncDisplay {
     Stats result = stats_;
     portEXIT_CRITICAL(&statsMux_);
     result.pending = fifo_ ? fifo_->pending() : 0;
+    result.scanSyncEnabled = scanSyncEnabled();
     return result;
   }
 
   void end() {
     if (!fifo_) return;
     drain();
+    scanSyncEnabled_.store(false, std::memory_order_release);
     if (task_) {
       stopping_.store(true, std::memory_order_release);
       xSemaphoreGive(ready_);
@@ -293,20 +470,66 @@ class AsyncDisplay {
     }
     if (free_) vSemaphoreDelete(free_);
     if (ready_) vSemaphoreDelete(ready_);
-    task_ = nullptr; free_ = ready_ = nullptr;
+    if (completed_) vSemaphoreDelete(completed_);
+    task_ = nullptr; free_ = ready_ = completed_ = nullptr;
     freeFifo();
   }
 
  private:
   DisplayStripFifo* fifo_ = nullptr;
-  SemaphoreHandle_t free_ = nullptr, ready_ = nullptr;
-  StaticSemaphore_t freeStorage_, readyStorage_;
+  SemaphoreHandle_t free_ = nullptr, ready_ = nullptr, completed_ = nullptr;
+  StaticSemaphore_t freeStorage_, readyStorage_, completedStorage_;
   TaskHandle_t task_ = nullptr;
   std::atomic<bool> stopping_{false}, stopped_{false};
+  std::atomic<bool> scanSyncEnabled_{false};
   mutable portMUX_TYPE statsMux_ = portMUX_INITIALIZER_UNLOCKED;
   Stats stats_;
   uint32_t probeTarget_ = 0;
   bool probeAwaitingStart_ = false;
+
+  static uint32_t readScanLine(uint32_t* sampleUs = nullptr) {
+    auto* bus = M5.Display.panel()->getBus();
+    M5.Display.startWrite();
+    bus->writeCommand(0x45, 8);
+    bus->wait();
+    bus->beginRead(1);
+    const uint32_t stamp = micros();
+    const uint32_t word = bus->readData(16);
+    bus->endRead();
+    M5.Display.endWrite();
+    if (sampleUs) *sampleUs = stamp;
+    return DisplayScanProbe::lineFromWireWord(word);
+  }
+
+  uint32_t waitScanPhase() {
+    const uint32_t started = micros();
+    DisplayScanGate gate(started);
+    uint32_t reads = 0;
+    auto* bus = M5.Display.panel()->getBus();
+    const uint32_t priorClock = bus->getReadClock();
+    bus->setReadClock(5000000);
+    uint32_t sampleUs = started;
+    DisplayScanGate::Result result;
+    do {
+      const uint32_t line = readScanLine(&sampleUs);
+      ++reads;
+      result = gate.observe(line, micros());
+      if (result == DisplayScanGate::Result::Waiting) delayMicroseconds(50);
+    } while (result == DisplayScanGate::Result::Waiting);
+    bus->setReadClock(priorClock);
+    const uint32_t elapsed = micros() - started;
+    const bool ready = result == DisplayScanGate::Result::Ready;
+    if (!ready) scanSyncEnabled_.store(false, std::memory_order_release);
+    portENTER_CRITICAL(&statsMux_);
+    stats_.scanFrames += ready;
+    stats_.scanWaits += reads > 1;
+    stats_.scanWaitUs += elapsed;
+    stats_.scanTimeouts += result == DisplayScanGate::Result::TimedOut;
+    stats_.scanInvalidReads += result == DisplayScanGate::Result::Invalid;
+    if (elapsed > stats_.maxScanWaitUs) stats_.maxScanWaitUs = elapsed;
+    portEXIT_CRITICAL(&statsMux_);
+    return sampleUs;
+  }
 
   bool takeFree(bool& waited, uint32_t& waitUs) {
     waited = xSemaphoreTake(free_, 0) != pdTRUE;
@@ -377,9 +600,28 @@ class AsyncDisplay {
         const uint32_t started = micros();
         strip->encodeWireOrder();
         const uint32_t encodeUs = uint32_t(micros() - started);
-        M5.Display.startWrite();
+        bool synchronized = strip->scanSynchronized() && scanSyncEnabled();
+        uint32_t sampleUs = synchronized ? waitScanPhase() : 0;
+        synchronized = synchronized && scanSyncEnabled();
+        for (;;) {
+          M5.Display.startWrite();
+          if (!synchronized || uint32_t(micros() - sampleUs) <= DisplayScanGate::MaxDecisionAgeUs) break;
+          if (uint32_t(micros() - started) >= DisplayScanGate::TimeoutUs) {
+            scanSyncEnabled_.store(false, std::memory_order_release);
+            synchronized = false;
+            break;
+          }
+          M5.Display.endWrite();
+          portENTER_CRITICAL(&statsMux_);
+          ++stats_.scanStaleReads;
+          portEXIT_CRITICAL(&statsMux_);
+          sampleUs = waitScanPhase();
+          synchronized = scanSyncEnabled();
+        }
         M5.Display.pushImageDMA(strip->x, strip->y, strip->width, strip->height,
             reinterpret_cast<const lgfx::swap565_t*>(strip->pixelData()));
+        const uint32_t launchUs = synchronized ? uint32_t(micros() - sampleUs) : 0;
+        if (launchUs > DisplayScanGate::MaxLaunchUs) scanSyncEnabled_.store(false, std::memory_order_release);
         M5.Display.endWrite();
         const uint32_t workUs = uint32_t(micros() - started);
         portENTER_CRITICAL(&statsMux_);
@@ -387,11 +629,13 @@ class AsyncDisplay {
         stats_.bytes += uint32_t(strip->width) * strip->height * sizeof(uint16_t);
         stats_.workUs += workUs;
         stats_.encodeUs += encodeUs;
+        if (launchUs > stats_.maxScanLaunchUs) stats_.maxScanLaunchUs = launchUs;
         if (workUs > stats_.maxWorkUs) stats_.maxWorkUs = workUs;
         portEXIT_CRITICAL(&statsMux_);
       }
       fifo_->complete();
       xSemaphoreGive(free_);
+      if (!fifo_->pending()) xSemaphoreGive(completed_);
     }
   }
 };

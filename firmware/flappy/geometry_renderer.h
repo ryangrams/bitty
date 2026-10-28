@@ -1,7 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include "geometry_scene.h"
+#include "geometry_collision.h"
 #include "menu_font.h"
 
 namespace flappy {
@@ -14,16 +16,18 @@ struct GeometryRenderOptions {
   uint16_t backgroundColor = 0;
   uint8_t progress = 255;
   bool hud = true, useSourceColor = false, wireOrder = false;
-  bool fullSolidFastPath = true;
+  bool fullSolidFastPath = true, physicalScanOrder = false;
 };
 
 // Native vectors consume a read-only cartridge snapshot at the source's pixel scale.
 class GeometryRenderer {
  public:
-  enum { Width = 240, Height = 135, BlockSize = 16, SourceX = 8 };
+  enum { Width = 240, Height = 135, BlockSize = 16, SourceX = 40 };
 
-  void reset() { cameraReady_ = false; previousState_ = 255; previousLevel_ = 255; cropY_ = 80; }
+  void reset() { cameraReady_ = false; previousState_ = 255; previousLevel_ = 255; cropY_ = 80; cropX_ = 0; cameraVelocity_ = 0; previousAttempt_ = 0; }
   int cameraY() const { return cropY_; }
+  int cameraX() const { return cropX_; }
+  int worldCameraY() const { return (worldTop_ + 128) >> 8; }
 
   static const char* levelName(uint8_t level) {
     static const char* const names[] = {
@@ -48,7 +52,9 @@ class GeometryRenderer {
     pixels_ = canvas;
     wireOrder_ = options.wireOrder;
     fullSolidFastPath_ = options.fullSolidFastPath;
-    background(scene.playing() ? scene.scrollX : 0, options);
+    physicalScanOrder_ = options.physicalScanOrder;
+    cropX_ = scene.playing() ? clamp(scene.players[0].pixelX() - 40, 0, SourceX) : 0;
+    background(scene.playing() ? scene.scrollX + cropX_ : 0, options);
     if (!scene.playing()) {
       drawReady(scene, options);
       cameraReady_ = false;
@@ -56,24 +62,28 @@ class GeometryRenderer {
       updateCamera(scene, readRam, readRom);
       drawTerrain(scene, readRam, readRom);
       for (unsigned i = 0; i < GeometryScene::ObjectCount; ++i) drawObject(scene.objects[i]);
+      for (unsigned i = 0; i < scene.previewCount && i < GeometryScene::PreviewCount; ++i) drawObject(scene.previews[i]);
       for (unsigned i = 0; i < (scene.dual ? 2u : 1u); ++i) {
         const GeometryPlayer& player = scene.players[i];
-        drawPlayer(player, player.pixelX() - SourceX, player.pixelY() - cropY_, scene.mode, i != 0);
+        drawPlayer(player, player.pixelX() - cropX_, player.pixelY() - cropY_, scene.mode, i != 0);
       }
       if (options.hud) drawHud(scene, options);
       if (scene.dual) offscreenPlayer(scene.players[1]);
     }
     previousState_ = scene.state;
     previousLevel_ = scene.level;
+    previousAttempt_ = scene.attempt;
   }
 
  private:
   struct Point { int x, y; };
   struct Neighbors { uint16_t top = 0, bottom = 0, left = 0, right = 0; };
   uint16_t* pixels_ = nullptr;
-  int cropY_ = 80;
+  int cropY_ = 80, cropX_ = 0;
+  int32_t worldTop_ = 0, cameraVelocity_ = 0, previousPlayerY_ = 0;
+  uint32_t previousAttempt_ = 0;
   uint8_t previousState_ = 255, previousLevel_ = 255;
-  bool cameraReady_ = false, wireOrder_ = false, fullSolidFastPath_ = true;
+  bool cameraReady_ = false, wireOrder_ = false, fullSolidFastPath_ = true, physicalScanOrder_ = false;
 
   uint16_t rgb(int r, int g, int b) const {
     const uint16_t color = uint16_t((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3));
@@ -94,58 +104,21 @@ class GeometryRenderer {
     return result;
   }
 
-  // These masks describe the cartridge's solid halves, quarters, stairs and slopes.
-  static uint16_t solidRow(uint8_t collision, int row) {
-    if (row < 0 || row > 15) return 0;
-    switch (collision) {
-      case 5: case 0x3b: case 0x3d: return row < 8 ? 0xffff : 0;
-      case 6: case 0x2d: case 0x2e: case 0x2f: case 0x3c: return row >= 8 ? 0xffff : 0;
-      case 7: case 9: case 0x1f: return 0xffff;
-      case 0x0b: return uint16_t(0xffffu << (15 - row));
-      case 0x0c: return lowBits(row + 1);
-      case 0x0d: return row < 8 ? 0 : uint16_t(0xffffu << (2 * (15 - row)));
-      case 0x0e: return lowBits(2 * row + 2);
-      case 0x0f: return row >= 7 ? 0xffff : uint16_t(0xffffu << (2 * (7 - row)));
-      case 0x10: return row < 8 ? 0 : lowBits(2 * (row - 8) + 2);
-      case 0x11: return uint16_t(0xffffu << (8 + (16 - row) / 2));
-      case 0x12: return lowBits(row / 2 + 1);
-      case 0x13: return uint16_t(0xffffu << ((16 - row) / 2));
-      case 0x14: return uint16_t(0xff | (lowBits(row / 2 + 1) << 8));
-      case 0x15: return uint16_t(0xffffu << row);
-      case 0x16: return lowBits(16 - row);
-      case 0x17: return solidRow(0x0f, 15 - row);
-      case 0x18: return solidRow(0x0d, 15 - row);
-      case 0x19: return solidRow(0x10, 15 - row);
-      case 0x1a: return solidRow(0x0e, 15 - row);
-      case 0x1b: return solidRow(0x11, 15 - row);
-      case 0x1c: return solidRow(0x12, 15 - row);
-      case 0x1d: return solidRow(0x13, 15 - row);
-      case 0x1e: return solidRow(0x14, 15 - row);
-      case 0x20: return row < 8 ? 0x00ff : 0;
-      case 0x21: return row < 8 ? 0xff00 : 0;
-      case 0x22: case 0x2b: return row >= 8 ? 0x00ff : 0;
-      case 0x23: case 0x2c: return row >= 8 ? 0xff00 : 0;
-      case 0x24: return 0x00ff;
-      case 0x25: return 0xff00;
-      case 0x26: return row < 8 ? 0x00ff : 0xff00;
-      case 0x27: return row < 8 ? 0xff00 : 0x00ff;
-      case 0x37: return row < 8 ? 0xff00 : 0xffff;
-      case 0x38: return row < 8 ? 0x00ff : 0xffff;
-      case 0x39: return row < 8 ? 0xffff : 0xff00;
-      case 0x3a: return row < 8 ? 0xffff : 0x00ff;
-      default: return 0;
-    }
-  }
+  static uint16_t solidRow(uint8_t collision, int row) { return GeometryCollisionMask::solidRow(collision, row); }
 
   template <class ReadRam, class ReadRom>
   int landing(const GeometryScene& scene, ReadRam readRam, ReadRom readRom, const GeometryPlayer& p) const {
     const int direction = p.gravity ? -1 : 1;
-    const int start = p.pixelY() + (p.gravity ? -1 : 16);
-    for (int y = start; y >= 0 && y < 240; y += direction) {
-      const int x = p.pixelX() + 8;
-      const GeometryTile tile = scene.tileAtScreen(readRam, readRom, x, y);
-      const int worldY = scene.linearScrollY() + y;
-      if (tile.valid && (solidRow(tile.collision, worldY & 15) & (1u << ((scene.scrollX + unsigned(x)) & 15)))) return y;
+    const int start = scene.linearScrollY() + p.pixelY() + (p.gravity ? (p.mini ? 3 : -1) : p.mini ? 12 : 16);
+    const int64_t worldX = int64_t(scene.scrollX) + p.pixelX() + (p.mini ? 4 : 8);
+    for (int y = start; y >= 0 && y < 960;) {
+      const GeometryTile tile = scene.tileAtWorld(readRam, readRom, worldX, y);
+      if (tile.valid && fullSolid(tile.collision)) return y;
+      const int next = (y & ~15) + (direction > 0 ? 16 : -1);
+      if (tile.valid && tile.collision)
+        for (int row = y; row != next; row += direction)
+          if (solidRow(tile.collision, row & 15) & (1u << (unsigned(worldX) & 15))) return row;
+      y = next;
     }
     return -1;
   }
@@ -153,34 +126,52 @@ class GeometryRenderer {
   template <class ReadRam, class ReadRom>
   void updateCamera(const GeometryScene& scene, ReadRam readRam, ReadRom readRom) {
     const GeometryPlayer& player = scene.players[0];
-    int top = player.pixelY(), bottom = top + 16;
-    if (scene.dual) { top = minimum(top, scene.players[1].pixelY()); bottom = maximum(bottom, scene.players[1].pixelY() + 16); }
-    int low = clamp(bottom - 119, 0, 105), high = clamp(top - 16, 0, 105);
-    if (low > high) { low = clamp(player.pixelY() - 103, 0, 105); high = clamp(player.pixelY() - 16, low, 105); }
-    const bool flying = scene.mode == 1 || scene.mode == 2 || scene.mode == 3 || scene.mode == 6 || scene.mode == 7;
-    int target = flying ? player.pixelY() - 59 : 80;
+    const int linearY = scene.linearScrollY();
+    const int32_t playerY = int32_t(linearY) * 256 + player.y;
+    const int top = linearY + player.pixelY() + (player.mini ? 4 : 0);
+    const int bottom = top + (player.mini ? 8 : 16);
     const int floor = landing(scene, readRam, readRom, player);
-    if (!flying && floor >= 0) {
-      target = player.gravity ? floor - 20 : floor - 115;
-      if (!player.gravity) low = maximum(low, clamp(floor - 132, 0, 105));
-      else high = minimum(high, clamp(floor - 2, 0, 105));
+    const bool restart = !cameraReady_ || previousState_ != 2 || previousLevel_ != scene.level ||
+      (scene.attempt && previousAttempt_ && scene.attempt != previousAttempt_);
+    if (restart) {
+      worldTop_ = int32_t(floor >= 0 ? floor - (player.gravity ? 20 : 115) : top - 99) * 256;
+      cameraVelocity_ = 0;
+    } else {
+      int followTop = top, followBottom = bottom;
+      if (scene.dual) {
+        const auto& second = scene.players[1];
+        const int secondTop = linearY + second.pixelY() + (second.mini ? 4 : 0);
+        const int secondBottom = secondTop + (second.mini ? 8 : 16);
+        if (maximum(bottom, secondBottom) - minimum(top, secondTop) <= 111) {
+          followTop = minimum(top, secondTop); followBottom = maximum(bottom, secondBottom);
+        }
+      }
+      int32_t error = 0;
+      if (int32_t(followTop) * 256 < worldTop_ + 24 * 256) error = int32_t(followTop - 24) * 256 - worldTop_;
+      if (int32_t(followBottom) * 256 > worldTop_ + 119 * 256) error = int32_t(followBottom - 119) * 256 - worldTop_;
+      const int32_t velocity = clamp(playerY - previousPlayerY_, -8 * 256, 8 * 256);
+      if (floor >= 0 && !player.gravity && velocity >= 0 && floor - top < 80)
+        error = maximum(error, int32_t(floor - 115) * 256 - worldTop_);
+      if (floor >= 0 && player.gravity && velocity <= 0 && bottom - floor < 80)
+        error = minimum(error, int32_t(floor - 20) * 256 - worldTop_);
+      const int wanted = error ? clamp(error / 8 + velocity, -8 * 256, 8 * 256) : 0;
+      cameraVelocity_ += clamp(wanted - cameraVelocity_, -256, 256);
+      worldTop_ += cameraVelocity_;
     }
-    if (low > high) low = high;
-    target = clamp(target, low, high);
-    if (!cameraReady_ || previousState_ != 2 || previousLevel_ != scene.level) cropY_ = target;
-    else cropY_ = clamp(cropY_ + clamp(target - cropY_, -3, 3), low, high);
+    cropY_ = worldCameraY() - linearY;
+    previousPlayerY_ = playerY;
     cameraReady_ = true;
   }
 
   template <class ReadRam, class ReadRom>
   void drawTerrain(const GeometryScene& scene, ReadRam readRam, ReadRom readRom) {
-    const int firstX = -int((scene.scrollX + SourceX) & 15);
+    const int firstX = -int((scene.scrollX + cropX_) & 15);
     const int firstY = -((scene.linearScrollY() + cropY_) & 15);
     for (int y = firstY; y < Height; y += BlockSize) {
       for (int x = firstX; x < Width; x += BlockSize) {
-        const int sampleX = x + SourceX + 8, sampleY = y + cropY_ + 8;
+        const int sampleX = x + cropX_ + 8, sampleY = y + cropY_ + 8;
         const GeometryTile tile = scene.tileAtScreen(readRam, readRom, sampleX, sampleY);
-        if (!tile.valid || !tile.collision) continue;
+        if (!tile.valid || (!tile.collision && tile.id != 0x78)) continue;
         Neighbors neighbors;
         if (tile.hasSolidRegion()) {
           const GeometryTile above = scene.tileAtScreen(readRam, readRom, sampleX, sampleY - 16);
@@ -209,7 +200,7 @@ class GeometryRenderer {
       edgeRuns(x + 15, y, uint16_t(~neighbors.right), true, white);
       return;
     }
-    for (int row = 0; row < 16; ++row) {
+    if (tile.hasSolidRegion()) for (int row = 0; row < 16; ++row) {
       const uint16_t mask = solidRow(tile.collision, row);
       const uint16_t fromLeft = uint16_t((mask << 1) | ((neighbors.left & (1u << row)) ? 1 : 0));
       const uint16_t fromRight = uint16_t((mask >> 1) | ((neighbors.right & (1u << row)) ? 0x8000 : 0));
@@ -219,24 +210,109 @@ class GeometryRenderer {
       for (int column = 0; column < 16; ++column) if (mask & (1u << column))
         pixel(x + column, y + row, !(inner & (1u << column)) ? white : row == 2 || column == 2 ? cyan : dark);
     }
-    const uint8_t c = tile.collision;
-    if (c == 1) spike(x + 8, y, 8, 16, 3);
-    else if (c == 2) spike(x, y, 8, 16, 2);
-    else if (c == 3) spike(x, y, 16, 8, 1);
-    else if (c == 4) spike(x, y + 8, 16, 8, 0);
-    else if (c == 8) spike(x, y, 16, 16, tile.id == 0x1a ? 2 : tile.id == 0x1c ? 3 : tile.id == 0x1b || tile.id == 0xfb ? 1 : 0);
-    else if (c >= 0x28 && c <= 0x2a) {
-      if (c != 0x29) spike(x, y + 8, 8, 8, 0);
-      if (c != 0x28) spike(x + 8, y + 8, 8, 8, 0);
-    } else if (c >= 0x2b && c <= 0x2f) {
-      if (c == 0x2b || c == 0x2d || c == 0x2f) spike(x, y, 8, 8, 0);
-      if (c == 0x2c || c == 0x2e || c == 0x2f) spike(x + 8, y, 8, 8, 0);
-    } else if (c >= 0x30 && c <= 0x32) {
-      if (c != 0x31) spike(x, y, 8, 8, 1);
-      if (c != 0x30) spike(x + 8, y, 8, 8, 1);
-    } else if (c >= 0x33 && c <= 0x36) spike(x, y, 16, 16, c <= 0x34 ? 1 : 0);
-    else if (c == 0x3b || c == 0x3d) spike(x + 4, y + 8, 8, 8, 1);
-    else if (c == 0x3c) spike(x + 4, y, 8, 8, 0);
+    if (tile.isHazard() || tile.id == 0x78) drawHazard(tile, x, y);
+  }
+
+  static uint16_t triangleRow(int left, int top, int width, int height, int direction, int row) {
+    if (row < top || row >= top + height || width < 2 || height < 2) return 0;
+    const int localY = row - top;
+    if (direction < 2) {
+      const int distance = direction ? localY : height - 1 - localY;
+      const int inset = (width - 1) * distance / (2 * (height - 1));
+      return GeometryCollisionMask::span(left + inset, left + width - 1 - inset);
+    }
+    const int offset = 2 * localY - (height - 1);
+    const int distance = offset < 0 ? -offset : offset;
+    const int reach = width - 1 - distance * (width - 1) / (height - 1);
+    return direction == 3 ? GeometryCollisionMask::span(left, left + reach) :
+      GeometryCollisionMask::span(left + width - 1 - reach, left + width - 1);
+  }
+  static bool sawPart(uint8_t id, int& cx, int& cy, int& radius) {
+    if (id == 4 || id == 0x7d || id == 0x7f) {
+      cx = 8; cy = id == 4 ? 0 : id == 0x7f ? 16 : 8; radius = 8; return true;
+    }
+    if (id >= 8 && id <= 11) {
+      cx = id & 1 ? 0 : 16; cy = id < 10 ? 16 : 0; radius = 16; return true;
+    }
+    if (id >= 0x74 && id <= 0x7c) {
+      cx = 24 - int((id - 0x74) % 3) * 16;
+      cy = 24 - int((id - 0x74) / 3) * 16;
+      radius = 24; return true;
+    }
+    return false;
+  }
+  static bool sawPoint(int x, int y, int cx, int cy, int radius) {
+    const int dx = x - cx, dy = y - cy;
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    const int high = maximum(ax, ay), low = minimum(ax, ay);
+    const bool tooth = low * 4 <= high || low * 4 >= high * 3;
+    const int reach = tooth ? radius : radius * 4 / 5;
+    return dx * dx + dy * dy <= reach * reach;
+  }
+  static uint16_t hazardArtRow(uint8_t id, uint8_t c, int row) {
+    int cx, cy, radius;
+    if (sawPart(id, cx, cy, radius)) {
+      uint16_t mask = 0;
+      for (int x = 0; x < 16; ++x) if (sawPoint(x, row, cx, cy, radius)) mask |= uint16_t(1u << x);
+      return mask;
+    }
+    if (row < 0 || row > 15) return 0;
+    if (id == 0xf6 || id == 0xfb) return uint16_t(triangleRow(0, 0, 8, 16, id == 0xfb, row) |
+      triangleRow(8, 0, 8, 16, id == 0xfb, row));
+    if (id == 0x0c || id == 0x13 || id == 0x18 || id == 0x5c) return uint16_t(triangleRow(0, 8, 8, 8, 0, row) | triangleRow(8, 8, 8, 8, 0, row));
+    if (id == 0x0d || id == 0x14 || id == 0x17 || id == 0x5d) return uint16_t(triangleRow(0, 0, 8, 8, 1, row) | triangleRow(8, 0, 8, 8, 1, row));
+    if (id == 0x82 || id == 0x83) return uint16_t(triangleRow(0, 0, 8, 8, 1, row) | triangleRow(8, 0, 8, 8, 1, row) |
+      triangleRow(0, 8, 8, 8, 0, row) | triangleRow(8, 8, 8, 8, 0, row));
+    if (c == 1) return triangleRow(8, 0, 8, 16, 3, row);
+    if (c == 2) return triangleRow(0, 0, 8, 16, 2, row);
+    if (c == 3) return triangleRow(0, 0, 16, 8, 1, row);
+    if (c == 4) return triangleRow(0, 8, 16, 8, 0, row);
+    if (c == 8) return triangleRow(0, 0, 16, 16, id == 0x1a ? 2 : id == 0x1c ? 3 : id == 0x1b ? 1 : 0, row);
+    if (c >= 0x28 && c <= 0x32) {
+      uint16_t mask = 0;
+      const bool bottomHalf = c <= 0x2a;
+      const int top = bottomHalf ? 8 : 0, direction = c >= 0x30 ? 1 : 0;
+      if (c == 0x28 || c == 0x2a || c == 0x2b || c == 0x2d || c == 0x2f || c == 0x30 || c == 0x32)
+        mask |= triangleRow(0, top, 8, 8, direction, row);
+      if (c == 0x29 || c == 0x2a || c == 0x2c || c == 0x2e || c == 0x2f || c == 0x31 || c == 0x32)
+        mask |= triangleRow(8, top, 8, 8, direction, row);
+      return mask;
+    }
+    if (c >= 0x33 && c <= 0x36) {
+      const bool down = c <= 0x34, left = c == 0x34 || c == 0x36;
+      return uint16_t(triangleRow(0, down ? 0 : 8, 16, 8, down ? 1 : 0, row) |
+        triangleRow(left ? 0 : 8, 0, 8, 16, left ? 2 : 3, row));
+    }
+    if (c == 0x3b || c == 0x3d) return triangleRow(4, 8, 8, 8, 1, row);
+    if (c == 0x3c) return triangleRow(4, 0, 8, 8, 0, row);
+    return 0;
+  }
+  static uint32_t hazardExtendedRow(const GeometryTile& tile, int row) {
+    uint32_t result = uint32_t(hazardArtRow(tile.id, tile.collision, row) |
+      GeometryCollisionMask::hazardRow(tile.collision, row)) << 1;
+    int cx, cy, radius;
+    if (sawPart(tile.id, cx, cy, radius)) {
+      if (sawPoint(-1, row, cx, cy, radius)) result |= 1;
+      if (sawPoint(16, row, cx, cy, radius)) result |= 1u << 17;
+    }
+    return result;
+  }
+  void drawHazard(const GeometryTile& tile, int x, int y) {
+    uint32_t rows[18];
+    for (int row = -1; row <= 16; ++row) rows[row + 1] = hazardExtendedRow(tile, row);
+    const uint16_t white = rgb(255, 255, 255), dark = rgb(0, 15, 40), cyan = rgb(8, 192, 247);
+    int cx, cy, radius;
+    const bool saw = sawPart(tile.id, cx, cy, radius);
+    for (int row = 0; row < 16; ++row) {
+      const uint32_t mask = rows[row + 1];
+      const uint32_t inner = mask & (mask << 1) & (mask >> 1) & rows[row] & rows[row + 2];
+      for (int column = 0; column < 16; ++column) {
+        const uint32_t bit = 1u << (column + 1);
+        if (!(mask & bit)) continue;
+        const int dx = saw ? column - cx : 0, dy = saw ? row - cy : 0;
+        pixel(x + column, y + row, !(inner & bit) ? white : saw && dx * dx + dy * dy < radius * radius / 9 ? cyan : dark);
+      }
+    }
   }
 
   void background(uint32_t scroll, const GeometryRenderOptions& options) {
@@ -256,19 +332,48 @@ class GeometryRenderer {
     }
     const bool blueTheme = blue > red + 80 && blue > green + 55;
     if (blueTheme) { blue = maximum(blue, 246); green = maximum(green, 116); }
+    uint16_t shades[Height];
     for (int y = 0; y < Height; ++y) {
-      uint16_t* line = pixels_ + y * Width;
       const int light = blueTheme ? 60 + y * 40 / (Height - 1) : 75 + y * 25 / (Height - 1);
       const int blueLight = blueTheme ? 85 + y * 15 / (Height - 1) : light;
-      const uint16_t color = rgb(red * light / 100, green * light / 100, blue * blueLight / 100);
-      for (int x = 0; x < Width; ++x) line[x] = color;
+      shades[y] = rgb(red * light / 100, green * light / 100, blue * blueLight / 100);
     }
     const int parallax = int((scroll / 5) % 48);
+    const uint16_t firstFill = rgb(red * 70 / 100, green * 70 / 100, blue * (blueTheme ? 85 : 78) / 100);
+    const uint16_t firstEdge = rgb(red * 78 / 100, green * 78 / 100, blue * (blueTheme ? 92 : 86) / 100);
+    const uint16_t secondFill = rgb(red * 85 / 100, green * 85 / 100, blue * (blueTheme ? 92 : 88) / 100);
+    const uint16_t secondEdge = rgb(red * 90 / 100, green * 90 / 100, blue * (blueTheme ? 98 : 94) / 100);
+    if (physicalScanOrder_) {
+      for (int y = 0; y < Height / 2; ++y) {
+        const uint16_t shade = shades[y]; shades[y] = shades[Height - 1 - y]; shades[Height - 1 - y] = shade;
+      }
+      for (int x = 0; x < 48; ++x) {
+        uint16_t* line = pixels_ + x * Height;
+        memcpy(line, shades, sizeof(shades));
+        const int first = (x + parallax) % 48;
+        if (first < 34) {
+          line[Height - 1 - 29] = firstEdge; line[Height - 72] = firstEdge;
+          const uint16_t color = first && first < 33 ? firstFill : firstEdge;
+          for (int y = Height - 71; y < Height - 30; ++y) line[y] = color;
+        }
+        const int second = (x + parallax + 30) % 48;
+        if (second < 23) {
+          line[Height - 1 - 78] = secondEdge; line[Height - 107] = secondEdge;
+          const uint16_t color = second && second < 22 ? secondFill : secondEdge;
+          for (int y = Height - 106; y < Height - 79; ++y) line[y] = color;
+        }
+      }
+      for (int x = 48; x < Width; x += 48)
+        memcpy(pixels_ + x * Height, pixels_, 48 * Height * sizeof(uint16_t));
+      return;
+    }
+    for (int y = 0; y < Height; ++y) {
+      uint16_t* line = pixels_ + y * Width;
+      for (int x = 0; x < Width; ++x) line[x] = shades[y];
+    }
     for (int x = -48; x < Width + 48; x += 48) {
-      box(x - parallax, 29, 34, 43, rgb(red * 70 / 100, green * 70 / 100, blue * (blueTheme ? 85 : 78) / 100),
-          rgb(red * 78 / 100, green * 78 / 100, blue * (blueTheme ? 92 : 86) / 100));
-      box(x + 18 - parallax, 78, 23, 29, rgb(red * 85 / 100, green * 85 / 100, blue * (blueTheme ? 92 : 88) / 100),
-          rgb(red * 90 / 100, green * 90 / 100, blue * (blueTheme ? 98 : 94) / 100));
+      box(x - parallax, 29, 34, 43, firstFill, firstEdge);
+      box(x + 18 - parallax, 78, 23, 29, secondFill, secondEdge);
     }
   }
 
@@ -315,7 +420,7 @@ class GeometryRenderer {
 
   void drawObject(const GeometryObject& object) {
     if (!object.visible()) return;
-    const int x = int(object.x) - SourceX, y = int(object.y) + 1 - cropY_;
+    const int x = int(object.x) - cropX_, y = int(object.y) + 1 - cropY_;
     const auto kind = object.kind();
     const uint16_t color = objectColor(object.type), white = rgb(255, 255, 255), dark = rgb(0, 19, 52);
     if (kind == GeometryObjectKind::Portal) {
@@ -361,7 +466,7 @@ class GeometryRenderer {
     const int dx = point.x * 2 - 15, dy = point.y * 2 - 15;
     const int s = sine(angle), c = sine(uint8_t(angle + 16));
     const int scale = player.mini ? 2 : 1;
-    return {x + (player.mini ? 4 : 0) + (15 * 256 + dx * c - dy * s + 256) / (512 * scale),
+    return {x + (15 * 256 + dx * c - dy * s + 256) / (512 * scale),
             y + (player.mini ? 4 : 0) + (15 * 256 + dx * s + dy * c + 256) / (512 * scale)};
   }
   void iconPolygon(const Point* points, unsigned count, int x, int y, const GeometryPlayer& player, uint8_t angle, uint16_t color) {
@@ -446,17 +551,25 @@ class GeometryRenderer {
   void offscreenPlayer(const GeometryPlayer& player) {
     const int y = player.pixelY() - cropY_;
     if (y >= 0 && y + 16 < Height) return;
-    const int x = clamp(player.pixelX() - SourceX + 8, 5, Width - 6), top = y < 0 ? 16 : Height - 7;
+    const int x = clamp(player.pixelX() - cropX_ + 8, 5, Width - 6), top = y < 0 ? 16 : Height - 7;
     const Point arrow[] = {{x, top + (y < 0 ? 0 : 5)}, {x - 3, top + (y < 0 ? 5 : 0)}, {x + 3, top + (y < 0 ? 5 : 0)}};
     polygon(arrow, 3, rgb(255, 91, 211));
   }
 
   void pixel(int x, int y, uint16_t color) {
-    if (x >= 0 && x < Width && y >= 0 && y < Height) pixels_[y * Width + x] = color;
+    if (x >= 0 && x < Width && y >= 0 && y < Height)
+      pixels_[physicalScanOrder_ ? x * Height + Height - 1 - y : y * Width + x] = color;
   }
   void rect(int x, int y, int width, int height, uint16_t color) {
     const int left = maximum(0, x), right = minimum(Width, x + width), top = maximum(0, y), bottom = minimum(Height, y + height);
-    for (int row = top; row < bottom; ++row) for (int column = left; column < right; ++column) pixels_[row * Width + column] = color;
+    if (physicalScanOrder_) {
+      for (int column = left; column < right; ++column) {
+        uint16_t* line = pixels_ + column * Height;
+        for (int row = Height - bottom; row < Height - top; ++row) line[row] = color;
+      }
+    } else {
+      for (int row = top; row < bottom; ++row) for (int column = left; column < right; ++column) pixels_[row * Width + column] = color;
+    }
   }
   void box(int x, int y, int width, int height, uint16_t fill, uint16_t edge) {
     if (width <= 0 || height <= 0) return;
@@ -527,8 +640,33 @@ class GeometryRenderer {
     polygon(outer, 3, rgb(255, 255, 255)); polygon(inner, 3, rgb(0, 15, 40));
   }
   void text(const char* label, int x, int y, uint16_t color, int scale = 1, int maxChars = 39) {
-    MenuFont::draw(pixels_, Width, Height, label, x + 1, y + 1, rgb(0, 18, 57), scale, maxChars);
-    MenuFont::draw(pixels_, Width, Height, label, x, y, color, scale, maxChars);
+    glyphText(label, x + 1, y + 1, rgb(0, 18, 57), scale, maxChars);
+    glyphText(label, x, y, color, scale, maxChars);
+  }
+  void glyphText(const char* label, int x, int y, uint16_t color, int scale, int maxChars) {
+    if (!physicalScanOrder_) { MenuFont::draw(pixels_, Width, Height, label, x, y, color, scale, maxChars); return; }
+    if (scale == 1) {
+      const int top = maximum(0, -y), bottom = minimum(MenuFont::Height, Height - y);
+      if (top >= bottom) return;
+      for (int i = 0; label && label[i] && i < maxChars; ++i) {
+        const uint8_t* rows = MenuFont::glyph(label[i]);
+        const int startX = x + i * MenuFont::Advance;
+        const int left = maximum(0, -startX), right = minimum(MenuFont::Width, Width - startX);
+        for (int column = left; column < right; ++column) {
+          uint16_t* out = pixels_ + (startX + column) * Height + Height - y - bottom;
+          const unsigned bit = 1u << (MenuFont::Width - 1 - column);
+          for (int row = bottom - 1; row >= top; --row, ++out) if (rows[row] & bit) *out = color;
+        }
+      }
+      return;
+    }
+    for (int i = 0; label && label[i] && i < maxChars; ++i) {
+      const uint8_t* rows = MenuFont::glyph(label[i]);
+      for (int row = 0; row < MenuFont::Height; ++row)
+        for (int column = 0; column < MenuFont::Width; ++column)
+          if (rows[row] & (1u << (MenuFont::Width - 1 - column)))
+            rect(x + (i * MenuFont::Advance + column) * scale, y + row * scale, scale, scale, color);
+    }
   }
   void centered(const char* label, int y, uint16_t color, int scale = 1) {
     text(label, (Width - MenuFont::textWidth(label, scale, 39)) / 2, y, color, scale);

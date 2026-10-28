@@ -104,7 +104,7 @@ static void nativeBlocksAndGapsKeepTheirCoordinates() {
   f.draw();
   assert(f.renderer.cameraY() == 77);
   const int top = 880 - f.scene.linearScrollY() - f.renderer.cameraY();
-  const int left = 128 - GeometryRenderer::SourceX;
+  const int left = 128 - f.renderer.cameraX();
   assert(f.at(left, top) == White && f.at(left + 15, top) == White);
   assert(f.at(left, top + 15) == White && f.at(left + 15, top + 15) == White);
   for (unsigned step = 1; step < 16; ++step) {
@@ -117,13 +117,37 @@ static void nativeBlocksAndGapsKeepTheirCoordinates() {
   assert(f.at(8, 123) != White);
   for (int y = 912; y < 960; y += 16) { f.tile(96, y, 0); f.tile(112, y, 0); }
   f.draw();
-  assert(f.at(120, 123) == White);
-  const uint16_t inGap = f.at(98, 124), onFloor = f.at(130, 124);
+  assert(f.at(128 - f.renderer.cameraX(), 123) == White);
+  const uint16_t inGap = f.at(106 - f.renderer.cameraX(), 124), onFloor = f.at(138 - f.renderer.cameraX(), 124);
   Fixture empty;
   empty.scene.players[0].y = f.scene.players[0].y;
   empty.draw();
-  assert(inGap == empty.at(98, 124));
+  assert(inGap == empty.at(106 - empty.renderer.cameraX(), 124));
   assert(onFloor != inGap);
+}
+
+static void startupKeepsTheCubeVisibleThenAnchorsAtForty() {
+  Fixture f;
+  f.floor(); f.scene.players[0].y = 176 << 8;
+  for (int playerX = 0; playerX <= 80; ++playerX) {
+    f.scene.players[0].x = uint16_t(playerX << 8); f.draw();
+    const int displayX = playerX - f.renderer.cameraX();
+    assert(displayX == (playerX < 40 ? playerX : 40));
+    assert(f.renderer.cameraX() >= 0 && f.renderer.cameraX() <= 40);
+    unsigned yellow = 0;
+    for (int y = 0; y < 135; ++y) for (int x = displayX; x < displayX + 16; ++x)
+      yellow += f.at(x,y) == Yellow;
+    assert(yellow > 0);
+  }
+  flappy::GeometryWorld world;
+  f.scene.attempt = 1;
+  assert(world.capture(f.scene, [&](uint16_t address) { return f.readRam(address); }));
+  std::array<uint8_t,57> forward{};
+  forward[55] = 0x10;
+  world.storeLevelColumn(17, forward.data());
+  f.scene.bindWorld(&world); f.draw();
+  assert(f.at(232, 83) == White && f.at(239, 83) == White);
+  assert(f.at(8, 83) != White);
 }
 
 static void sourcePaletteControlsSaturatedBackgrounds() {
@@ -161,7 +185,7 @@ static void partialPlatformsHaveEmptyHalves() {
   const auto baseline = f.image();
   f.tile(128, 880, 0x19);
   f.draw();
-  const int x = 128 - GeometryRenderer::SourceX, y = 880 - 720 - f.renderer.cameraY();
+  const int x = 128 - f.renderer.cameraX(), y = 880 - 720 - f.renderer.cameraY();
   assert(f.at(x + 7, y) == White);
   assert(f.at(x + 7, y + 7) == White);
   for (int dy = 8; dy < 16; ++dy)
@@ -174,7 +198,7 @@ static void allTerrainClassesStayWithinTheirCells() {
   f.scene.players[0].y = 176 << 8;
   f.floor(); f.draw();
   const auto baseline = f.image();
-  const int left = 128 - GeometryRenderer::SourceX, top = 880 - 720 - f.renderer.cameraY();
+  const int left = 128 - f.renderer.cameraX(), top = 880 - 720 - f.renderer.cameraY();
   for (unsigned collision = 1; collision <= 0x3d; ++collision) {
     if (collision == 10) continue;
     f.collisions[128] = uint8_t(collision);
@@ -195,7 +219,7 @@ static void nineFormsMiniGravityAndRotation() {
   for (uint8_t mode = 0; mode < 9; ++mode) {
     f.renderer.reset(); f.scene.mode = mode; f.draw();
     std::vector<uint16_t> local;
-    const int x = f.scene.players[0].pixelX() - 8, y = f.scene.players[0].pixelY() - f.renderer.cameraY();
+    const int x = f.scene.players[0].pixelX() - f.renderer.cameraX(), y = f.scene.players[0].pixelY() - f.renderer.cameraY();
     for (int dy = -5; dy < 21; ++dy) for (int dx = -9; dx < 25; ++dx) {
       const uint16_t color = f.at(x + dx, y + dy);
       local.push_back(color == Yellow || color == uint16_t((3 >> 3) << 11 | (241 >> 2) << 5 | (255 >> 3)) || color == uint16_t((14 >> 2) << 5 | (35 >> 3)) ? color : 0);
@@ -205,7 +229,7 @@ static void nineFormsMiniGravityAndRotation() {
   assert(forms.size() == 9);
   f.scene.mode = 0; f.renderer.reset(); f.draw();
   const auto normal = f.image();
-  const int x = f.scene.players[0].pixelX() - 8, y = f.scene.players[0].pixelY() - f.renderer.cameraY();
+  const int x = f.scene.players[0].pixelX() - f.renderer.cameraX(), y = f.scene.players[0].pixelY() - f.renderer.cameraY();
   f.scene.players[0].gravity = true; f.draw();
   for (int dy = 0; dy < 16; ++dy) for (int dx = 0; dx < 16; ++dx)
     assert(f.at(x + dx, y + dy) == normal[(y + 15 - dy) * 240 + x + dx]);
@@ -215,7 +239,7 @@ static void nineFormsMiniGravityAndRotation() {
   f.scene.players[0].rotation = 0; f.scene.players[0].mini = true; f.draw();
   unsigned yellow = 0;
   for (int dy = 0; dy < 16; ++dy) for (int dx = 0; dx < 16; ++dx) if (f.at(x + dx, y + dy) == Yellow) {
-    assert(dx >= 4 && dx < 12 && dy >= 4 && dy < 12); ++yellow;
+    assert(dx >= 0 && dx < 8 && dy >= 4 && dy < 12); ++yellow;
   }
   assert(yellow > 0 && yellow < 64);
   f.scene.players[0].mini = false;
@@ -228,6 +252,7 @@ static void nineFormsMiniGravityAndRotation() {
 
 static void objectAnchorsAndInvisibleTriggers() {
   Fixture f;
+  f.floor(); f.scene.players[0].y = 176 << 8;
   f.draw();
   const auto baseline = f.image();
   auto& object = f.scene.objects[0];
@@ -244,30 +269,111 @@ static void objectAnchorsAndInvisibleTriggers() {
     minX = x < minX ? x : minX; maxX = x > maxX ? x : maxX;
     minY = y < minY ? y : minY; maxY = y > maxY ? y : maxY;
   }
-  assert(minX == 120 && maxX == 143 && minY == 49 && maxY == 96);
+  assert(minX == 128 - f.renderer.cameraX() && maxX == 151 - f.renderer.cameraX() && minY == 129 - f.renderer.cameraY() && maxY == 176 - f.renderer.cameraY());
 }
+
+static void forwardObjectPreviewsKeepAnchorsAndNativeState() {
+  Fixture f;
+  f.floor(); f.scene.players[0].y = 176 << 8; f.draw();
+  const auto baseline = f.image();
+  auto& native = f.scene.objects[0];
+  native.type = 0; native.active = true; native.x = 248; native.y = 128;
+  f.draw(); assert(f.image() == baseline);
+  auto& preview = f.scene.previews[0];
+  preview = native; preview.preview = true; f.scene.previewCount = 1;
+  f.draw();
+  int minX = 240, maxX = -1, minY = 135, maxY = -1;
+  for (int y = 0; y < 135; ++y) for (int x = 0; x < 240; ++x) if (f.at(x,y) != baseline[y * 240 + x]) {
+    minX = x < minX ? x : minX; maxX = x > maxX ? x : maxX;
+    minY = y < minY ? y : minY; maxY = y > maxY ? y : maxY;
+  }
+  assert(minX == 208 && maxX == 231 && minY == 52 && maxY == 99);
+  assert(native.x == 248 && native.y == 128 && native.active && !native.preview && !native.activated);
+  preview.type = 0x18; preview.x = 280; f.draw();
+  assert(f.image() != baseline);
+  for (int y = 0; y < 135; ++y) for (int x = 0; x < 232; ++x) assert(f.at(x,y) == baseline[y * 240 + x]);
+  f.scene.previewCount = 255;
+  for (auto& object : f.scene.previews) { object = preview; object.x = 320; object.y = -1024; }
+  f.draw(); assert(f.image() == baseline);
+}
+
+static uint16_t rawScroll(int linear) { return uint16_t((linear / 240) * 256 + linear % 240); }
 
 static void cameraKeepsJumpAndLandingVisible() {
   Fixture f;
   f.floor(); f.scene.players[0].y = 176 << 8; f.draw();
   assert(f.renderer.cameraY() == 77);
-  for (int py = 174; py >= 104; py -= 2) {
+  assert(f.renderer.worldCameraY() == 797);
+  for (int py = 174; py >= 132; py -= 2) {
     f.scene.players[0].y = uint16_t(py << 8); f.draw();
-    assert(py - f.renderer.cameraY() >= 16);
-    assert(192 - f.renderer.cameraY() <= 132);
+    assert(f.renderer.worldCameraY() == 797);
   }
-  for (int py = 106; py <= 176; py += 2) {
-    const int before = f.renderer.cameraY();
+  for (int py = 134; py <= 176; py += 2) {
     f.scene.players[0].y = uint16_t(py << 8); f.draw();
-    const int moved = f.renderer.cameraY() - before;
-    assert(moved >= -3 && moved <= 3);
-    assert(py - f.renderer.cameraY() + 16 <= 119);
+    assert(f.renderer.worldCameraY() == 797);
   }
-  f.scene.mode = 1;
-  for (int py : {10, 55, 100, 165, 220}) {
+  for (int py = 174; py >= 40; py -= 2) {
+    const int before = f.renderer.worldCameraY();
     f.scene.players[0].y = uint16_t(py << 8); f.draw();
-    assert(f.renderer.cameraY() >= 0 && f.renderer.cameraY() <= 105);
+    assert(std::abs(f.renderer.worldCameraY() - before) <= 8);
+    assert(py - f.renderer.cameraY() >= 8);
+  }
+  for (int py = 42; py <= 176; py += 2) {
+    const int before = f.renderer.worldCameraY();
+    f.scene.players[0].y = uint16_t(py << 8); f.draw();
+    assert(std::abs(f.renderer.worldCameraY() - before) <= 8);
+    assert(py - f.renderer.cameraY() < 135);
+  }
+}
+
+static void nativeCameraScrollCannotMoveTheWorldView() {
+  Fixture f;
+  f.floor(); f.scene.players[0].y = 176 << 8;
+  f.draw();
+  const auto baseline = f.image();
+  for (int scroll = 657; scroll <= 896; ++scroll) {
+    f.scene.scrollY = rawScroll(scroll);
+    f.scene.players[0].y = uint16_t((896 - scroll) * 256);
+    f.draw();
+    assert(f.renderer.worldCameraY() == 797 && f.image() == baseline);
+  }
+  for (int boundary : {240, 480, 720}) {
+    Fixture page;
+    page.scene.scrollY = rawScroll(boundary - 15);
+    const int playerWorldY = boundary + 112, floorWorldY = playerWorldY + 16;
+    page.scene.players[0].y = uint16_t((playerWorldY - (boundary - 15)) * 256);
+    for (int x = 0; x < 256; x += 16) page.tile(x, floorWorldY, 1);
+    page.draw();
+    const auto expected = page.image();
+    for (int scroll = boundary - 15; scroll <= boundary + 15; ++scroll) {
+      page.scene.scrollY = rawScroll(scroll);
+      page.scene.players[0].y = uint16_t((playerWorldY - scroll) * 256);
+      page.draw();
+      assert(page.image() == expected);
+    }
+  }
+}
+
+static void gravityChangeAndDualFollowStayContinuous() {
+  Fixture f;
+  f.floor(); f.scene.players[0].y = 176 << 8; f.draw();
+  for (int x = 0; x < 256; x += 16) f.tile(x,800,0x10);
+  f.scene.players[0].gravity = true;
+  for (int py = 174; py >= 96; py -= 2) {
+    const int before = f.renderer.worldCameraY();
+    f.scene.players[0].y = uint16_t(py << 8); f.draw();
+    assert(std::abs(f.renderer.worldCameraY() - before) <= 8);
     assert(py - f.renderer.cameraY() >= 0 && py - f.renderer.cameraY() < 135);
+  }
+  Fixture dual;
+  dual.floor(); dual.scene.players[0].y = 176 << 8;
+  dual.scene.dual = true; dual.scene.players[1] = dual.scene.players[0];
+  dual.scene.players[1].x = 160 << 8; dual.scene.players[1].y = 96 << 8;
+  for (unsigned frame = 0; frame < 120; ++frame) {
+    const int before = dual.renderer.worldCameraY(); dual.draw();
+    if (frame) assert(std::abs(dual.renderer.worldCameraY() - before) <= 8);
+    for (const auto& player : dual.scene.players)
+      assert(player.pixelY() - dual.renderer.cameraY() >= 0 && player.pixelY() - dual.renderer.cameraY() + 16 <= 135);
   }
 }
 
@@ -365,15 +471,19 @@ static void fullSolidFillMatchesGenericRasterForAllNeighborClasses() {
 }
 
 int main() {
-  static_assert(sizeof(GeometryRenderer) <= 32, "Renderer state must stay small");
+  static_assert(sizeof(GeometryRenderer) <= 48, "Renderer state must stay small");
   fullWidthStatesAndVerifiedText();
   nativeBlocksAndGapsKeepTheirCoordinates();
+  startupKeepsTheCubeVisibleThenAnchorsAtForty();
   sourcePaletteControlsSaturatedBackgrounds();
   partialPlatformsHaveEmptyHalves();
   allTerrainClassesStayWithinTheirCells();
   nineFormsMiniGravityAndRotation();
   objectAnchorsAndInvisibleTriggers();
+  forwardObjectPreviewsKeepAnchorsAndNativeState();
   cameraKeepsJumpAndLandingVisible();
+  nativeCameraScrollCannotMoveTheWorldView();
+  gravityChangeAndDualFollowStayContinuous();
   malformedAndBoundaryCoordinatesAreClipped();
   wireOrderMatchesEveryNativePixel();
   fullSolidFillMatchesGenericRasterForAllNeighborClasses();
