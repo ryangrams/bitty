@@ -564,7 +564,8 @@ class MarioWorldClock {
           for(int yy=y+16;yy<Floor;yy+=16) meta(pixels,x+o.width/2-8,yy,0x50);
           break;
         case Kind::Bridge:
-          for(int xx=0;xx<o.width;xx+=16) meta(pixels,x+xx,y,theme_==Theme::Castle?0x89:0x63); break;
+          for(int xx=0;xx<o.width;xx+=16) meta(pixels,x+xx,y,theme_==Theme::Castle?0x89:0x63);
+          break;
         case Kind::Firebar: {
           meta(pixels,x-4,y-4,0xc4);
           const unsigned phase=(ticks_/2+o.variation*17)&127;

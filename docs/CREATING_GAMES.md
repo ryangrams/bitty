@@ -64,7 +64,7 @@ Use [Jetpack Clock](../firmware/flappy/jetpack_clock.h) for scrolling objects an
 
 ## Add a native engine
 
-The native engines are portable C++ state machines. [GalagaGame](../firmware/flappy/galaga_game.h), [ArkanoidGame](../firmware/flappy/arkanoid_game.h) and [ArcadeInput](../firmware/flappy/arcade_support.h) show the existing approach: reset from a seed, tick from bounded input, draw into the supplied canvas and expose event cues. This is a source pattern, not a loadable binary interface.
+The native engines are portable C++ state machines. [GalagaGame](../firmware/flappy/galaga_game.h), [ArkanoidGame](../firmware/flappy/arkanoid_game.h) and [ArcadeInput](../firmware/flappy/arcade_support.h) show the existing approach: reset from a seed, tick from bounded input, draw into the supplied canvas and expose event cues. Use that pattern when integrating another engine into a firmware build.
 
 Keep game rules separate from M5 APIs. Use fixed simulation steps, bounded catch-up and deterministic seeds. Rendering less often must not speed up the game. Slow-motion should scale motion integration while retaining smooth rendering. Drain display transfers before reusing borrowed buffers or changing orientation.
 
