@@ -802,6 +802,23 @@ static void geometryLevelsFitNativeFontAndScrollVertically() {
   }
 }
 
+static void marioPlayerChoices() {
+  for (bool controller : {false,true}) {
+    GuardedPixels pixels(240 * 135);
+    flappy::Renderer renderer(pixels.data());
+    renderer.drawMarioPlayers(1,controller);
+    pixels.check();
+    assert(pixels.data()[29 * 240 + 45] == flappy::BittyUi::Amber);
+    assert(pixels.data()[54 * 240 + 45] == flappy::BittyUi::Panel);
+    const auto before = pixels.image();
+    renderer.drawMarioPlayers(2,controller);
+    pixels.check();
+    assert(pixels.data()[29 * 240 + 45] == flappy::BittyUi::Panel);
+    assert(pixels.data()[54 * 240 + 45] == flappy::BittyUi::Amber);
+    assert(differentPixels(before,pixels.image()) > 4000);
+  }
+}
+
 static void sharedClockControlsRenderForEveryGame() {
   flappy::AppModel app(43);
   app.setNesAvailable(true);
@@ -1063,6 +1080,7 @@ int main() {
   gameSettingsReflectEachSelectedGame();
   geometryLevelsFitNativeFontAndScrollVertically();
   sharedClockControlsRenderForEveryGame();
+  marioPlayerChoices();
   ghostRotationsAndColorAssignment();
   clockDigitsFollowHourMinuteAndFormat();
   scrollingGroundMatchesSourceAndAlphaAtBothScales();

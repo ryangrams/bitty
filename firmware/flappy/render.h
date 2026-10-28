@@ -77,6 +77,27 @@ class Renderer {
         0xffff, 1, maxChars);
   }
 
+  void drawMarioPlayers(uint8_t players, bool controller) {
+    const int width = 240, height = 135;
+    for (int i = 0; i < width * height; ++i) pixels_[i] = BittyUi::Black;
+    MenuFont::draw(pixels_,width,height,"MARIO",105,8,BittyUi::Text);
+    for (unsigned choice = 1; choice <= 2; ++choice) {
+      const int y = 31 + int(choice - 1) * 25;
+      const bool selected = players == choice;
+      for (int row = y - 3; row < y + 17; ++row)
+        for (int x = 42; x < 198; ++x) pixels_[row * width + x] = selected ? BittyUi::Amber : BittyUi::Panel;
+      const char* label = choice == 1 ? "1 PLAYER" : "2 PLAYERS";
+      MenuFont::draw(pixels_,width,height,label,(width - MenuFont::textWidth(label)) / 2,y,
+                     selected ? BittyUi::Black : BittyUi::Text);
+    }
+    const char* detail = players == 2 ? "MARIO / LUIGI TAKE TURNS" : "PLAYER 1: MARIO";
+    MenuFont::draw(pixels_,width,height,detail,(width - MenuFont::textWidth(detail)) / 2,84,BittyUi::Muted);
+    const char* hint = controller ? "D-PAD PICK  A/B/START PLAY" : "RIGHT PICK  M5 PLAY";
+    MenuFont::draw(pixels_,width,height,hint,(width - MenuFont::textWidth(hint)) / 2,108,BittyUi::Text);
+    hint = controller ? "A+B CONTINUE" : "HOLD RIGHT FOR MENU";
+    MenuFont::draw(pixels_,width,height,hint,(width - MenuFont::textWidth(hint)) / 2,122,BittyUi::Muted);
+  }
+
   void draw(const Game& game) { drawGame(game, Mode::Original, nullptr, RenderOptions()); }
   void draw(const AppModel& app, const RenderOptions& options = RenderOptions()) {
     if (skins_.selected != app.settings.skinIndex) setSkin(app.settings.skinIndex);

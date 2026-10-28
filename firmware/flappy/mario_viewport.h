@@ -10,6 +10,7 @@ struct MarioPlayer {
   int x = 0;
   int y = 0;
   int height = 0;
+  int landingBottom = -1;
   bool playing = false;
   bool valid = false;
 };
@@ -66,6 +67,29 @@ class MarioCartridge {
     player.height = runtime.readRam(0x754) != 0 ? 16 : runtime.readRam(0x714) != 0 ? 24 : 32;
     player.y = int(runtime.readRam(0xce)) + 33 - player.height;
     player.valid = player.y < 240;
+    if (player.valid && player.playing && engine == 8) {
+      const int screenLeft = int(runtime.readRam(0x71a)) * 256 + runtime.readRam(0x71c);
+      int closest = 241;
+      for (unsigned slot = 0; slot < 6; ++slot) {
+        const uint8_t id = runtime.readRam(0x16 + slot);
+        if (!runtime.readRam(0x0f + slot) || id < 0x24 || id > 0x2c ||
+            runtime.readRam(0xb6 + slot) != 1) continue;
+        const int platformX = int(runtime.readRam(0x6e + slot)) * 256 +
+            runtime.readRam(0x87 + slot) - screenLeft;
+        const bool small = id >= 0x2b;
+        const int platformWidth = small ? 24 :
+            ((runtime.readRam(0x74e) == 3 || runtime.readRam(0x6cc)) ? 32 : 48);
+        if (platformX + platformWidth < player.x - 8 || platformX > player.x + 24) continue;
+        // Small lifts draw a second surface 128 rows below, wrapping at 256.
+        for (unsigned half = 0; half < (small ? 2u : 1u); ++half) {
+          const int top = ((int(runtime.readRam(0xcf + slot)) + int(half) * 128) & 255) + 1;
+          if (top < 32 || top >= 240 || top < player.y + player.height - 8 || top >= closest) continue;
+          closest = top;
+          // Include the eight sprite rows and room for the next lift step.
+          player.landingBottom = top + 11;
+        }
+      }
+    }
     return player;
   }
 
@@ -75,89 +99,11 @@ class MarioCartridge {
   bool standalone_ = false;
 };
 
-// Short title-screen inputs become native Start or A+Start. A brief grace period
-// lets two separate Bluetooth reports form a chord before a new game starts.
-class MarioController {
- public:
-  void reset() { previous_ = blocked_ = pending_ = wait_ = phase_ = 0; }
-
-  uint8_t step(MarioCartridge::Screen screen, uint8_t pad) {
-    const uint8_t pressed = pad & uint8_t(~previous_);
-    previous_ = pad;
-    blocked_ &= pad;
-    uint8_t output = pad & uint8_t(~blocked_);
-    const bool title = screen == MarioCartridge::Screen::Title;
-    const bool gameOver = screen == MarioCartridge::Screen::GameOver;
-    if (!title && !gameOver) {
-      if (screen == MarioCartridge::Screen::Playing) pending_ = wait_ = phase_ = 0;
-      return output;
-    }
-    if (phase_ == 1) {
-      phase_ = 2;
-      return 1;  // Hold A before the Start edge.
-    }
-    if (phase_ == 2) {
-      const uint8_t buttons = pending_ == 2 ? 9 : 8;
-      blocked_ |= pad & 0x33;
-      pending_ = wait_ = phase_ = 0;
-      return buttons;
-    }
-    const bool chord = (pad & 3) == 3 && (pressed & 3);
-    if (chord) { pending_ = 2; wait_ = 6; }
-    else if ((pressed & 0x32) && pending_ != 2) { pending_ = 1; wait_ = 6; }
-    output &= uint8_t(~0x32);  // Title-only B, Up and Down shortcuts.
-    if (pending_) {
-      output &= uint8_t(~3);
-      if (title && wait_ && --wait_ == 0) phase_ = pending_ == 2 ? 1 : 2;
-    }
-    return output;
-  }
-
- private:
-  uint8_t previous_ = 0, blocked_ = 0, pending_ = 0, wait_ = 0, phase_ = 0;
-};
-
-class MarioLauncher {
- public:
-  struct Inputs {
-    uint8_t buttons = 0;
-    bool complete = false;
-    bool failed = false;
-  };
-
-  void reset(bool supported) {
-    enabled_ = supported;
-    complete_ = failed_ = false;
-    frames_ = 0;
-    stable_ = 0;
-  }
-
-  Inputs step(bool playing) {
-    Inputs input;
-    if (!enabled_) return input;
-    if (complete_ || failed_) {
-      input.complete = complete_;
-      input.failed = failed_;
-      return input;
-    }
-    if (playing) {
-      if (++stable_ >= 8) complete_ = input.complete = true;
-    } else stable_ = 0;
-    if (++frames_ >= 900 && !complete_) failed_ = input.failed = true;
-    if (!playing && !complete_ && !failed_ && frames_ % 90u == 30u) input.buttons = 8;
-    return input;
-  }
-
- private:
-  uint16_t frames_ = 0;
-  uint8_t stable_ = 0;
-  bool enabled_ = false, complete_ = false, failed_ = false;
-};
-
 // Every output pixel copies one source pixel. The HUD remains fixed while the
 // 119-row world window follows the player while favoring the landing area.
 struct MarioViewport {
-  enum { width = 240, height = 135, MinWorldTop = 32, MaxWorldTop = 105, Headroom = 6 };
+  enum { width = 240, height = 135, WorldRows = 119, MinWorldTop = 32,
+         RestWorldTop = 105, MaxWorldTop = 240 - WorldRows, Headroom = 6 };
   int x = 0, y = 0;
 
   bool configure(int screenWidth, int screenHeight) {
@@ -168,7 +114,7 @@ struct MarioViewport {
     return true;
   }
 
-  void resetCamera() { worldTop_ = MaxWorldTop; invalidate(); }
+  void resetCamera() { worldTop_ = RestWorldTop; invalidate(); }
   void invalidate() { force_ = true; }
   int worldTop() const { return worldTop_; }
   bool rowChanged(int row) const {
@@ -176,16 +122,26 @@ struct MarioViewport {
   }
 
   // Call once before each emulated frame so all source strips share a camera.
-  void trackPlayer(int sourceY, int playerHeight, bool valid) {
+  void trackPlayer(int sourceY, int playerHeight, bool valid, int landingBottom = -1) {
     if (!valid || sourceY < 32 || sourceY > 239 || playerHeight < 1 || playerHeight > 64) return;
-    // Keep the window as low as possible while leaving six rows above Mario.
-    // It returns toward the landing area immediately as Mario descends.
-    worldTop_ = sourceY - Headroom;
+    // Preserve the usual ground height, but allow all 240 NES rows when a lift
+    // carries Mario lower. The landing surface stays in view whenever it and
+    // Mario fit together, including while jumping away from a moving lift.
+    const int headTop = sourceY - Headroom;
+    worldTop_ = headTop < RestWorldTop ? headTop : RestWorldTop;
+    int bottom = sourceY + playerHeight + 8;
+    if (landingBottom > bottom) bottom = landingBottom;
+    if (bottom > 240) bottom = 240;
+    const int landingTop = bottom - WorldRows;
+    if (landingTop > worldTop_) worldTop_ = landingTop;
+    if (worldTop_ > headTop) worldTop_ = headTop;
     if (worldTop_ < MinWorldTop) worldTop_ = MinWorldTop;
     if (worldTop_ > MaxWorldTop) worldTop_ = MaxWorldTop;
   }
 
-  void trackPlayer(const MarioPlayer& player) { trackPlayer(player.y, player.height, player.valid); }
+  void trackPlayer(const MarioPlayer& player) {
+    trackPlayer(player.y, player.height, player.valid, player.landingBottom);
+  }
   int sourceX(int column) const { return column + 8; }
   int sourceY(int row) const { return row < 16 ? row + 16 : worldTop_ + row - 16; }
   int targetRow(int sourceRow) const {
@@ -220,7 +176,7 @@ struct MarioViewport {
   }
 
  private:
-  int worldTop_ = MaxWorldTop;
+  int worldTop_ = RestWorldTop;
   uint32_t dirty_[5] = {};
   bool force_ = true;
 };

@@ -61,6 +61,65 @@ static void stableBodyCamera() {
   assert(!cartridge.sample(runtime).valid);
 }
 
+static void nativePlatformCamera() {
+  struct Runtime {
+    uint8_t ram[2048] = {};
+    bool ready() const { return true; }
+    uint8_t readRam(unsigned address) const { return ram[address]; }
+  } runtime;
+  runtime.ram[0x770] = 1;
+  runtime.ram[0x772] = 3;
+  runtime.ram[0x0e] = 8;
+  runtime.ram[0xb5] = 1;
+  runtime.ram[0xce] = 195;
+  runtime.ram[0x3ad] = 120;
+  runtime.ram[0x71a] = 3;
+  runtime.ram[0x71c] = 240;
+  runtime.ram[0x0f] = 1;
+  runtime.ram[0x16] = 0x25;
+  runtime.ram[0x6e] = 4;
+  runtime.ram[0x87] = 100;
+  runtime.ram[0xb6] = 1;
+  runtime.ram[0xcf] = 227;
+  flappy::MarioCartridge cartridge;
+  flappy::MarioCartridgeTestAccess::enable(cartridge);
+  MarioViewport view;
+  assert(view.configure(240,135));
+  auto player = cartridge.sample(runtime);
+  assert(player.landingBottom == 239);
+  view.trackPlayer(player);
+  assert(view.worldTop() == 120);
+  for (int row = 228; row < 236; ++row) assert(view.targetRow(row) >= 16);
+  // The platform stays below the jumping player instead of being cut off at
+  // the old row-223 limit. Native Mario coordinates remain untouched.
+  runtime.ram[0xce] = 131;
+  player = cartridge.sample(runtime);
+  assert(player.landingBottom == 239);
+  view.trackPlayer(player);
+  assert(view.worldTop() == 120 && view.targetRow(player.y) >= 16);
+  for (int row = 228; row < 236; ++row) assert(view.targetRow(row) >= 16);
+  runtime.ram[0x87] = 20;  // Platform outside Mario's horizontal reach.
+  assert(cartridge.sample(runtime).landingBottom == -1);
+  runtime.ram[0x87] = 100;
+  runtime.ram[0x16] = 6;  // An enemy cannot become a landing camera target.
+  assert(cartridge.sample(runtime).landingBottom == -1);
+  runtime.ram[0x16] = 0x25;
+  runtime.ram[0xb6] = 2;
+  assert(cartridge.sample(runtime).landingBottom == -1);
+  runtime.ram[0xb6] = 1;
+  runtime.ram[0xcf] = 80;  // Surface above Mario cannot hold the camera down.
+  assert(cartridge.sample(runtime).landingBottom == -1);
+  runtime.ram[0x16] = 0x2b;
+  runtime.ram[0xcf] = 99;  // Second small-lift surface is at 228.
+  runtime.ram[0xce] = 195;
+  assert(cartridge.sample(runtime).landingBottom == 239);
+  runtime.ram[0xcf] = 227; // Wrapped second surface is at 100.
+  runtime.ram[0xce] = 67;
+  assert(cartridge.sample(runtime).landingBottom == 111);
+  runtime.ram[0x0f] = 0;
+  assert(cartridge.sample(runtime).landingBottom == -1);
+}
+
 static void pixelsAndBounds() {
   MarioViewport viewport;
   assert(!viewport.configure(239, 135));
@@ -71,9 +130,9 @@ static void pixelsAndBounds() {
   std::vector<uint16_t> output(guard + 244 * 135 + guard, 0xa55a);
   std::vector<uint16_t> source(256 * 240);
   for (unsigned i = 0; i < source.size(); ++i) source[i] = i;
-  for (int camera : {105, 90, 32}) {
+  for (int camera : {121, 120, 105, 90, 32}) {
     viewport.resetCamera();
-    viewport.trackPlayer(camera + 6, 16, true);
+    viewport.trackPlayer(camera + 6, 16, true, camera + MarioViewport::WorldRows);
     assert(viewport.worldTop() == camera);
     for (int y = 0; y < 240; y += 8)
       assert(viewport.consume(0, y, 255, y + 7, source.data() + y * 256,
@@ -106,7 +165,7 @@ static void cameraAndPartialRectangles() {
   viewport.trackPlayer(190, 16, true);
   assert(viewport.worldTop() == 105);
   viewport.trackPlayer(239, 64, true);
-  assert(viewport.worldTop() == 105);
+  assert(viewport.worldTop() == 121);
   viewport.trackPlayer(32, 16, true);
   assert(viewport.worldTop() == 32);
   viewport.trackPlayer(200, 0, true);
@@ -121,6 +180,51 @@ static void cameraAndPartialRectangles() {
   assert(!viewport.consume(16, 32, 17, 33, block, output.data()));
   assert(output[16 * 240 + 8] == 1 && output[16 * 240 + 9] == 2);
   assert(output[17 * 240 + 8] == 3 && output[17 * 240 + 9] == 4);
+}
+
+static void ridingAndJumpingLiftDamage() {
+  MarioViewport viewport;
+  assert(viewport.configure(240,135));
+  const uint16_t sky = 0x1234, platform = 0xfd20, playerColor = 0xe1c4;
+  std::vector<uint16_t> source(256 * 240), output(240 * 135,0), lcd(240 * 135,0);
+  unsigned cameraMoves = 0;
+  int previous = viewport.worldTop();
+  for (unsigned frame = 0; frame < 720; ++frame) {
+    const int cycle = int(frame % 240);
+    const int platformTop = 105 + (cycle < 120 ? cycle : 240 - cycle);
+    const int jumpFrame = int(frame % 120);
+    const int jump = jumpFrame < 64 ? (jumpFrame < 32 ? jumpFrame * 2 : (64 - jumpFrame) * 2) : 0;
+    const int playerHeight = frame < 360 ? 32 : 16;
+    const int top = platformTop - playerHeight - jump;
+    viewport.trackPlayer(top,playerHeight,true,platformTop + 11);
+    cameraMoves += viewport.worldTop() != previous;
+    previous = viewport.worldTop();
+    std::fill(source.begin(),source.end(),sky);
+    for (int y = platformTop; y < platformTop + 8; ++y)
+      for (int x = 100; x < 148; ++x) source[y * 256 + x] = platform;
+    // The camera ignores OAM blinking, while each visible frame reaches LCD.
+    if (frame & 1) for (int y = top; y < top + playerHeight; ++y)
+      if (y >= 32 && y < 240) for (int x = 112; x < 128; ++x) source[y * 256 + x] = playerColor;
+    for (int y = 0; y < 240; y += 8) {
+      viewport.consume(0,y,255,y+7,source.data() + y*256,output.data());
+      for (int sy = y; sy < y+8; ++sy) {
+        const int dy = viewport.targetRow(sy);
+        if (dy >= 0 && viewport.rowChanged(dy))
+          std::copy(output.begin()+dy*240,output.begin()+(dy+1)*240,lcd.begin()+dy*240);
+      }
+    }
+    for (int row = 0; row < 135; ++row)
+      for (int x = 0; x < 240; ++x)
+        assert(lcd[row*240+x] == source[viewport.sourceY(row)*256+x+8]);
+    if (platformTop + 11 - (top - MarioViewport::Headroom) <= MarioViewport::WorldRows && top >= 38)
+      for (int y = platformTop; y < platformTop+8; ++y) {
+        const int dy = viewport.targetRow(y);
+        assert(dy >= 16 && lcd[dy*240+112-8] == platform);
+      }
+  }
+  assert(cameraMoves > 100);
+  viewport.trackPlayer(177,32,true);
+  assert(viewport.worldTop() == MarioViewport::RestWorldTop);
 }
 
 
@@ -189,88 +293,13 @@ static void alternatingSpriteFrames() {
   assert(phaseVisible[1] == 0 && phaseHidden[1] == 12);
 }
 
-static void controllerShortcuts() {
-  using Screen = flappy::MarioCartridge::Screen;
-  flappy::MarioController controller;
-  for (uint8_t trigger : {2, 16, 32}) {
-    controller.reset();
-    unsigned starts = 0;
-    for (int frame = 0; frame < 20; ++frame) {
-      const auto output = controller.step(Screen::Title, trigger);
-      starts += output == 8;
-      assert(!(output & trigger));
-    }
-    assert(starts == 1);
-    assert(controller.step(Screen::Playing, trigger) == 0);
-    assert(controller.step(Screen::Playing, 0) == 0);
-    assert(controller.step(Screen::Playing, trigger) == trigger);
-  }
-  for (bool staggered : {false, true}) {
-    controller.reset();
-    if (staggered) assert(!controller.step(Screen::Title, 2));
-    bool heldA = false, continued = false;
-    for (int frame = 0; frame < 20; ++frame) {
-      const auto output = controller.step(Screen::Title, frame < 3 ? 3 : 0);
-      if (output == 1) heldA = true;
-      if (output == 9) { assert(heldA); continued = true; }
-      assert(output != 8);
-    }
-    assert(continued);
-  }
-  controller.reset();
-  assert(!controller.step(Screen::GameOver, 3));
-  for (int frame = 0; frame < 100; ++frame) assert(!controller.step(Screen::Other, 0));
-  bool continued = false;
-  for (int frame = 0; frame < 20; ++frame) continued |= controller.step(Screen::Title, 0) == 9;
-  assert(continued);
-  controller.reset();
-  for (unsigned pad = 0; pad < 256; ++pad)
-    assert(controller.step(Screen::Playing, uint8_t(pad)) == pad);
-  // Buttons held before the title appears do not start a game on their own.
-  controller.reset();
-  assert(controller.step(Screen::Playing, 3) == 3);
-  for (int frame = 0; frame < 20; ++frame) assert(controller.step(Screen::Title, 3) != 9);
-}
-
-static void guardedLauncher() {
-  flappy::MarioCartridge cartridge;
-  std::vector<uint8_t> unsupported(524304, 0);
-  assert(!cartridge.configure(nullptr, 524304));
-  assert(!cartridge.configure(unsupported.data(), 12));
-  assert(!cartridge.configure(unsupported.data(), unsupported.size()));
-  assert(!cartridge.supported());
-  flappy::MarioLauncher launcher;
-  launcher.reset(false);
-  for (unsigned i = 0; i < 1000; ++i) {
-    const auto input = launcher.step(false);
-    assert(!input.buttons && !input.complete && !input.failed);
-  }
-  launcher.reset(true);
-  for (unsigned i = 1; i <= 120; ++i) {
-    const auto input = launcher.step(false);
-    assert(input.buttons == (i % 90 == 30 ? 8 : 0));
-    assert(!input.complete && !input.failed);
-  }
-  for (unsigned i = 0; i < 8; ++i) {
-    const auto input = launcher.step(true);
-    assert(!input.buttons && input.complete == (i == 7));
-  }
-  assert(launcher.step(false).complete);
-  launcher.reset(true);
-  for (unsigned i = 1; i <= 900; ++i) {
-    const auto input = launcher.step(false);
-    assert(input.failed == (i == 900));
-  }
-  assert(launcher.step(true).failed);
-}
-
 int main() {
   stableBodyCamera();
+  nativePlatformCamera();
   pixelsAndBounds();
   cameraAndPartialRectangles();
-  guardedLauncher();
   exactRowDamage();
   alternatingSpriteFrames();
-  controllerShortcuts();
-  std::cout << "Mario native pixel mapping, camera, alternating sprite damage, controller shortcuts, bounds and guarded launcher passed\n";
+  ridingAndJumpingLiftDamage();
+  std::cout << "Mario native pixels, lift riding and jump camera, alternating sprite damage and bounds passed\n";
 }
