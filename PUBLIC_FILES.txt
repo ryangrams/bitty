@@ -117,3 +117,11 @@ tools/test.py
 tools/test_nes.py
 firmware/flappy/rom_fingerprint.h
 tests/rom_fingerprint_test.cpp
+
+firmware/flappy/arcade_support.h
+firmware/flappy/galaga_game.h
+firmware/flappy/arkanoid_game.h
+tests/arcade_support_test.cpp
+tests/galaga_game_test.cpp
+tests/arkanoid_game_test.cpp
+docs/TILT_ARCADE.md

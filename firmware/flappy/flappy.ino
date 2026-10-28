@@ -39,8 +39,25 @@
 #include "generated_sounds.h"
 #include "stick_power.h"
 #include "inactivity.h"
+#include "arcade_support.h"
+#include "galaga_game.h"
+#include "arkanoid_game.h"
 
 flappy::AppModel app;
+flappy::GalagaGame* galagaGame = nullptr;
+flappy::ArkanoidGame* arkanoidGame = nullptr;
+flappy::ArcadeTilt arcadeTilt;
+flappy::ArcadeControls arcadeControls;
+bool arcadePaused = false, arcadePauseRequested = false;
+uint32_t handledArcadeCalibrate = 0, arcadeBestGalaga = 0, arcadeBestArkanoid = 0;
+float arcadeActivityTilt = 0;
+uint32_t arcadeFrames = 0;
+int16_t arcadeMove = 0;
+bool arcadeScoresDirty = false;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+int16_t diagnosticArcadeMove = 0;
+bool diagnosticArcadeFire = false;
+#endif
 flappy::coop::BleLink coopLink;
 flappy::controller::BleController* bluetoothPad = nullptr;
 flappy::NesRuntime nes;
@@ -180,7 +197,45 @@ uint32_t nonzeroRandom() {
   return value ? value : 1;
 }
 
-bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird; }
+bool nativeArcade() { return flappy::nativeArcadeGame(app.currentGame); }
+bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird && !nativeArcade(); }
+
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+void recordFrameTiming(uint32_t sourceFrames, uint8_t hz) {
+  if (!timingProbe) return;
+
+  const uint32_t stamp = micros();
+  if (!timingStart) {
+    timingStart = stamp;
+    timingSourceStart = sourceFrames;
+    const auto displayStats = asyncDisplay.stats();
+    timingPresentStart = displayStats.completedFrames;
+    timingPresentUs = displayStats.frameIntervalUs;
+  }
+  else {
+    const uint32_t interval = stamp - timingPrevious;
+    if (interval < timingMin) timingMin = interval;
+    if (interval > timingMax) timingMax = interval;
+    if (++timingIntervals == 500) {
+      timingProbe = false;
+      Serial.printf("TIMING game=%u hz=%u intervals=500 elapsed_us=%lu min_us=%lu max_us=%lu\n",
+          unsigned(app.currentGame), unsigned(hz),
+          (unsigned long)(stamp - timingStart), (unsigned long)timingMin, (unsigned long)timingMax);
+      asyncDisplay.drain();
+      const auto displayStats = asyncDisplay.stats();
+      Serial.printf("PRESENT source_frames=%lu completed_frames=%lu elapsed_us=%llu pending=%u\n",
+          (unsigned long)(sourceFrames - timingSourceStart),
+          (unsigned long)(displayStats.completedFrames - timingPresentStart),
+          (unsigned long long)(displayStats.frameIntervalUs - timingPresentUs), displayStats.pending);
+      Serial.printf("DISPLAY_TIMING intervals=%lu elapsed_us=%llu complete=%u\n",
+          (unsigned long)displayStats.probeIntervals,
+          (unsigned long long)displayStats.probeElapsedUs, unsigned(displayStats.probeComplete));
+    }
+  }
+  timingPrevious = stamp;
+
+}
+#endif
 
 void configureNesPerformance() {
   nes.setPcmEnabled(!piezoDriver);
@@ -411,6 +466,12 @@ void loadSettings() {
   app.setSleep(preferences.getUChar("sleepidx", 0));
   app.setSkin(preferences.getUChar("skin", 0));
   app.setGeometryLevel(preferences.getUChar("geolevel", 0));
+  app.setArcadeSensitivity(preferences.getUChar("arcsens", 1));
+  app.setArcadeAutoFire(preferences.getBool("arcauto", false));
+  app.setArcadeDifficulty(preferences.getUChar("arcdiff", 1));
+  arcadeTilt.calibrate(preferences.getFloat("arcneutral", 0));
+  arcadeBestGalaga = preferences.getUInt("galagabest", 0);
+  arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   const uint8_t boot = preferences.getUChar("bootgame", 0);
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
@@ -446,6 +507,9 @@ void saveSettings() {
   preferences.putUChar("sleepidx", app.settings.sleepIndex);
   preferences.putUChar("skin", app.settings.skinIndex);
   preferences.putUChar("geolevel", app.settings.geometryLevel);
+  preferences.putUChar("arcsens", app.settings.arcadeSensitivity);
+  preferences.putBool("arcauto", app.settings.arcadeAutoFire);
+  preferences.putUChar("arcdiff", app.settings.arcadeDifficulty);
   preferences.putBool("clock24", app.settings.clock24Hour);
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
@@ -931,6 +995,7 @@ void updateController(uint32_t nowMs) {
   uint16_t pressed = snapshot.pressed | (padButtons & ~previousPadButtons);
   previousPadButtons = padButtons;
   app.setControllerStatus(bluetoothPad->statusText());
+  if (justConnected && nativeArcade()) arcadeControls.blockAction();
   if (justConnected && app.menu.page == flappy::MenuPage::Controller) {
     app.closeMenu();
     pendingNesButtons = pendingControllerNesButtons = 0;
@@ -944,7 +1009,7 @@ void updateController(uint32_t nowMs) {
     padButtons &= uint16_t(~(Start | Select));
     if (!app.menuOpen() && (pressed & Down)) pendingControllerTetrisDrop = true;
   }
-  if ((pressed & Menu) || ((pressed & B) && (app.menuOpen() || !emulatedGame()))) {
+  if ((pressed & Menu) || ((pressed & B) && (app.menuOpen() || (!emulatedGame() && !nativeArcade())))) {
     app.openMenuFromController();
     pendingNesButtons = pendingControllerNesButtons = 0;
     nesSystemButton.reset(M5.BtnA.isPressed());
@@ -960,6 +1025,9 @@ void updateController(uint32_t nowMs) {
     }
     pendingPadAction |= (pressed & (A | Start)) != 0;
     pendingNesButtons = pendingControllerNesButtons = 0;
+  } else if (nativeArcade()) {
+    if (pressed & Start) arcadePauseRequested = true;
+    pendingPadAction |= (pressed & (A | B)) != 0;
   } else if (app.currentGame == flappy::GameTitle::FlappyBird) {
     pendingPadAction |= (pressed & (A | Start)) != 0;
   } else {
@@ -969,6 +1037,7 @@ void updateController(uint32_t nowMs) {
     pendingControllerNesButtons |= nesButtons(padButtons | pressed) & uint8_t(~nesButtons(padButtons & ~pressed));
   }
   menuSound(menuBefore, selectionBefore, false, nowMs);
+  if (nativeArcade() && menuBefore != app.menu.page) arcadeControls.blockAction();
   controllerDownHeld(nowMs);
 }
 
@@ -1032,6 +1101,129 @@ flappy::TetrisZero::Options zeroSettings(uint32_t linkedSeed = 0) {
   return options;
 }
 
+void saveArcadeScores() {
+  if (!arcadeScoresDirty) return;
+  preferences.putUInt("galagabest", arcadeBestGalaga);
+  preferences.putUInt("arkanbest", arcadeBestArkanoid);
+  arcadeScoresDirty = false;
+}
+
+void releaseNativeArcade() {
+  saveArcadeScores();
+  delete galagaGame;
+  delete arkanoidGame;
+  galagaGame = nullptr;
+  arkanoidGame = nullptr;
+  arcadePaused = arcadePauseRequested = false;
+  arcadeControls.reset();
+  arcadeTilt.reset();
+  arcadeMove = 0;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  diagnosticArcadeFire = false;
+  diagnosticArcadeMove = 0;
+#endif
+}
+
+void resetNativeArcade() {
+  saveArcadeScores();
+  if (galagaGame) galagaGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
+  if (arkanoidGame) arkanoidGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
+  arcadeFrames = 0;
+  arcadePaused = arcadePauseRequested = false;
+  arcadeControls.blockAction();
+  arcadeTilt.reset();
+}
+
+bool beginNativeArcade() {
+  if (M5.Display.width() != 135 || M5.Display.height() != 240) return false;
+  if (app.currentGame == flappy::GameTitle::Galaga) galagaGame = new (std::nothrow) flappy::GalagaGame;
+  else arkanoidGame = new (std::nothrow) flappy::ArkanoidGame;
+  if (!galagaGame && !arkanoidGame) return false;
+  resetNativeArcade();
+  return true;
+}
+
+void calibrateArcadeTilt(uint32_t nowMs) {
+  float ax, ay, az;
+  if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az) && arcadeTilt.calibrate(-ax)) {
+    tiltX = -ax;
+    haveTiltSample = true;
+    lastTiltSampleMs = nowMs;
+    arcadeActivityTilt = tiltX;
+    preferences.putFloat("arcneutral", arcadeTilt.neutral());
+    tiltZeroNotice = "Tilt zero saved";
+    playCue(flappy::PiezoCue::MenuSelect, nowMs);
+  } else tiltZeroNotice = "Tilt sensor unavailable";
+  tiltZeroNoticeMs = nowMs;
+  arcadeControls.blockAction();
+}
+
+void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
+  if (!galagaGame && !arkanoidGame) return;
+  if (arcadePauseRequested || (arcadePaused && actionEdge)) {
+    arcadePaused = !arcadePaused;
+    arcadePauseRequested = false;
+    arcadeControls.blockAction();
+    arcadeTilt.reset();
+    return;
+  }
+  if (arcadePaused) return;
+  using namespace flappy::controller;
+  const bool held = M5.BtnA.isPressed() || (controllerConnected && (padButtons & (A | B)))
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+      || diagnosticArcadeFire
+#endif
+      ;
+  int move = controllerConnected ? ((padButtons & Right) ? 1024 : 0) - ((padButtons & Left) ? 1024 : 0) :
+      arcadeTilt.update(tiltX, haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200, app.settings.arcadeSensitivity);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  if (diagnosticArcadeMove) move = diagnosticArcadeMove;
+#endif
+  flappy::ArcadeInput input = arcadeControls.input(move, held, actionEdge);
+  input.action = input.action || input.pressed;
+  arcadeMove = input.move;
+  if (app.settings.arcadeAutoFire && arcadeControls.armed()) input.action = true;
+  if (galagaGame) galagaGame->tick(input);
+  else arkanoidGame->tick(input);
+  ++arcadeFrames;
+  const uint32_t score = galagaGame ? galagaGame->score() : arkanoidGame->score();
+  uint32_t& best = galagaGame ? arcadeBestGalaga : arcadeBestArkanoid;
+  if (score > best) { best = score; arcadeScoresDirty = true; }
+  if (galagaGame ? galagaGame->gameOver() : arkanoidGame->gameOver()) saveArcadeScores();
+  const flappy::ArcadeCue cue = galagaGame ? galagaGame->takeCue() : arkanoidGame->takeCue();
+  switch (cue) {
+    case flappy::ArcadeCue::Fire: playCue(flappy::PiezoCue::Move, nowMs); break;
+    case flappy::ArcadeCue::Hit: playCue(flappy::PiezoCue::Lock, nowMs); break;
+    case flappy::ArcadeCue::Death: playCue(flappy::PiezoCue::Crash, nowMs); break;
+    case flappy::ArcadeCue::Power: playCue(flappy::PiezoCue::Coin, nowMs); break;
+    case flappy::ArcadeCue::Win: playCue(flappy::PiezoCue::LevelUp, nowMs); break;
+    default: break;
+  }
+}
+
+void drawNativeArcade() {
+  if (!galagaGame && !arkanoidGame) return;
+  asyncDisplay.drain();
+  const uint32_t drawnAt = micros();
+  if (galagaGame) galagaGame->draw(canvasStorage, arcadeBestGalaga);
+  else arkanoidGame->draw(canvasStorage, arcadeBestArkanoid);
+  if (arcadePaused) {
+    flappy::ArcadeCanvas canvas(canvasStorage);
+    canvas.rect(9, 103, 117, 37, 0);
+    canvas.text("PAUSED", 48, 110, 0xffff);
+    canvas.text("M5 TO RESUME", 24, 125, 0xffff);
+  }
+  if (asyncDisplay.submitBorrowedFrame(canvasStorage, 135, 240)) asyncDisplay.submitEndFrame();
+  else {
+    submitDisplay(0, 0, 135, 240, canvasStorage);
+    if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
+  }
+  recordLcdFrame(240, drawnAt);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  recordFrameTiming(arcadeFrames, 60);
+#endif
+}
+
 void handleGameRequest() {
   if (handledGameRequest == app.gameRequest) return;
   handledGameRequest = app.gameRequest;
@@ -1041,6 +1233,7 @@ void handleGameRequest() {
   timingProbe = false;
 #endif
   stopGameAudio();
+  releaseNativeArcade();
   invalidateDisplay();
   pendingNesButtons = pendingControllerNesButtons = 0;
   nesSystemButton.reset(M5.BtnA.isPressed());
@@ -1062,7 +1255,20 @@ void handleGameRequest() {
   gameMessageShown = 0;
   tetrisFrontendAt = 0;
   runtimeNotice = "";
-  if (emulatedGame()) {
+  if (nativeArcade()) {
+    nes.unload();
+    renderer->setBackgroundCacheEnabled(false);
+    if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
+    setNesDisplay(false);
+    if (!beginNativeArcade()) {
+      runtimeNotice = "Arcade memory/display unavailable";
+      app.setCurrentGame(flappy::GameTitle::FlappyBird);
+      handledGameRequest = app.gameRequest;
+      app.openMenu(flappy::MenuPage::ChangeGame);
+      releaseNativeArcade();
+      renderer->setBackgroundCacheEnabled(true);
+    }
+  } else if (emulatedGame()) {
     renderer->setBackgroundCacheEnabled(false);
     if (coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
     if (!piezoDriver && !nesAudioBuffers) nesAudioBuffers = new (std::nothrow) int16_t[3][512];
@@ -1197,6 +1403,7 @@ void handleTetrisRequests(uint32_t nowMs) {
   }
   if (handledRestart != app.gameRestartRequest) {
     handledRestart = app.gameRestartRequest;
+    if (nativeArcade()) resetNativeArcade();
     if (app.currentGame == flappy::GameTitle::Nes || app.currentGame == flappy::GameTitle::GeometryDash) {
       stopGameAudio();
       if (nativeMario) {
@@ -1327,12 +1534,13 @@ void updateTetrisLink(uint32_t nowMs) {
 
 void showFrame(uint32_t nowMs) {
   static bool previousMenu = false;
-  if (previousMenu != app.menuOpen()) invalidateDisplay();
+  if (previousMenu != app.menuOpen()) { asyncDisplay.drain(); invalidateDisplay(); }
   previousMenu = app.menuOpen();
   if (emulatedGame() && app.menuOpen()) gameMessageShown = 0;
   const bool landscape = (app.currentGame == flappy::GameTitle::Nes ||
       app.currentGame == flappy::GameTitle::GeometryDash) && !app.menuOpen();
   setNesDisplay(landscape);
+  if (nativeArcade() && !app.menuOpen()) { drawNativeArcade(); return; }
   if (tetrisLike() && !app.menuOpen()) {
     if (tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || zeroLaunching || zeroFinishedRound)) {
       static uint32_t lastLobby = UINT32_MAX - 1000;
@@ -1383,7 +1591,8 @@ void showFrame(uint32_t nowMs) {
   options.remoteRotation = remote.rotation;
   options.remoteFrame = remote.frame;
   options.remoteScore = remote.score;
-  options.notice = app.menu.page == flappy::MenuPage::TetrisControls &&
+  options.notice = (app.menu.page == flappy::MenuPage::TetrisControls ||
+      (nativeArcade() && app.menu.page == flappy::MenuPage::GameSettings)) &&
       *tiltZeroNotice && uint32_t(nowMs - tiltZeroNoticeMs) < 4000 ? tiltZeroNotice :
       app.menu.page == flappy::MenuPage::Controller && bluetoothPad
       ? bluetoothPad->detailText() : app.menu.page == flappy::MenuPage::TetrisLink ? coopLink.statusText() : runtimeNotice;
@@ -1425,6 +1634,10 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
     }
   }
   const uint8_t events = app.step(actionForApp, menuDown, nowMs);
+  if (nativeArcade() && menuWasOpen != app.menuOpen()) {
+    arcadeControls.blockAction();
+    arcadeTilt.reset();
+  }
   if (!menuWasOpen && app.menuOpen()) {
     invalidateDisplay();
     pendingNesButtons = pendingControllerNesButtons = 0;
@@ -1451,9 +1664,15 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   handleControllerRequest(nowMs);
   handleGameRequest();
   handleTetrisRequests(nowMs);
+  if (handledArcadeCalibrate != app.arcadeCalibrateRequest) {
+    handledArcadeCalibrate = app.arcadeCalibrateRequest;
+    calibrateArcadeTilt(nowMs);
+  }
+  if (nativeArcade() && !menuWasOpen && !app.menuOpen()) tickNativeArcade(actionEdge, nowMs);
   menuSound(menuBefore, selectionBefore, actionForApp, nowMs);
   applyOutputSettings();
   if ((events & flappy::GameOver) || app.menuOpen() || app.settingsDirty) saveScores();
+  if (app.menuOpen()) saveArcadeScores();
   saveSettings();
 }
 
@@ -1483,6 +1702,9 @@ flappy::PowerSource pollPowerSource(uint32_t nowMs, bool force = false) {
 }
 
 void clearPendingInput() {
+  arcadeControls.blockAction();
+  arcadeTilt.reset();
+  arcadePauseRequested = false;
   pendingAction = pendingPadAction = false;
   pendingNesButtons = pendingControllerNesButtons = tetrisHeld = geometryHeld = 0;
   geometryButtons.reset();
@@ -1497,6 +1719,7 @@ void clearPendingInput() {
 
 bool sleepOnBattery() {
   if (pollPowerSource(millis(), true) != flappy::PowerSource::Battery) return false;
+  saveArcadeScores();
   const bool resumeController = bluetoothPad && bluetoothPad->canResumePeer();
   const bool linked = coopLink.session().role() != flappy::coop::Role::Off;
   if (linked) {
@@ -1653,6 +1876,18 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5FLAPPY")) {
       app.setCurrentGame(flappy::GameTitle::FlappyBird);
       app.closeMenu(); handleGameRequest();
+    } else if (!strcmp(command, "M5GALAGA") || !strcmp(command, "M5ARKANOID")) {
+      app.setCurrentGame(!strcmp(command, "M5GALAGA") ? flappy::GameTitle::Galaga : flappy::GameTitle::Arkanoid);
+      app.closeMenu(); handleGameRequest();
+    } else if (!strncmp(command, "M5ARCADE ", 9)) {
+      int move = 0; unsigned fire = 0;
+      if (sscanf(command + 9, "%d %u", &move, &fire) == 2 && move >= -1024 && move <= 1024 && fire <= 1) {
+        diagnosticArcadeMove = int16_t(move);
+        pendingPadAction |= fire && !diagnosticArcadeFire;
+        diagnosticArcadeFire = fire;
+      }
+    } else if (!strcmp(command, "M5PAUSE")) {
+      if (nativeArcade()) arcadePauseRequested = true;
     } else if (!strcmp(command, "M5GEOMETRY")) {
       app.setCurrentGame(flappy::GameTitle::GeometryDash);
       app.closeMenu(); handleGameRequest();
@@ -1808,6 +2043,12 @@ void serviceDiagnostics() {
             unsigned(flappy::TetrisZero::level(nes)), unsigned(flappy::TetrisZero::level(nes, 2)),
             unsigned(flappy::TetrisZero::active(nes)), unsigned(flappy::TetrisZero::active(nes, 2)),
             unsigned(zeroLaunching), (unsigned long)coopLink.zeroFrame());
+      if (nativeArcade()) Serial.printf("ARCADE frames=%lu paused=%u stage=%u score=%lu over=%u move=%d armed=%u\n",
+          (unsigned long)arcadeFrames, unsigned(arcadePaused),
+          unsigned(galagaGame ? galagaGame->stage() : arkanoidGame ? arkanoidGame->stage() : 0),
+          (unsigned long)(galagaGame ? galagaGame->score() : arkanoidGame ? arkanoidGame->score() : 0),
+          unsigned(galagaGame ? galagaGame->gameOver() : arkanoidGame ? arkanoidGame->gameOver() : false),
+          int(arcadeMove), unsigned(arcadeControls.armed()));
       Serial.printf("SOUND driver=%s ready=%u volume=%u frequency=%u duty=%u override=%u active=%u\n",
           piezoDriver ? "GPIO2-LEDC" : "M5Speaker", unsigned(soundReady), unsigned(app.settings.volumeIndex),
           unsigned(soundFrequency), unsigned(soundDuty), unsigned(soundOverride), unsigned(piezo.active()));
@@ -1923,6 +2164,27 @@ void loop() {
         !tetrisLaunching && !zeroLaunching, app.settings.tetrisControls);
     tetrisHeld |= tilt.held;
     pendingNesButtons |= tilt.pressed;
+  }
+  if (nativeArcade() && !controllerConnected && M5.Imu.isEnabled() &&
+      (!haveTiltSample || uint32_t(nowMs - lastTiltPollMs) >= 16)) {
+    lastTiltPollMs = nowMs;
+    float ax, ay, az;
+    if (M5.Imu.getAccel(&ax, &ay, &az)) {
+      tiltX = -ax;
+      haveTiltSample = true;
+      lastTiltSampleMs = nowMs;
+      if (fabsf(tiltX - arcadeActivityTilt) > .025f) {
+        arcadeActivityTilt = tiltX;
+        inactivity.activity(nowMs);
+      }
+    }
+  }
+  const auto arcadeSide = arcadeControls.update(M5.BtnB.isPressed(), M5.BtnPWR.wasClicked(),
+      nativeArcade() && !app.menuOpen(), nowMs);
+  if (arcadeSide.pause) arcadePauseRequested = true;
+  if (arcadeSide.zero) {
+    calibrateArcadeTilt(nowMs);
+    arcadePaused = true;
   }
   const uint32_t now = micros();
   const bool inputActive = M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnPWR.wasClicked() ||
@@ -2175,37 +2437,7 @@ void loop() {
             recordLcdFrame(135, drawnAt);
           }
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
-          if (stepped && timingProbe) {
-            const uint32_t stamp = micros();
-            if (!timingStart) {
-              timingStart = stamp;
-              timingSourceStart = nesRenderedFrames;
-              const auto displayStats = asyncDisplay.stats();
-              timingPresentStart = displayStats.completedFrames;
-              timingPresentUs = displayStats.frameIntervalUs;
-            }
-            else {
-              const uint32_t interval = stamp - timingPrevious;
-              if (interval < timingMin) timingMin = interval;
-              if (interval > timingMax) timingMax = interval;
-              if (++timingIntervals == 500) {
-                timingProbe = false;
-                Serial.printf("TIMING game=%u hz=%u intervals=500 elapsed_us=%lu min_us=%lu max_us=%lu\n",
-                    unsigned(app.currentGame), unsigned(nes.frameRate()),
-                    (unsigned long)(stamp - timingStart), (unsigned long)timingMin, (unsigned long)timingMax);
-                asyncDisplay.drain();
-                const auto displayStats = asyncDisplay.stats();
-                Serial.printf("PRESENT source_frames=%lu completed_frames=%lu elapsed_us=%llu pending=%u\n",
-                    (unsigned long)(nesRenderedFrames - timingSourceStart),
-                    (unsigned long)(displayStats.completedFrames - timingPresentStart),
-                    (unsigned long long)(displayStats.frameIntervalUs - timingPresentUs), displayStats.pending);
-                Serial.printf("DISPLAY_TIMING intervals=%lu elapsed_us=%llu complete=%u\n",
-                    (unsigned long)displayStats.probeIntervals,
-                    (unsigned long long)displayStats.probeElapsedUs, unsigned(displayStats.probeComplete));
-              }
-            }
-            timingPrevious = stamp;
-          }
+          if (stepped) recordFrameTiming(nesRenderedFrames, nes.frameRate());
 #endif
           if (stepped) {
             updateNesSound(input1, input2, millis());
@@ -2231,9 +2463,11 @@ void loop() {
   serviceSound(millis());
   static uint32_t lastIdleMs = 0;
   const bool activeNes = emulatedGame() && !app.menuOpen() && nes.ready();
-  if (activeNes) {
+  const bool activeArcade = nativeArcade() && !app.menuOpen();
+  if (activeNes || activeArcade) {
+    const uint32_t deadline = activeNes ? nextNesTick : nextTick;
     int32_t remaining;
-    while ((remaining = int32_t(nextNesTick - micros())) > 1250) {
+    while ((remaining = int32_t(deadline - micros())) > 1250) {
       delay(1);
       lastIdleMs = millis();
     }

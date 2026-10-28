@@ -6,12 +6,18 @@
 
 namespace flappy {
 
-enum class GameTitle : uint8_t { FlappyBird, Nes, Tetris, TetrisZero, GeometryDash };
-constexpr uint8_t GameTitleCount = 5;
-constexpr uint8_t VisibleGameCount = 4;
+enum class GameTitle : uint8_t {
+  FlappyBird = 0, Nes = 1, Tetris = 2, TetrisZero = 3, GeometryDash = 4, Galaga = 5, Arkanoid = 6
+};
+constexpr uint8_t GameTitleCount = 7;
+constexpr uint8_t VisibleGameCount = 6;
+
+inline bool nativeArcadeGame(GameTitle title) {
+  return title == GameTitle::Galaga || title == GameTitle::Arkanoid;
+}
 
 inline GameTitle visibleGameTitle(uint8_t index) {
-  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash};
+  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid};
   return index < VisibleGameCount ? titles[index] : GameTitle(UINT8_MAX);
 }
 
@@ -22,6 +28,8 @@ inline uint8_t visibleGameIndex(GameTitle title) {
     case GameTitle::Tetris:
     case GameTitle::TetrisZero: return 2;
     case GameTitle::GeometryDash: return 3;
+    case GameTitle::Galaga: return 4;
+    case GameTitle::Arkanoid: return 5;
     default: return UINT8_MAX;
   }
 }
@@ -67,6 +75,9 @@ struct Settings {
   bool clock24Hour = true;
   uint8_t coopRole = 0;
   uint8_t geometryLevel = 0;
+  uint8_t arcadeSensitivity = 1;
+  bool arcadeAutoFire = false;
+  uint8_t arcadeDifficulty = 1;
 };
 
 struct MenuState {
@@ -125,6 +136,7 @@ class AppModel {
   uint32_t gameRequest = 0;
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
+  uint32_t arcadeCalibrateRequest = 0;
   uint32_t tetrisRequest = 0;
   uint32_t tetrisZeroRequest = 0;
   uint32_t tetrisCalibrateRequest = 0;
@@ -179,7 +191,26 @@ class AppModel {
     settings.geometryLevel = level;
   }
 
+  void setArcadeSensitivity(uint8_t sensitivity) {
+    if (sensitivity > 2) sensitivity = 1;
+    if (settings.arcadeSensitivity != sensitivity) settingsDirty = true;
+    settings.arcadeSensitivity = sensitivity;
+  }
+
+  void setArcadeAutoFire(bool enabled) {
+    if (settings.arcadeAutoFire != enabled) settingsDirty = true;
+    settings.arcadeAutoFire = enabled;
+  }
+
+  void setArcadeDifficulty(uint8_t difficulty) {
+    if (difficulty > 2) difficulty = 1;
+    if (settings.arcadeDifficulty != difficulty) settingsDirty = true;
+    settings.arcadeDifficulty = difficulty;
+  }
+
   const char* gameLabel(GameTitle title) const {
+    if (title == GameTitle::Galaga) return "Galaga";
+    if (title == GameTitle::Arkanoid) return "Arkanoid";
     if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
     if (title == GameTitle::GeometryDash) return geometryDashAvailable_ ? "Geometry Dash" : "Geometry Dash: no ROM";
     if (title == GameTitle::Tetris || title == GameTitle::TetrisZero)
@@ -471,7 +502,7 @@ class AppModel {
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return VisibleGameCount + 1;
       case MenuPage::GameSettings:
-        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : currentGame == GameTitle::GeometryDash ? 3 : 2;
+        return currentGame == GameTitle::FlappyBird ? 5 : currentGame == GameTitle::Tetris ? 9 : currentGame == GameTitle::TetrisZero ? 8 : currentGame == GameTitle::GeometryDash ? 3 : nativeArcadeGame(currentGame) ? 6 : 2;
       case MenuPage::GeometryLevel: return GeometryLevelCount + 1;
       case MenuPage::Modes: return uint8_t(Mode::Count) + 1;
       case MenuPage::Brightness: return 4;
@@ -515,6 +546,10 @@ class AppModel {
           return labels[index];
         }
         if (currentGame == GameTitle::GeometryDash) return index == 0 ? "Level" : "Restart level";
+        if (nativeArcadeGame(currentGame)) {
+          constexpr const char* labels[] = {"Restart game", "Zero tilt", "Sensitivity", "Auto fire", "Difficulty"};
+          return labels[index];
+        }
         return "Restart game";
       case MenuPage::GeometryLevel: return geometryLevelLabel(index);
       case MenuPage::TetrisLevel:
@@ -608,7 +643,14 @@ class AppModel {
           if (index == 3) return settings.tetrisControls == 1 ? "Tilt rotate" : "Tilt move";
           if (index == 4) return tetrisLinkRole == 1 ? "Host" : tetrisLinkRole == 2 ? "Join" : "Off";
           if (index == 5) return settings.tetrisPlayers == 2 ? "6px (2P)" : settings.tetrisLarge ? "Large 11px" : "Native 8px";
-        } else if (currentGame == GameTitle::GeometryDash && index == 0) return geometryLevelLabel(settings.geometryLevel);
+        } else if (currentGame == GameTitle::GeometryDash) {
+          if (index == 0) return geometryLevelLabel(settings.geometryLevel);
+        } else if (nativeArcadeGame(currentGame)) {
+          if (index == 1) return "Hold unit steady";
+          if (index == 2) return settings.arcadeSensitivity == 0 ? "Fine" : settings.arcadeSensitivity == 2 ? "Fast" : "Normal";
+          if (index == 3) return settings.arcadeAutoFire ? "On" : "Off";
+          if (index == 4) return settings.arcadeDifficulty == 0 ? "Easy" : settings.arcadeDifficulty == 2 ? "Hard" : "Normal";
+        }
         break;
       case MenuPage::GeometryLevel: return index == settings.geometryLevel ? "*" : "";
       case MenuPage::TetrisLevel: return index == (currentGame == GameTitle::TetrisZero ? settings.tetrisZeroLevel : settings.tetrisLevel) ? "*" : "";
@@ -742,7 +784,7 @@ class AppModel {
   mutable char valueBuffer_[12] = {};
 
   bool gameAvailable(GameTitle title) const {
-    return title == GameTitle::FlappyBird || (title == GameTitle::Nes && nesAvailable_) ||
+    return title == GameTitle::FlappyBird || nativeArcadeGame(title) || (title == GameTitle::Nes && nesAvailable_) ||
            (title == GameTitle::Tetris && tetrisAvailable_) ||
            (title == GameTitle::TetrisZero && tetrisZeroAvailable_) ||
            (title == GameTitle::GeometryDash && geometryDashAvailable_);
@@ -865,6 +907,12 @@ class AppModel {
         } else if (currentGame == GameTitle::GeometryDash) {
           if (menu.selection == 0) openMenu(MenuPage::GeometryLevel);
           else requestGameRestart();
+        } else if (nativeArcadeGame(currentGame)) {
+          if (menu.selection == 0) requestGameRestart();
+          else if (menu.selection == 1) ++arcadeCalibrateRequest;
+          else if (menu.selection == 2) setArcadeSensitivity(uint8_t((settings.arcadeSensitivity + 1) % 3));
+          else if (menu.selection == 3) setArcadeAutoFire(!settings.arcadeAutoFire);
+          else if (menu.selection == 4) setArcadeDifficulty(uint8_t((settings.arcadeDifficulty + 1) % 3));
         } else requestGameRestart();
         break;
       case MenuPage::GeometryLevel:

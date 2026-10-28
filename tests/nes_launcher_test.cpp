@@ -77,7 +77,12 @@ unsigned audioStops = 0;
 void stopGameAudio() { ++audioStops; }
 void invalidateDisplay() {}
 void stopCoop() {}
-bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird; }
+unsigned nativeReleases = 0, nativeBegins = 0;
+bool nativeBeginOk = false;
+void releaseNativeArcade() { ++nativeReleases; }
+bool beginNativeArcade() { ++nativeBegins; return nativeBeginOk; }
+bool nativeArcade() { return flappy::nativeArcadeGame(app.currentGame); }
+bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird && !nativeArcade(); }
 void setNesDisplay(bool enabled) { landscape = enabled; }
 void nesVideo(void*, int, int, int, int, const uint16_t*) {}
 void nesAudio(void*, const int16_t*, size_t, uint32_t) {}
@@ -168,6 +173,35 @@ static void checkGeometrySlot() {
   assert(!nes.ready());
 }
 
+static void nativeGamesReleaseTheEmulatorAndHandleFailure() {
+  auto mario = cartridge(false, false, 0);
+  FlappyRom::data = mario.data(); FlappyRom::length = mario.size();
+  for (const auto title : {flappy::GameTitle::Galaga, flappy::GameTitle::Arkanoid}) {
+    app = flappy::AppModel();
+    app.setNesAvailable(true);
+    app.setCurrentGame(flappy::GameTitle::Nes);
+    handledGameRequest = UINT32_MAX;
+    handleGameRequest();
+    assert(nes.ready());
+    nativeBeginOk = true;
+    const unsigned begins = nativeBegins, releases = nativeReleases;
+    app.setCurrentGame(title);
+    handleGameRequest();
+    assert(app.currentGame == title && !nes.ready() && !landscape);
+    assert(!nativeMario && !nativeGeometry && !renderer->cacheEnabled);
+    assert(nativeBegins == begins + 1 && nativeReleases == releases + 1);
+    app.setCurrentGame(flappy::GameTitle::FlappyBird);
+    handleGameRequest();
+    assert(renderer->cacheEnabled);
+    nativeBeginOk = false;
+    app.setCurrentGame(title);
+    handleGameRequest();
+    assert(app.currentGame == flappy::GameTitle::FlappyBird && !nes.ready());
+    assert(app.menu.page == flappy::MenuPage::ChangeGame && renderer->cacheEnabled);
+    assert(std::strcmp(runtimeNotice, "Arcade memory/display unavailable") == 0);
+  }
+}
+
 int main() {
   geometryPresentation = new GeometryPresentation;
   checkLoad(false, false, 0);
@@ -178,6 +212,7 @@ int main() {
   checkLoad(true, false, 37);
   geometryPresentation = new GeometryPresentation;
   checkGeometrySlot();
+  nativeGamesReleaseTheEmulatorAndHandleFailure();
   assert(nesAudioBuffers == nullptr);
   std::cout << "Firmware launcher accepts NTSC, rejects PAL and resets game state\n";
 }
