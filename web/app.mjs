@@ -8,6 +8,7 @@ function message(id, text) { $(id).textContent = text; }
 function buttons() {
   $('connect').disabled = busy || !('serial' in navigator) || !isSecureContext;
   $('disconnect').disabled = busy;
+  $('sync-clock').disabled = busy || !('serial' in navigator) || !isSecureContext;
   $('install-cart').disabled = busy || !client || !$('rights').checked || !$('file').files.length;
   for (const button of $('cartridges').querySelectorAll('button')) button.disabled = busy || button.dataset.quarantined === 'true';
 }
@@ -73,6 +74,21 @@ $('connect').addEventListener('click', () => operation(async () => {
   $('connect').hidden = true; $('disconnect').hidden = false;
   message('connection', 'Connected. The M5 is in USB library mode.');
   await list();
+  try { await syncClock(next); } catch (error) { message('clock-status',error.message); }
+}));
+async function syncClock(connection) {
+  const date = await connection.syncClock();
+  const label = new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'medium'}).format(date);
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  message('clock-status',`Clock set to ${label} (${zone}).`);
+}
+$('sync-clock').addEventListener('click', () => operation(async () => {
+  if (client) { await syncClock(client); return; }
+  // This short session leaves the current game running and needs no cartridge storage.
+  const port = await navigator.serial.requestPort();
+  const next = new LibraryClient(port);
+  try { await next.open({library:false}); await syncClock(next); }
+  finally { await next.close(); }
 }));
 $('disconnect').addEventListener('click', () => operation(() => disconnect()));
 $('file').addEventListener('change', () => { if ($('file').files[0]) $('title').value = cleanTitle($('file').files[0].name); buttons(); });

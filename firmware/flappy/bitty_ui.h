@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "battery_status.h"
 #include "menu_font.h"
+#include "bitty_logo.h"
 
 namespace flappy {
 namespace BittyUi {
@@ -27,10 +28,10 @@ inline void rect(uint16_t* output, int width, int height, int x, int y,
     for (int col = left; col < right; ++col) output[row * width + col] = ink;
 }
 
-// The five pieces match the pixel mark used on bitty.games.
+// The website mark has a continuous four-row stem and an open upper bowl.
 inline void mark(uint16_t* output, int width, int height, int x, int y,
                  int cell, int gap, uint32_t elapsed = SplashMs, bool animate = false) {
-  const uint8_t xs[] = {0,0,0,1,2}, ys[] = {0,1,2,1,2}, spans[] = {1,1,1,2,1};
+  const uint8_t xs[] = {0,1,2,1,2}, ys[] = {0,1,1,3,2}, spans[] = {4,1,1,1,2};
   for (unsigned i = 0; i < 5; ++i) {
     const uint32_t start = i * 55;
     if (animate && elapsed < start) continue;
@@ -40,16 +41,27 @@ inline void mark(uint16_t* output, int width, int height, int x, int y,
     const int dx = animate && i % 2 ? displacement : 0;
     const int dy = animate && !(i % 2) ? -displacement : 0;
     rect(output,width,height,x + xs[i] * (cell + gap) + dx,
-         y + ys[i] * (cell + gap) + dy, spans[i] * cell + (spans[i] - 1) * gap,
-         cell, i == 4 ? Amber : Glow);
+         y + ys[i] * (cell + gap) + dy,cell,spans[i] * cell + (spans[i] - 1) * gap,Glow);
+  }
+}
+
+inline void bitmap(uint16_t* output, int width, int height, int x, int y,
+                   const char* pixels, int w, int h, int reveal = 32767) {
+  if (!output) return;
+  for (int row = 0; row < h; ++row) for (int col = 0; col < w && col < reveal; ++col) {
+    const int dx = x + col, dy = y + row;
+    if (dx >= 0 && dy >= 0 && dx < width && dy < height) {
+      const char pixel = pixels[row * w + col];
+      const unsigned index = pixel <= '9' ? unsigned(pixel - '0') : unsigned(pixel - 'a' + 10);
+      if (index < 15) output[dy * width + dx] = BittyLogo::Palette[index];
+    }
   }
 }
 
 inline void header(uint16_t* output, int width, int height, const BatteryStatus& battery) {
   rect(output,width,height,4,10,width - 8,21,Black);
-  mark(output,width,height,10,14,3,1);
-  MenuFont::draw(output,width,height,"bitty",26,12,Text);
-  MenuFont::draw(output,width,height,".",56,12,Amber);
+  mark(output,width,height,10,12,3,1);
+  bitmap(output,width,height,26,13,BittyLogo::HeaderPixels,BittyLogo::HeaderWidth,BittyLogo::HeaderHeight);
   const int x = width - 60;
   if (battery.source == PowerSource::External) {
     // A plug means external power. It does not claim that charging is active.
@@ -76,11 +88,12 @@ inline void header(uint16_t* output, int width, int height, const BatteryStatus&
 inline void splash(uint16_t* output, int width, int height, uint32_t elapsed) {
   rect(output,width,height,0,0,width,height,Black);
   const int center = height / 2;
-  mark(output,width,height,(width - 33) / 2,center - 55,9,3,elapsed,true);
-  const int x = (width - 72) / 2;
-  const int letters = elapsed < 280 ? 0 : elapsed < 520 ? int((elapsed - 280) / 40) : 6;
-  MenuFont::draw(output,width,height,"bitty",x,center - 4,Text,2,letters < 5 ? letters : 5);
-  if (letters >= 6) MenuFont::draw(output,width,height,".",x + 60,center - 4,Amber,2,1);
+  const int total = 20 + 8 + BittyLogo::SplashWidth;
+  const int x = (width - total) / 2, y = center - 30;
+  mark(output,width,height,x,y,6,1,elapsed,true);
+  const int reveal = elapsed < 280 ? 0 : int((elapsed - 280) * BittyLogo::SplashWidth / 300);
+  bitmap(output,width,height,x + 28,y + (27 - BittyLogo::SplashHeight) / 2,
+      BittyLogo::SplashPixels,BittyLogo::SplashWidth,BittyLogo::SplashHeight,reveal);
   MenuFont::draw(output,width,height,"bitty.games",(width - 66) / 2,center + 34,Muted);
   for (int i = 0; i < 5; ++i)
     rect(output,width,height,width / 2 - 18 + i * 8,center + 69,4,3,

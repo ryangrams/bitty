@@ -1,5 +1,8 @@
 #include "../firmware/flappy/game_home.h"
 #include <assert.h>
+#include "../firmware/flappy/stick_input.h"
+#include "../firmware/flappy/menu_font.h"
+#include <string.h>
 #include <iostream>
 #include <set>
 
@@ -80,5 +83,21 @@ static void frozenGameplayAndBoot() {
 
 int main() {
   lifecycle(); cycleAvailabilityAndCartridges(); frozenGameplayAndBoot();
+  for (bool s3 : {false,true}) for (bool home : {false,true}) for (bool menu : {false,true}) {
+    assert(StickInput::nextGame(s3,home,menu,true,false) == (home && !menu && !s3));
+    assert(StickInput::nextGame(s3,home,menu,false,true) == (home && !menu && s3));
+    assert(!StickInput::nextGame(s3,home,menu,false,false));
+    assert(MenuFont::textWidth(StickInput::homeLabel(s3)) <= 135 - 26);
+  }
+  assert(!strcmp(StickInput::nextLabel(true),"RIGHT NEXT"));
+  assert(StickInput::horizontalTilt(false,.5f,-.25f) == -.5f);
+  assert(StickInput::horizontalTilt(true,.5f,-.25f) == .25f);
+  assert(StickInput::horizontalTilt(true,.9f,0) == 0);
+  assert(StickInput::horizontalTilt(true,0,-.6f) > 0); // Right edge lowered.
+  assert(StickInput::horizontalTilt(true,0,.6f) < 0);
+  assert(strcmp(StickInput::neutralKey(true,true),StickInput::neutralKey(false,true)));
+  assert(!strcmp(StickInput::neutralKey(false,true),"tetneutral"));
+  assert(!strcmp(StickInput::neutralKey(false,false),"arcneutral"));
+  assert(StickInput::horizontalTilt(false,0,.9f) == 0);
   std::cout << "Game homes: boot, menu return, same-game selection, cartridge cycling, missing games and frozen scores passed\n";
 }

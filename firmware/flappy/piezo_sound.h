@@ -8,7 +8,7 @@ namespace flappy {
 // These short cue patterns were authored for this project.
 enum class PiezoCue : uint8_t {
   Flap, Point, Crash, MenuMove, MenuSelect, MenuBack, Preview,
-  Rotate, Move, Drop, Lock, LineClear, LevelUp, GameOver, Jump, Coin, Action, Start
+  Rotate, Move, Drop, Lock, LineClear, LevelUp, GameOver, Jump, Coin, Action, Start, Boot
 };
 
 struct PiezoTone {
@@ -40,7 +40,7 @@ class PiezoSound {
   }
 
   bool play(PiezoCue cue, uint32_t nowMs) {
-    if (quiet_ || !volumeIndex_ || uint8_t(cue) > uint8_t(PiezoCue::Start)) return false;
+    if (quiet_ || !volumeIndex_ || uint8_t(cue) > uint8_t(PiezoCue::Boot)) return false;
     const uint8_t rank = priority(cue);
     if (active_ && rank < priority_) return false;
     if (active_ && cue == cue_ && uint32_t(nowMs - startedMs_) < 35u) return false;
@@ -66,6 +66,7 @@ class PiezoSound {
       case PiezoCue::Coin: add(2700, 55); add(3600, 100); break;
       case PiezoCue::Action: add(2300, 25); add(1800, 30); break;
       case PiezoCue::Start: add(2000, 45); add(2600, 45); add(3300, 75); break;
+      case PiezoCue::Boot: add(1047, 85); add(1568, 70); add(1319, 75); add(2093, 150); break;
       default: return false;
     }
     active_ = true;

@@ -81,3 +81,7 @@ Flappy Bird identifies the original game and compatible asset format. M5Stack an
 ## Browser installer
 
 The generated installer bundles ESP Web Tools 10.4.0 (Apache-2.0), esptool-js and their locked browser dependencies. Their notices and available license texts accompany the built site. The source package carries the dependency lock and build procedure. The flasher uses preconfigured ESP32 image headers and a manifest that leaves Wi-Fi provisioning disabled. See https://github.com/esphome/esp-web-tools and https://github.com/espressif/esptool-js.
+
+## Bitty wordmark
+
+The splash and menu wordmarks use native-size rasterizations of the Archivo face used on bitty.games. The rasterized letters retain the [SIL Open Font License 1.1](LICENSES/Archivo-OFL-1.1.txt). `tools/generate_bitty_logo.py` retrieves the checksum-pinned website font, or accepts a matching local copy, and regenerates the stored pixels. The four-row pixel mark, spacing, colors and violet dot follow the website logo source.

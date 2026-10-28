@@ -16,9 +16,9 @@ Menu footers name the physical controls: right advances, M5 selects, and holding
 
 ## Startup
 
-Five pieces assemble into the Bitty pixel mark. The name follows, with `bitty.games` below. The sequence lasts about 2.4 seconds, including an extra 1.5-second hold on the finished mark. Either front or right button can skip after its first 0.16 seconds. Release the button before playing. The saved boot choice then launches. Ordinary sleep resume retains the game and does not replay the splash.
+Five pieces assemble into the website’s four-row violet pixel mark. The Archivo wordmark uses the website’s spacing and violet dot, with `bitty.games` below. A short four-note chip sound accompanies startup and follows the saved volume, including Off. The sequence lasts about 2.4 seconds, including an extra 1.5-second hold on the finished mark. Either front or right button can skip after its first 0.16 seconds. Release the button before playing. The saved boot choice then launches. Ordinary sleep resume retains the game and does not replay the splash.
 
-The animation reuses the existing canvas and asynchronous display buffers. It adds no image asset, framebuffer or font dependency. The Terminus font retains its existing OFL notice.
+The animation reuses the existing canvas and asynchronous display buffers. It uses a small native-size wordmark bitmap and adds no framebuffer. `tools/generate_bitty_logo.py` rebuilds the lettering from the checksum-pinned website font. Archivo and Terminus retain their OFL notices.
 
 ## Verification
 

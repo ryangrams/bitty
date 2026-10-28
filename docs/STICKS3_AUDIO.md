@@ -47,4 +47,10 @@ Volume choices remain Off, 20%, 40%, 60%, 80% and Full. On StickS3, battery or u
 4. Open and close menus, switch games, enter and exit USB management, disconnect and reconnect a controller, and sleep then wake on battery. Audio must stop and recover correctly.
 5. Verify the battery cap and power detection physically. Check for resets and distortion with representative audio.
 
-The original StickC/Plus GPIO2 buzzer path stays separate. A unit with no fitted speaker cannot reproduce speaker PCM through software alone. The S3 has two programmable GPIO buttons (11 and 12); its reset button needs its own hardware review before assigning any game action.
+The original StickC/Plus GPIO2 buzzer path stays separate. A unit with no fitted speaker cannot reproduce speaker PCM through software alone. The S3 has front M5 (GPIO11), right (GPIO12) and a PMIC-managed left power key. Its default single tap resets the unit. The [M5PM1 v1.9 manual](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/1207/M5PM1_Datasheet_EN.pdf), Button Configuration, documents how to disable that action. Startup checks the PMIC identity and revision, preserves its long-hold download settings, disables single-reset and double-power-off with masked writes, and verifies the values. Supported maps are hardware 5 with firmware 6 or S. Unknown maps or failed writes use right-tap home cycling and show RIGHT NEXT in the footer.
+
+With successful setup, left taps cycle homes, rotate left in the default Tetris layout and fire in Mario. Front M5 and right keep their game controls. The immediate button-status register supplies taps, avoiding delayed single/double-click classification. **Sleep > Power off** replaces the disabled double-click shutdown gesture. A long left hold still enters download mode with the factory timing. Corrected tap behavior remains a physical acceptance check.
+
+The BMI270 reports a different axis orientation from the original Plus. All S3 horizontal movement and zero-calibration paths use its negative-Y acceleration. The original Plus keeps its existing negative-X mapping. Use the game’s zero-tilt option while holding the device in its comfortable neutral position.
+
+S3 tilt zeros use separate preference keys, so a saved zero from the previous X-axis mapping cannot bias the corrected controls.

@@ -25,6 +25,16 @@ inline bool valid(const ClockDate& date) {
   return date.year >= 2000 && date.year <= 9999 && date.month >= 1 && date.month <= 12 &&
          date.day >= 1 && date.day <= monthDays(date.year,date.month);
 }
+// Encode the device's local civil time without consulting a host timezone.
+inline bool clockSeconds(const ClockDate& date, unsigned hour, unsigned minute, unsigned second, uint32_t& value) {
+  if (!valid(date) || date.year > 2099 || hour >= 24 || minute >= 60 || second >= 60) return false;
+  uint32_t days = 0;
+  for (unsigned year = 1970; year < date.year; ++year) days += leapYear(year) ? 366u : 365u;
+  for (unsigned month = 1; month < date.month; ++month) days += monthDays(date.year,month);
+  days += date.day - 1;
+  value = days * 86400u + hour * 3600u + minute * 60u + second;
+  return true;
+}
 inline ClockDate addDays(ClockDate date, unsigned days) {
   while (days) {
     const unsigned remaining = unsigned(monthDays(date.year,date.month)) - date.day;

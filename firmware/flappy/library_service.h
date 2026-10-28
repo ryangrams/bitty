@@ -1,16 +1,11 @@
 #pragma once
-#ifdef M5FLAP_USB_LIBRARY
 #include <stdlib.h>
 #include <stdarg.h>
 #include "library_protocol.h"
 
-flappy::LibraryFlash libraryFlash;
-flappy::UsbCartridges* cartridgeStorage = nullptr;
-#define cartridges (*cartridgeStorage)
 bool libraryActive = false;
 uint32_t libraryLastInput = 0;
 uint32_t libraryRequestId = 0;
-uint16_t libraryQuarantine = 0;
 
 void libraryReply(const char* text) { Serial.printf("TP1 %lu\t%s\n", static_cast<unsigned long>(libraryRequestId), text); }
 void libraryPrintf(const char* format, ...) {
@@ -20,6 +15,12 @@ void libraryPrintf(const char* format, ...) {
   if (length && buffer[length - 1] == '\n') buffer[length - 1] = 0;
   libraryReply(buffer);
 }
+
+#ifdef M5FLAP_USB_LIBRARY
+flappy::LibraryFlash libraryFlash;
+flappy::UsbCartridges* cartridgeStorage = nullptr;
+#define cartridges (*cartridgeStorage)
+uint16_t libraryQuarantine = 0;
 
 void refreshCartridgeViews() {
   if (!cartridgeStorage) return;
@@ -118,10 +119,6 @@ void leaveLibrary() {
   nextTick = micros() + TickMicros; nextNesTick = micros();
 }
 
-bool libraryNumber(const char* text, uint32_t& value, int base = 10) {
-  return flappy::libraryUnsigned(text, value, base);
-}
-
 bool validateLibraryRom(const flappy::UsbCartridges::Record& record) {
   const auto* data = libraryFlash.view(record.offset, record.length);
   if (record.kind == 2 && !flappy::RomFingerprint::tetris(data, record.length, false)) return false;
@@ -130,6 +127,12 @@ bool validateLibraryRom(const flappy::UsbCartridges::Record& record) {
   const bool valid = nes.load(data, record.length) && nes.frameRate() == 60;
   nes.unload();
   return valid;
+}
+
+#endif
+
+bool libraryNumber(const char* text, uint32_t& value, int base = 10) {
+  return flappy::libraryUnsigned(text, value, base);
 }
 
 void libraryCommand(char* line) {
@@ -142,9 +145,21 @@ void libraryCommand(char* line) {
   if (count < 3 || strcmp(fields[0], "TP1") || !libraryNumber(fields[1], libraryRequestId) || !libraryRequestId) return;
   for (unsigned i = 1; i + 1 < count; ++i) fields[i] = fields[i + 1];
   --count;
+  if (!strcmp(fields[1], "TIME")) {
+    flappy::LibraryClock value;
+    if (!flappy::libraryClock(fields + 2, count - 2, value)) { libraryReply("ERROR\tCLOCK"); return; }
+    const uint32_t now = millis();
+    app.synchronizeClock(value.date,value.hour,value.minute,value.second,now);
+    writeClock(now);
+    libraryPrintf("OK\tTIME\t%u\t%u\t%u\t%u\t%u\t%u\n",unsigned(value.date.year),unsigned(value.date.month),
+        unsigned(value.date.day),unsigned(value.hour),unsigned(value.minute),unsigned(value.second));
+    return;
+  }
+#ifdef M5FLAP_USB_LIBRARY
   if (!strcmp(fields[1], "HELLO") && count == 2) {
     enterLibrary();
-    libraryPrintf("HELLO\t1\tM5StickCPlus\t%lu\t%u\n", static_cast<unsigned long>(libraryFlash.size()), unsigned(cartridgeStorage && cartridges.ready()));
+    libraryPrintf("HELLO\t1\t%s\t%lu\t%u\n", M5.getBoard() == m5::board_t::board_M5StickS3 ? "M5StickS3" : "M5StickCPlus",
+        static_cast<unsigned long>(libraryFlash.size()), unsigned(cartridgeStorage && cartridges.ready()));
     return;
   }
   if (!libraryActive) { libraryReply("ERROR\tHELLO_REQUIRED"); return; }
@@ -224,12 +239,16 @@ void libraryCommand(char* line) {
       return;
     }
   }
+#endif
   libraryReply("ERROR\tCOMMAND");
 }
 
 bool serviceLibrary() {
   static char* line = nullptr; static unsigned length = 0;
-  static bool overflow = false; static uint32_t heldSince = 0;
+  static bool overflow = false;
+#ifdef M5FLAP_USB_LIBRARY
+  static uint32_t heldSince = 0;
+#endif
   if (!line && Serial.available()) line = new (std::nothrow) char[768];
   if (!line) return false;
   while (Serial.available()) {
@@ -253,6 +272,7 @@ bool serviceLibrary() {
     }
   }
   if ((length || overflow) && uint32_t(millis() - libraryLastInput) > 2000) { length = 0; overflow = false; }
+#ifdef M5FLAP_USB_LIBRARY
   if (libraryActive) {
     M5.update();
     if (M5.BtnB.isPressed()) { if (!heldSince) heldSince = millis(); }
@@ -262,6 +282,6 @@ bool serviceLibrary() {
     }
     delay(1);
   }
+#endif
   return libraryActive || length || overflow;
 }
-#endif

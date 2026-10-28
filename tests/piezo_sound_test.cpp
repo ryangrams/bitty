@@ -111,6 +111,20 @@ static void nesToneFollow() {
 
 int main() {
   static_assert(sizeof(PiezoSound) <= 80, "Piezo scheduler must remain bounded");
+  PiezoSound boot;
+  PiezoTone bootTone;
+  for (unsigned volume = 0; volume < 6; ++volume) {
+    boot.stop(); boot.setVolumeIndex(uint8_t(volume));
+    assert(boot.play(PiezoCue::Boot,0) == bool(volume));
+    if (!volume) continue;
+    const unsigned times[] = {0,85,155,230};
+    const unsigned pitches[] = {1047,1568,1319,2093};
+    for (unsigned i = 0; i < 4; ++i) {
+      assert(boot.update(times[i],bootTone));
+      assert(bootTone.frequency == pitches[i] && bootTone.volume == volume * 51);
+    }
+    assert(boot.update(380,bootTone) && !bootTone.frequency && !boot.active());
+  }
   patternsAndPriority();
   volumeQuietAndWrap();
   lateUpdatesAndAllCues();

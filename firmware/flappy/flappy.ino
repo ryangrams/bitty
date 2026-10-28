@@ -5,6 +5,8 @@
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <new>
+#include <time.h>
+#include <sys/time.h>
 #include "app_model.h"
 #include "ble_link.h"
 #include "ble_controller.h"
@@ -19,6 +21,8 @@
 #include "clock_runtime.h"
 #include "clock_overlay.h"
 #include "game_home.h"
+#include "stick_input.h"
+#include "stick_power_button.h"
 #include "rom_fingerprint.h"
 #include "runtime_cartridges.h"
 #include "usb_library.h"
@@ -50,11 +54,19 @@
 #include "hockey_renderer.h"
 
 flappy::AppModel app;
+bool bootSplashActive = false;
+flappy::StickPowerButton stickPowerButton;
+uint32_t handledPowerOff = 0;
+struct StickPmicBus {
+  bool read(uint8_t reg, uint8_t* data, size_t length) { return M5.In_I2C.readRegister(0x6e,reg,data,length,100000); }
+  bool write(uint8_t reg, uint8_t value) { return M5.In_I2C.writeRegister(0x6e,reg,&value,1,100000); }
+};
+bool rightHomeFallback() { return M5.getBoard() == m5::board_t::board_M5StickS3 && !stickPowerButton.ready(); }
 #ifdef M5FLAP_USB_LIBRARY
 void initializeLibrary();
 void refreshCartridgeViews();
-bool serviceLibrary();
 #endif
+bool serviceLibrary();
 flappy::GalagaGame* galagaGame = nullptr;
 flappy::ArkanoidGame* arkanoidGame = nullptr;
 flappy::JetpackGame* jetpackGame = nullptr;
@@ -309,7 +321,7 @@ void stopGameAudio() {
 }
 
 void playCue(flappy::PiezoCue cue, uint32_t nowMs) {
-  piezo.setQuiet(app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
+  piezo.setQuiet(!bootSplashActive && app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
   piezo.setVolumeIndex(app.settings.volumeIndex);
   piezo.play(cue, nowMs);
 }
@@ -360,7 +372,7 @@ void initializeSound() {
 }
 
 void serviceSound(uint32_t nowMs) {
-  piezo.setQuiet(app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
+  piezo.setQuiet(!bootSplashActive && app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
   piezo.setVolumeIndex(app.settings.volumeIndex);
   if (soundOverride) {
     if (int32_t(nowMs - soundOverrideUntil) < 0) {
@@ -468,11 +480,27 @@ void applyClock(const m5::rtc_datetime_t& value, uint32_t nowMs) {
   app.synchronizeClock(date,uint8_t(value.time.hours),uint8_t(value.time.minutes),uint8_t(value.time.seconds),nowMs);
 }
 
+bool readSystemClock(m5::rtc_datetime_t& value) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  const time_t seconds = time(nullptr);
+  if (seconds < 946684800LL || seconds > 4102444799LL) return false;
+  struct tm civil = {};
+  if (!gmtime_r(&seconds,&civil)) return false;
+  value.date = m5::rtc_date_t(civil.tm_year + 1900,civil.tm_mon + 1,civil.tm_mday,civil.tm_wday);
+  value.time = m5::rtc_time_t(civil.tm_hour,civil.tm_min,civil.tm_sec);
+  return validRtc(value);
+#else
+  (void)value; return false;
+#endif
+}
+
+void writeClock(uint32_t nowMs);
+
 void initializeClock(uint32_t nowMs) {
   m5::rtc_datetime_t dateTime;
   const bool rtcValid = M5.Rtc.isEnabled() && M5.Rtc.getDateTime(&dateTime) &&
                         !M5.Rtc.getVoltLow() && validRtc(dateTime);
-  if (!rtcValid) {
+  if (!rtcValid && !readSystemClock(dateTime)) {
     flappy::ClockDate buildDate;
     buildDate.year = FlappyBuild::year; buildDate.month = FlappyBuild::month; buildDate.day = FlappyBuild::day;
     dateTime.date = m5::rtc_date_t(FlappyBuild::year, FlappyBuild::month, FlappyBuild::day,
@@ -481,7 +509,7 @@ void initializeClock(uint32_t nowMs) {
     if (M5.Rtc.isEnabled()) M5.Rtc.setDateTime(dateTime);
   }
   applyClock(dateTime, nowMs);
-  lastClockReadMs = nowMs;
+  writeClock(nowMs);
 }
 
 void readClock(uint32_t nowMs) {
@@ -489,12 +517,22 @@ void readClock(uint32_t nowMs) {
   lastClockReadMs = nowMs;
   m5::rtc_datetime_t dateTime;
   if (M5.Rtc.isEnabled() && M5.Rtc.getDateTime(&dateTime) && !M5.Rtc.getVoltLow() && validRtc(dateTime)) applyClock(dateTime, nowMs);
+  else if (readSystemClock(dateTime)) applyClock(dateTime,nowMs);
   else app.advanceClock(nowMs);
 }
 
 void writeClock(uint32_t nowMs) {
+  const auto date = app.clockDate(nowMs);
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  uint32_t seconds = 0;
+  if (flappy::ClockCalendar::clockSeconds(date,app.clockHour(nowMs),app.clockMinute(nowMs),app.clockSecond(nowMs),seconds)) {
+    // The internal RTC timer keeps the local clock through sleep and supported soft resets.
+    struct timeval value = {};
+    value.tv_sec = seconds;
+    settimeofday(&value,nullptr);
+  }
+#endif
   if (M5.Rtc.isEnabled()) {
-    const auto date = app.clockDate(nowMs);
     m5::rtc_datetime_t value;
     value.date = m5::rtc_date_t(date.year,date.month,date.day,flappy::ClockCalendar::weekDay(date));
     value.time = m5::rtc_time_t(app.clockHour(nowMs),app.clockMinute(nowMs),app.clockSecond(nowMs));
@@ -533,7 +571,7 @@ void loadSettings() {
   app.setJetpackRide(preferences.getUChar("jetride", 0));
   app.setJetpackGadget(preferences.getUChar("jetgadget", 0));
   app.setJetpackHeadstart(preferences.getBool("jethead", false));
-  arcadeTilt.calibrate(preferences.getFloat("arcneutral", 0));
+  arcadeTilt.calibrate(preferences.getFloat(flappy::StickInput::neutralKey(M5.getBoard() == m5::board_t::board_M5StickS3,false),0));
   arcadeBestGalaga = preferences.getUInt("galagabest", 0);
   arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
   arcadeBestJetpack = preferences.getUInt("jetbest", 0);
@@ -546,7 +584,7 @@ void loadSettings() {
   app.setTetrisGameType(preferences.getUChar("tettype", 0));
   app.setTetrisControls(preferences.getUChar("tetctrl", 0));
   app.setTetrisTilt(true);
-  if (preferences.isKey("tetneutral")) tetrisTilt.calibrate(preferences.getFloat("tetneutral", 0));
+  if (preferences.isKey(flappy::StickInput::neutralKey(M5.getBoard() == m5::board_t::board_M5StickS3,true))) tetrisTilt.calibrate(preferences.getFloat(flappy::StickInput::neutralKey(M5.getBoard() == m5::board_t::board_M5StickS3,true),0));
   if (!preferences.getUChar("timingver", 0)) {
     preferences.putBool("tetpal", false);
     preferences.putUChar("timingver", 1);
@@ -1305,12 +1343,12 @@ bool beginNativeArcade() {
 
 void calibrateArcadeTilt(uint32_t nowMs) {
   float ax, ay, az;
-  if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az) && arcadeTilt.calibrate(-ax)) {
-    tiltX = -ax;
+  if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az) && arcadeTilt.calibrate(flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay))) {
+    tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
     haveTiltSample = true;
     lastTiltSampleMs = nowMs;
     arcadeActivityTilt = tiltX;
-    preferences.putFloat("arcneutral", arcadeTilt.neutral());
+    preferences.putFloat(flappy::StickInput::neutralKey(M5.getBoard() == m5::board_t::board_M5StickS3,false),arcadeTilt.neutral());
     tiltZeroNotice = "Tilt zero saved";
     playCue(flappy::PiezoCue::MenuSelect, nowMs);
   } else tiltZeroNotice = "Tilt sensor unavailable";
@@ -1698,7 +1736,7 @@ void drawGameHome(uint32_t nowMs) {
     flappy::MenuFont::draw(canvasStorage,width,height,app.gameLabel(app.currentGame),4,16,flappy::BittyUi::Muted,1,width/6-1);
     const int controls = app.settings.clockDatePosition == flappy::ClockDatePosition::Bottom ? 14 : 0;
     flappy::MenuFont::draw(canvasStorage,width,height,"M5 PLAY",4,height-30-controls,flappy::BittyUi::Muted);
-    flappy::MenuFont::draw(canvasStorage,width,height,"LEFT NEXT",4,height-16-controls,flappy::BittyUi::Muted);
+    flappy::MenuFont::draw(canvasStorage,width,height,flappy::StickInput::nextLabel(rightHomeFallback()),4,height-16-controls,flappy::BittyUi::Muted);
     flappy::ClockOverlay::draw(canvasStorage,width,height,time,app.settings.clockDatePosition);
   } else {
     homeClocks.draw(canvasStorage,homeTime(nowMs),renderer->skin());
@@ -1708,7 +1746,7 @@ void drawGameHome(uint32_t nowMs) {
     }
     flappy::ClockScene::rect(canvasStorage,0,225,135,15,flappy::BittyUi::Black);
     if (app.settings.clockDatePosition != flappy::ClockDatePosition::Bottom)
-      flappy::MenuFont::draw(canvasStorage,135,240,"M5 PLAY  LEFT NEXT",16,227,flappy::BittyUi::Muted);
+      flappy::MenuFont::draw(canvasStorage,135,240,flappy::StickInput::homeLabel(rightHomeFallback()),13,227,flappy::BittyUi::Muted);
     flappy::ClockOverlay::draw(canvasStorage,135,240,homeTime(nowMs),app.settings.clockDatePosition);
   }
   if (asyncDisplay.submitBorrowedFrame(canvasStorage,width,height)) asyncDisplay.submitEndFrame();
@@ -1823,11 +1861,11 @@ void handleTetrisRequests(uint32_t nowMs) {
     handledTetrisCalibrate = app.tetrisCalibrateRequest;
     float ax, ay, az;
     if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az)) {
-      tiltX = -ax;
+      tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
       lastTiltSampleMs = lastTiltPollMs = nowMs;
       haveTiltSample = true;
       tetrisTilt.calibrate(tiltX);
-      preferences.putFloat("tetneutral", tiltX);
+      preferences.putFloat(flappy::StickInput::neutralKey(M5.getBoard() == m5::board_t::board_M5StickS3,true),tiltX);
       tiltZeroNotice = "Tilt zero saved";
     } else tiltZeroNotice = "Tilt sensor unavailable";
     tiltZeroNoticeMs = nowMs;
@@ -2168,6 +2206,10 @@ void showBootSplash() {
   const uint32_t started = millis();
   uint32_t next = micros();
   unsigned frames = 0;
+  bootSplashActive = true;
+  piezo.setQuiet(false);
+  piezo.setVolumeIndex(app.settings.volumeIndex);
+  piezo.play(flappy::PiezoCue::Boot,started);
   do {
     const uint32_t elapsed = uint32_t(millis() - started);
     flappy::BittyUi::splash(canvasStorage,flappy::PixelWidth,flappy::PixelHeight,elapsed);
@@ -2175,11 +2217,14 @@ void showBootSplash() {
     asyncDisplay.drain();
     ++frames;
     M5.update();
+    serviceSound(millis());
     if (elapsed >= 160 && (M5.BtnA.isPressed() || M5.BtnB.isPressed())) break;
     next += TickMicros;
     while (int32_t(micros() - next) < 0) delay(1);
   } while (uint32_t(millis() - started) < flappy::BittyUi::SplashMs);
   asyncDisplay.drain();
+  bootSplashActive = false;
+  stopGameAudio();
   invalidateDisplay();
   clearPendingInput();
   inactivity.resumed(millis());
@@ -2289,10 +2334,9 @@ void setup() {
     return;
   }
   auto cfg = M5.config();
-#if defined(M5FLAP_STARTUP_DIAGNOSTICS) || defined(M5FLAP_USB_LIBRARY)
   cfg.serial_baudrate = 115200;
-#else
-  cfg.serial_baudrate = 0;
+#ifdef M5FLAP_BOARD_STICKS3
+  cfg.pmic_button = false; // Poll the immediate button-status register instead of delayed click IRQs.
 #endif
   cfg.internal_imu = true;
   cfg.internal_rtc = true;
@@ -2314,6 +2358,14 @@ void setup() {
   rtc_gpio_pullup_dis(GPIO_NUM_2);
   rtc_gpio_pulldown_en(GPIO_NUM_2);
 #endif
+  if (M5.getBoard() == m5::board_t::board_M5StickS3) {
+    StickPmicBus bus;
+    app.powerOffAvailable = stickPowerButton.begin(bus);
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+    Serial.printf("BUTTONS left_tap=%u pm1=%02x:%02x:%02x:%02x\n",unsigned(stickPowerButton.ready()),
+        stickPowerButton.revision(0),stickPowerButton.revision(1),stickPowerButton.revision(2),stickPowerButton.revision(3));
+#endif
+  }
   initializeSound();
   M5.Display.setRotation(0);
   M5.Display.fillScreen(TFT_BLACK);
@@ -2611,6 +2663,13 @@ void serviceDiagnostics() {
       if (bluetoothPad) bluetoothPad->resumePeer(millis());
       padButtons = previousPadButtons = 0;
       pendingNesButtons = pendingControllerNesButtons = 0;
+    } else if (!strcmp(command, "M5SPLASH")) {
+      showBootSplash();
+    } else if (!strcmp(command, "M5IMU")) {
+      float ax = 0, ay = 0, az = 0;
+      const bool ready = M5.Imu.isEnabled() && M5.Imu.getAccel(&ax,&ay,&az);
+      Serial.printf("IMU ready=%u x=%.4f y=%.4f z=%.4f horizontal=%.4f board=%u\n",unsigned(ready),ax,ay,az,
+          flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay),unsigned(M5.getBoard()));
     } else if (!strcmp(command, "M5BEEP")) {
       piezo.stop();
       soundOverride = soundReady;
@@ -2634,6 +2693,16 @@ void serviceDiagnostics() {
           unsigned(gameHome.active()), (unsigned long)homeFrames, unsigned(homeClocks.stateBytes()),
           unsigned(homeClocks.fallback()), (unsigned long)gameHome.generation(),
           unsigned(app.clockHour(millis())), unsigned(app.clockMinute(millis())));
+      const auto clockDate = app.clockDate(millis());
+      Serial.printf("CLOCK year=%u month=%u day=%u hour=%u minute=%u second=%u external_rtc=%u system_seconds=%lld\n",
+          unsigned(clockDate.year),unsigned(clockDate.month),unsigned(clockDate.day),unsigned(app.clockHour(millis())),
+          unsigned(app.clockMinute(millis())),unsigned(app.clockSecond(millis())),unsigned(M5.Rtc.isEnabled()),
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+          (long long)time(nullptr)
+#else
+          0LL
+#endif
+      );
       if (nativeMario) {
         const auto player = marioCartridge.sample(nes);
         Serial.printf("MARIO screen=%u mode=%u task=%u y=%d h=%d camera=%d hz=%u divisor=%u launch=%u x=%u engine=%u\n",
@@ -2764,15 +2833,16 @@ void serviceDiagnostics() {
 #include "library_service.h"
 
 void loop() {
-#ifdef M5FLAP_USB_LIBRARY
   if (serviceLibrary()) return;
-#endif
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   serviceDiagnostics();
 #endif
   M5.update();
+  StickPmicBus pmicBus;
+  const bool leftClick = M5.getBoard() == m5::board_t::board_M5StickS3 ?
+      stickPowerButton.poll(pmicBus,millis()) : M5.BtnPWR.wasClicked();
   if (!renderer) { delay(10); return; }
-  if (inactivity.consumeWakeInput(M5.BtnA.isPressed() || M5.BtnB.isPressed() || padButtons, millis())) {
+  if (inactivity.consumeWakeInput(M5.BtnA.isPressed() || M5.BtnB.isPressed() || leftClick || padButtons, millis())) {
     clearPendingInput();
     nextTick = micros() + TickMicros;
     nextNesTick = micros();
@@ -2780,8 +2850,18 @@ void loop() {
     return;
   }
   pendingAction |= M5.BtnA.wasPressed();
-  if (gameHome.active() && !app.menuOpen()) pendingHomeNext |= M5.BtnPWR.wasClicked();
+  pendingHomeNext |= flappy::StickInput::nextGame(rightHomeFallback(),gameHome.active(),app.menuOpen(),
+      leftClick,M5.BtnB.wasClicked());
   const uint32_t nowMs = millis();
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  if (app.powerOffRequest != handledPowerOff) {
+    handledPowerOff = app.powerOffRequest;
+    saveSettings(); saveScores(); saveArcadeScores(); saveJetpackProfile();
+    stopGameAudio(); asyncDisplay.drain();
+    M5.Power.powerOff();
+    return;
+  }
+#endif
   readClock(nowMs);
   updateController(nowMs);
   updateCoop(nowMs);
@@ -2794,7 +2874,7 @@ void loop() {
   const bool padConnected = controllerConnected;
   const bool geometry = app.currentGame == flappy::GameTitle::GeometryDash;
   const auto geometryInput = geometryButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
-      M5.BtnPWR.wasClicked(), geometry && !padConnected && !app.menuOpen() && !gameHome.active(), nowMs);
+      leftClick, geometry && !padConnected && !app.menuOpen() && !gameHome.active(), nowMs);
   geometryHeld = geometryInput.held;
   pendingNesButtons |= geometryInput.pressed;
   const auto marioScreen = nativeMario ? marioCartridge.screen(nes) : flappy::MarioCartridge::Screen::Other;
@@ -2804,13 +2884,13 @@ void loop() {
         marioScreen == flappy::MarioCartridge::Screen::GameOver) marioContext = flappy::MarioButtons::Context::Title;
     else if (!padConnected) marioContext = flappy::MarioButtons::Context::Play;
   }
-  marioButtons.poll(M5.BtnA.isPressed(),M5.BtnB.isPressed(),M5.BtnPWR.wasClicked(),marioContext,nowMs);
+  marioButtons.poll(M5.BtnA.isPressed(),M5.BtnB.isPressed(),leftClick,marioContext,nowMs);
   pendingNesButtons |= nesSystemButton.update(M5.BtnA.isPressed(),
       ((app.currentGame == flappy::GameTitle::Nes && (!nativeMario || (padConnected && marioScreen == flappy::MarioCartridge::Screen::Playing))) ||
       (geometry && padConnected)) && !app.menuOpen() && !gameHome.active(), nowMs);
   const bool lobby = tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || (zeroLinked() && (zeroLaunching || zeroFinishedRound)));
   const auto internal = tetrisButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
-      M5.BtnPWR.wasClicked(), app.settings.tetrisControls,
+      leftClick, app.settings.tetrisControls,
       tetris && !app.menuOpen() && !gameHome.active() && !lobby && !tetrisLaunching && !zeroLaunching, nowMs);
   tetrisHeld = internal.held;
   pendingTetrisDrop |= (internal.pressed & flappy::NesRuntime::Down) != 0;
@@ -2820,7 +2900,7 @@ void loop() {
       lastTiltPollMs = nowMs;
       float ax, ay, az;
       if (M5.Imu.getAccel(&ax, &ay, &az)) {
-        tiltX = -ax;
+        tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
         haveTiltSample = true;
         lastTiltSampleMs = nowMs;
       }
@@ -2836,7 +2916,7 @@ void loop() {
     lastTiltPollMs = nowMs;
     float ax, ay, az;
     if (M5.Imu.getAccel(&ax, &ay, &az)) {
-      tiltX = -ax;
+      tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
       haveTiltSample = true;
       lastTiltSampleMs = nowMs;
       if (fabsf(tiltX - arcadeActivityTilt) > .025f) {
@@ -2845,7 +2925,7 @@ void loop() {
       }
     }
   }
-  const auto arcadeSide = arcadeControls.update(M5.BtnB.isPressed(), M5.BtnPWR.wasClicked(),
+  const auto arcadeSide = arcadeControls.update(M5.BtnB.isPressed(), leftClick,
       nativeArcade() && !app.menuOpen() && !gameHome.active(), nowMs);
   if (arcadeSide.pause) arcadePauseRequested = true;
   if (arcadeSide.zero) {
@@ -2858,7 +2938,7 @@ void loop() {
     }
   }
   const uint32_t now = micros();
-  const bool inputActive = M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnPWR.wasClicked() ||
+  const bool inputActive = M5.BtnA.isPressed() || M5.BtnB.isPressed() || leftClick ||
       M5.BtnPWR.wasPressed() || padButtons || pendingAction || pendingPadAction ||
       pendingNesButtons || pendingControllerNesButtons || tetrisHeld;
   if (inactivity.shouldSleep(nowMs, app.sleepTimeoutMs(), pollPowerSource(nowMs), inputActive) && sleepOnBattery()) return;
