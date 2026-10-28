@@ -24,4 +24,4 @@ The animation reuses the existing canvas and asynchronous display buffers. It ad
 
 Portable tests cover valid and failed battery readings, percentage boundaries, native crop visibility, animation clipping and buffer guards, opaque menu backgrounds and battery updates confined to the header. The text audit covers every menu page, including Jetpack upgrades and missions. Both board targets compile. Connected-device results are recorded with the private release receipt; a compiled StickS3 build still needs physical checks.
 
-The previous 0.9-second sequence and four menu pages were checked on the original Plus. The new 2.4-second splash is covered by portable rendering checks and both builds. Its device load is pending while the connected MacBook is unreachable.
+The previous 0.9-second sequence and four menu pages were checked on the original Plus. After the next app-only update, the device measured the extended splash at 2,400 ms across 144 frames. The native Mario Clock settings page was also captured from the running firmware. StickS3 remains compiled and needs a physical check.
