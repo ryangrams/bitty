@@ -4,13 +4,15 @@ Select a game and its clock starts in portrait. Tap the left side button to move
 
 A paired controller can use Left for the next home, A or Start to play, and B or Menu for the menu. Gameplay keeps each game's existing controller assignments. The original Plus power key keeps its hardware long-hold function.
 
-**Set clock** is in the main menu for every game. It uses the shared RTC, local hour/minute adjustment and 12/24-hour setting. The clocks are quiet and do not award records, coins, missions or other saved progress. Battery inactivity sleep still applies. The default is 30 seconds; USB power keeps the clock awake.
+**Set clock** is in the main menu for every game. **Time format** selects **12-hour** or **24-hour**. **Day / date** cycles through **None**, **Top** and **Bottom** for a shared weekday and date line, such as `WED OCT 28 2026`. Bottom uses the footer in place of the repeated button hint, leaving the native game area visible. **Set date** adjusts the year, month and day. Time and date use the RTC, and the display preferences survive restart. All clock scenes show hours above minutes without a colon.
+
+The clocks are quiet and do not award records, coins, missions or other saved progress. Battery inactivity sleep still applies. The default is 30 seconds; USB power keeps the clock awake.
 
 ## The scenes
 
 | Game | Clock behavior |
 | --- | --- |
-| Mario | An endless generated course visits overworld, underground, water and castle sections through animated pipes. Native coins form HH:MM in clearings. Mario can collect some coins, jump obstacles and stomp enemies. |
+| Mario | An endless generated course visits overworld, underground, water and castle sections through animated pipes. Native 16 by 16 coin tiles form HH above MM on a square grid in clearings. Mario can collect some coins, jump obstacles and stomp enemies. |
 | Flappy Bird | Double-size source pixels, an immortal bird and no score. Pipes gather into two rows of time digits and return to pipes every 800 steps, about 4.5 appearances per minute at 60 Hz. |
 | Tetris | Genuine connected tetrominoes fall into a 10-column well. Bright digit cells and dim supporting cells make HH over MM legible. After a readable hold, the bot clears lines and continues playing. An 18-second cycle rebuilds the board about 3.3 times per minute. Both Tetris engines use this scene. |
 | Geometry Dash | Double-size forms travel through a fixed portrait view. Object digits scroll through the course. Each ten-second cycle eases into quarter-speed world motion over one second, holds for four, and eases back over one second. Drawing continues on every update. |

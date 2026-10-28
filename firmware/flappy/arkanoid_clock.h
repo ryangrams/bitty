@@ -101,10 +101,6 @@ class ArkanoidClock {
       }
       drawBrick(c,i,y);
     }
-    if (phase_==Phase::Build || phase_==Phase::Read) {
-      c.rect(65,105,4,2,c.rgb(190,202,215));
-      c.rect(65,112,4,2,c.rgb(190,202,215));
-    }
     if(phase_==Phase::Wipe) {
       const int line=218-int(phaseFrame_)*204/48;
       c.rect(6,line,123,2,white);c.rect(6,line+2,123,3,c.rgb(56,111,143));

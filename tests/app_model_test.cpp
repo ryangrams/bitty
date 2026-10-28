@@ -76,7 +76,7 @@ static void everyMenuHasBack() {
   const MenuPage pages[] = {MenuPage::Home, MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
     MenuPage::Modes, MenuPage::Brightness, MenuPage::Volume, MenuPage::Skins, MenuPage::Clock,
     MenuPage::Controller, MenuPage::TetrisLevel, MenuPage::TetrisType, MenuPage::TetrisControls,
-    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers, MenuPage::Sleep, MenuPage::GeometryLevel};
+    MenuPage::TetrisLink, MenuPage::Coop, MenuPage::TetrisZeroPlayers, MenuPage::Sleep, MenuPage::GeometryLevel, MenuPage::ClockDate};
   for (MenuPage page : pages) {
     d.app.openMenu(page);
     const uint8_t count = d.app.menuItemCount();
@@ -89,7 +89,8 @@ static void everyMenuHasBack() {
       page == MenuPage::Coop || page == MenuPage::TetrisLevel || page == MenuPage::TetrisType ||
       page == MenuPage::TetrisControls || page == MenuPage::TetrisLink || page == MenuPage::TetrisZeroPlayers ||
       page == MenuPage::GeometryLevel;
-    assert(page == MenuPage::Home ? !d.app.menuOpen() : d.app.menu.page == (nested ? MenuPage::GameSettings : MenuPage::Home));
+    assert(page == MenuPage::Home ? !d.app.menuOpen() : d.app.menu.page ==
+        (page == MenuPage::ClockDate ? MenuPage::Clock : nested ? MenuPage::GameSettings : MenuPage::Home));
   }
   const Mode playableModes[] = {Mode::Original, Mode::Demo, Mode::Arcade, Mode::Big, Mode::Coop};
   for (unsigned i = 0; i < 5; ++i) {
@@ -1225,13 +1226,13 @@ static void sharedClockAndHomeRequests() {
     d.app.openMenu();
     assert(d.app.menuItemCount() == 10);
     assert(std::string(d.app.menuLabel(7)) == "Set clock");
-    assert(std::string(d.app.menuValue(7)) == "13:42");
+    assert(std::string(d.app.menuValue(7)) == "13 42");
     assert(std::string(d.app.menuLabel(8)) == "Game home");
     assert(std::string(d.app.menuValue(8)) == d.app.gameLabel(title));
     d.app.menu.selection = 7; d.tick(true);
     assert(d.app.menu.page == MenuPage::Clock && std::string(d.app.menuTitle()) == "Set clock");
     assert(std::string(d.app.menuValue(0)) == "13" && std::string(d.app.menuValue(1)) == "42");
-    d.app.menu.selection = 3; d.tick(true);
+    d.app.menu.selection = d.app.menuItemCount() - 1; d.tick(true);
     assert(d.app.menu.page == MenuPage::Home && d.app.currentGame == title);
 
     const uint32_t home = d.app.homeRequest, game = d.app.gameRequest, restart = d.app.gameRestartRequest;

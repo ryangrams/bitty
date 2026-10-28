@@ -73,10 +73,6 @@ class FlappyClock {
           const int y = originY + (ty - originY) * int(eased) / 255;
           pipeCell(pixels,skins,x,y,morph);
         }
-      if (morph == 255) {
-        pipeCell(pixels,skins,86,95,255,6);
-        pipeCell(pixels,skins,86,107,255,6);
-      }
     }
     const int birdY = y_ / 256, birdX = BirdX-int(morph)*20/255, frame = int((frames_ / 6) % 3);
     for (int y = 0; y < 24; ++y) for (int x = 0; x < 34; ++x) {

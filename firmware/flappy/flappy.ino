@@ -16,6 +16,7 @@
 #include "nes_viewport.h"
 #include "mario_viewport.h"
 #include "clock_runtime.h"
+#include "clock_overlay.h"
 #include "game_home.h"
 #include "rom_fingerprint.h"
 #include "runtime_cartridges.h"
@@ -452,24 +453,18 @@ void updateNesSound(uint8_t input1, uint8_t input2, uint32_t nowMs) {
 }
 
 bool validRtc(const m5::rtc_datetime_t& value) {
-  return value.date.year >= 2024 && value.date.year <= 2099 &&
-         value.date.month >= 1 && value.date.month <= 12 &&
-         value.date.date >= 1 && value.date.date <= 31 &&
+  flappy::ClockDate date;
+  date.year = uint16_t(value.date.year); date.month = uint8_t(value.date.month); date.day = uint8_t(value.date.date);
+  return value.date.year >= 2000 && value.date.year <= 2099 && flappy::ClockCalendar::valid(date) &&
          value.time.hours >= 0 && value.time.hours < 24 &&
          value.time.minutes >= 0 && value.time.minutes < 60 &&
          value.time.seconds >= 0 && value.time.seconds < 60;
 }
 
-int weekDay(int year, int month, int day) {
-  constexpr int offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
-  if (month < 3) --year;
-  return (year + year / 4 - year / 100 + year / 400 + offsets[month - 1] + day) % 7;
-}
-
-void applyClock(const m5::rtc_time_t& time, uint32_t nowMs) {
-  const bool dirty = app.settingsDirty;
-  app.setClock(uint8_t(time.hours), uint8_t(time.minutes), nowMs - uint32_t(time.seconds) * 1000U);
-  app.settingsDirty = dirty;
+void applyClock(const m5::rtc_datetime_t& value, uint32_t nowMs) {
+  flappy::ClockDate date;
+  date.year = uint16_t(value.date.year); date.month = uint8_t(value.date.month); date.day = uint8_t(value.date.date);
+  app.synchronizeClock(date,uint8_t(value.time.hours),uint8_t(value.time.minutes),uint8_t(value.time.seconds),nowMs);
 }
 
 void initializeClock(uint32_t nowMs) {
@@ -477,26 +472,32 @@ void initializeClock(uint32_t nowMs) {
   const bool rtcValid = M5.Rtc.isEnabled() && M5.Rtc.getDateTime(&dateTime) &&
                         !M5.Rtc.getVoltLow() && validRtc(dateTime);
   if (!rtcValid) {
+    flappy::ClockDate buildDate;
+    buildDate.year = FlappyBuild::year; buildDate.month = FlappyBuild::month; buildDate.day = FlappyBuild::day;
     dateTime.date = m5::rtc_date_t(FlappyBuild::year, FlappyBuild::month, FlappyBuild::day,
-        weekDay(FlappyBuild::year, FlappyBuild::month, FlappyBuild::day));
+        flappy::ClockCalendar::weekDay(buildDate));
     dateTime.time = m5::rtc_time_t(FlappyBuild::hour, FlappyBuild::minute, FlappyBuild::second);
     if (M5.Rtc.isEnabled()) M5.Rtc.setDateTime(dateTime);
   }
-  applyClock(dateTime.time, nowMs);
+  applyClock(dateTime, nowMs);
   lastClockReadMs = nowMs;
 }
 
 void readClock(uint32_t nowMs) {
   if (uint32_t(nowMs - lastClockReadMs) < 1000U) return;
   lastClockReadMs = nowMs;
-  if (!M5.Rtc.isEnabled()) return;
   m5::rtc_datetime_t dateTime;
-  if (M5.Rtc.getDateTime(&dateTime) && validRtc(dateTime)) applyClock(dateTime.time, nowMs);
+  if (M5.Rtc.isEnabled() && M5.Rtc.getDateTime(&dateTime) && !M5.Rtc.getVoltLow() && validRtc(dateTime)) applyClock(dateTime, nowMs);
+  else app.advanceClock(nowMs);
 }
 
 void writeClock(uint32_t nowMs) {
   if (M5.Rtc.isEnabled()) {
-    M5.Rtc.setTime(m5::rtc_time_t(app.clockHour(nowMs), app.clockMinute(nowMs), 0));
+    const auto date = app.clockDate(nowMs);
+    m5::rtc_datetime_t value;
+    value.date = m5::rtc_date_t(date.year,date.month,date.day,flappy::ClockCalendar::weekDay(date));
+    value.time = m5::rtc_time_t(app.clockHour(nowMs),app.clockMinute(nowMs),app.clockSecond(nowMs));
+    M5.Rtc.setDateTime(value);
   }
   lastClockReadMs = nowMs;
 }
@@ -536,6 +537,7 @@ void loadSettings() {
   arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
   arcadeBestJetpack = preferences.getUInt("jetbest", 0);
   app.settings.clock24Hour = preferences.getBool("clock24", true);
+  app.setClockDatePosition(preferences.getUChar("datepos",0));
   const uint8_t boot = preferences.getUChar("bootgame", 0);
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
   app.settings.bootCartridge = preferences.getUChar("bootcart", 0);
@@ -582,6 +584,7 @@ void saveSettings() {
   preferences.putUChar("jetgadget", app.settings.jetpackGadget);
   preferences.putBool("jethead", app.settings.jetpackHeadstart);
   preferences.putBool("clock24", app.settings.clock24Hour);
+  preferences.putUChar("datepos",uint8_t(app.settings.clockDatePosition));
   preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
   preferences.putUChar("tettype", app.settings.tetrisGameType);
@@ -1638,6 +1641,7 @@ flappy::ClockTime homeTime(uint32_t nowMs) {
   time.hour = app.clockHour(nowMs); time.minute = app.clockMinute(nowMs);
   time.second = app.clockSecond(nowMs); time.ms = nowMs;
   time.twentyFourHour = app.settings.clock24Hour;
+  time.date = app.clockDate(nowMs);
   return time;
 }
 
@@ -1686,11 +1690,15 @@ void drawGameHome(uint32_t nowMs) {
   if (compact) {
     const auto time = homeTime(nowMs);
     memset(canvasStorage,0,size_t(width)*height*sizeof(uint16_t));
-    char label[6]; snprintf(label,sizeof(label),"%02u:%02u",unsigned(time.displayHour()),unsigned(time.minute));
-    flappy::MenuFont::draw(canvasStorage,width,height,label,(width-60)/2,height/2-12,flappy::BittyUi::Text,2);
-    flappy::MenuFont::draw(canvasStorage,width,height,app.gameLabel(app.currentGame),4,12,flappy::BittyUi::Muted,1,width/6-1);
-    flappy::MenuFont::draw(canvasStorage,width,height,"M5 PLAY",4,height-30,flappy::BittyUi::Muted);
-    flappy::MenuFont::draw(canvasStorage,width,height,"LEFT NEXT",4,height-16,flappy::BittyUi::Muted);
+    char label[3]; snprintf(label,sizeof(label),"%02u",unsigned(time.displayHour()));
+    flappy::MenuFont::draw(canvasStorage,width,height,label,(width-24)/2,height/2-28,flappy::BittyUi::Text,2);
+    snprintf(label,sizeof(label),"%02u",unsigned(time.minute));
+    flappy::MenuFont::draw(canvasStorage,width,height,label,(width-24)/2,height/2+2,flappy::BittyUi::Text,2);
+    flappy::MenuFont::draw(canvasStorage,width,height,app.gameLabel(app.currentGame),4,16,flappy::BittyUi::Muted,1,width/6-1);
+    const int controls = app.settings.clockDatePosition == flappy::ClockDatePosition::Bottom ? 14 : 0;
+    flappy::MenuFont::draw(canvasStorage,width,height,"M5 PLAY",4,height-30-controls,flappy::BittyUi::Muted);
+    flappy::MenuFont::draw(canvasStorage,width,height,"LEFT NEXT",4,height-16-controls,flappy::BittyUi::Muted);
+    flappy::ClockOverlay::draw(canvasStorage,width,height,time,app.settings.clockDatePosition);
   } else {
     homeClocks.draw(canvasStorage,homeTime(nowMs),renderer->skin());
     if (!homeClocks.ready()) {
@@ -1698,7 +1706,9 @@ void drawGameHome(uint32_t nowMs) {
       flappy::MenuFont::draw(canvasStorage,135,240,"PRESS M5 TO PLAY",19,116,flappy::BittyUi::Text);
     }
     flappy::ClockScene::rect(canvasStorage,0,225,135,15,flappy::BittyUi::Black);
-    flappy::MenuFont::draw(canvasStorage,135,240,"M5 PLAY  LEFT NEXT",16,227,flappy::BittyUi::Muted);
+    if (app.settings.clockDatePosition != flappy::ClockDatePosition::Bottom)
+      flappy::MenuFont::draw(canvasStorage,135,240,"M5 PLAY  LEFT NEXT",16,227,flappy::BittyUi::Muted);
+    flappy::ClockOverlay::draw(canvasStorage,135,240,homeTime(nowMs),app.settings.clockDatePosition);
   }
   if (asyncDisplay.submitBorrowedFrame(canvasStorage,width,height)) asyncDisplay.submitEndFrame();
   else {
@@ -2012,8 +2022,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   const bool menuWasOpen = app.menuOpen();
   const flappy::MenuPage menuBefore = app.menu.page;
   const uint8_t selectionBefore = app.menu.selection;
-  const uint8_t previousHour = app.settings.clockHour;
-  const uint8_t previousMinute = app.settings.clockMinute;
+  const uint32_t previousClockRequest = app.clockWriteRequest;
   const bool inCoop = app.currentGame == flappy::GameTitle::FlappyBird && app.settings.mode == flappy::Mode::Coop;
   const flappy::coop::Phase phase = coopLink.session().phase();
   bool actionForApp = actionEdge;
@@ -2058,7 +2067,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   }
   if (liveCoop && app.game.state != flappy::State::Playing) app.game.syncWorldTick(sharedTick);
   playEvents(events);
-  if (previousHour != app.settings.clockHour || previousMinute != app.settings.clockMinute) writeClock(nowMs);
+  if (previousClockRequest != app.clockWriteRequest) writeClock(nowMs);
   if (!menuWasOpen && app.menuOpen() && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   if (!hockeyGame && !tetrisLinkActive() && app.settings.mode != flappy::Mode::Coop && coopLink.session().role() != flappy::coop::Role::Off) stopCoop();
   const bool coopStart = app.coopRequest != handledCoopRequest && app.settings.coopRole;

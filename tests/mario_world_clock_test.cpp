@@ -15,6 +15,9 @@ struct MarioWorldClockTestAccess {
     scene.tile(pixels,x,y,number,1,sprite,flipX,flipY);
   }
   static uint16_t color(const MarioWorldClock& scene, unsigned value) { return scene.palette_[4+value]; }
+  static uint16_t paletteColor(const MarioWorldClock& scene, unsigned pal, unsigned value) {
+    return scene.palette_[pal*4+value];
+  }
   static void meta(const MarioWorldClock& scene, uint16_t* pixels, int x, int y) {
     scene.meta(pixels,x,y,0x40,false);
   }
@@ -38,10 +41,11 @@ struct MarioWorldClockTestAccess {
       assert(o.x<1660 && o.width && o.height);
     }
     for(unsigned i=0;i<MarioWorldClock::SignCount;++i) {
-      assert(scene.signs_[i]>=160 && scene.signs_[i]+120<scene.exitX_);
+      assert(scene.signs_[i]>=160 && scene.signs_[i]+MarioWorldClock::ClockWidth<scene.exitX_);
       for(unsigned k=0;k<scene.objectCount_;++k) {
         const auto& o=scene.objects_[k];
-        if(o.y<146) assert(o.x+o.width<scene.signs_[i] || o.x>scene.signs_[i]+120);
+        if(o.y<MarioWorldClock::ClockBottom)
+          assert(o.x+o.width<scene.signs_[i] || o.x>scene.signs_[i]+MarioWorldClock::ClockWidth);
       }
     }
   }
@@ -50,6 +54,21 @@ struct MarioWorldClockTestAccess {
     scene.taken_[0][0]=0xffffffff;
   }
   static uint32_t taken(const MarioWorldClock& scene) { return scene.taken_[0][0]; }
+  static bool signCell(const ClockTime& time,unsigned cell,int& x,int& y) {
+    return MarioWorldClock::signCell(time,cell,x,y);
+  }
+  static void signs(MarioWorldClock& scene,uint16_t* pixels,const ClockTime& time,int left) {
+    scene.signs_[0]=200;scene.signs_[1]=1000;scene.signs_[2]=1400;
+    scene.camera_=int16_t(200-left);scene.drawSigns(pixels,time);
+  }
+  static void clearTaken(MarioWorldClock& scene) {std::memset(scene.taken_,0,sizeof(scene.taken_));}
+  static void collectAt(MarioWorldClock& scene,const ClockTime& time,unsigned cell) {
+    int x,y;assert(MarioWorldClock::signCell(time,cell,x,y));
+    scene.xq_=int32_t(scene.signs_[0]+x)*256;scene.yq_=int32_t(y+16)*256;
+    scene.collectClockCoins(time);
+  }
+  static unsigned collected(const MarioWorldClock& scene) {return scene.collectedCells(0);}
+  static void away(MarioWorldClock& scene) {scene.xq_=32*256;scene.yq_=216*256;}
   static void allBranches(MarioWorldClock& scene) {
     scene.objectCount_=scene.enemyCount_=0;
     for(unsigned k=0;k<=unsigned(MarioWorldClock::Kind::Bowser);++k)
@@ -126,6 +145,56 @@ static void bindingAndNativePixels() {
   scene.draw(nullptr,time);
 }
 
+static void stackedClockGeometryAndCollection() {
+  static_assert(MarioWorldClock::ClockCoinSize==16,"Clock coins retain their native square cell");
+  static_assert(MarioWorldClock::ClockWidth==112,"Two three-column digits share a seven-cell row");
+  static_assert(MarioWorldClock::ClockBottom<209,"Clock art must leave the shared date line clear");
+  const auto bytes=fixture();
+  MarioWorldClock scene;scene.reset(31);MarioWorldClockTestAccess::bindFixture(scene,bytes);
+  ClockTime time;time.hour=12;time.minute=34;
+  std::vector<uint16_t> storage(135*240+32,0x5aa5),expected(135*240,0x5aa5);
+  auto* pixels=storage.data()+16;
+  // This independent fixture spells 12 above 34, with no colon or center marks.
+  const char* rows[4][5]={{"010","110","010","010","111"},
+    {"111","001","111","100","111"},{"111","001","111","001","111"},
+    {"101","101","111","001","001"}};
+  for(unsigned digit=0;digit<4;++digit)for(unsigned row=0;row<5;++row)for(unsigned col=0;col<3;++col) {
+    const unsigned cell=digit*15+row*3+col;int x=0,y=0;
+    const bool ink=MarioWorldClockTestAccess::signCell(time,cell,x,y);
+    assert(ink==(rows[digit][row][col]=='1'));
+    assert(x==int(digit%2)*64+int(col)*16);
+    assert(y==(digit<2?16:112)+int(row)*16);
+    assert(x>=0&&x+16<=112&&y>=16&&y+16<=192);
+    if(!ink)continue;
+    for(int py=0;py<16;++py)for(int px=0;px<16;++px) {
+      const unsigned value=px<8?(py<8?1:2):(py<8?3:0);
+      if(value)expected[(y+py)*135+MarioWorldClock::ClockLeft+x+px]=
+        MarioWorldClockTestAccess::paletteColor(scene,3,value);
+    }
+  }
+  int x=0,y=0;assert(!MarioWorldClockTestAccess::signCell(time,60,x,y));
+  MarioWorldClockTestAccess::signs(scene,pixels,time,MarioWorldClock::ClockLeft);
+  assert(std::equal(expected.begin(),expected.end(),pixels));
+  for(int py=16;py<192;++py)for(int px=59;px<75;++px)assert(pixels[py*135+px]==0x5aa5);
+  for(int py=209;py<240;++py)for(int px=0;px<135;++px)assert(pixels[py*135+px]==0x5aa5);
+  for(int left:{-113,-112,-111,-15,-1,0,11,134,135}) {
+    std::fill(pixels,pixels+135*240,0x5aa5);
+    MarioWorldClockTestAccess::signs(scene,pixels,time,left);
+    for(unsigned i=0;i<16;++i)assert(storage[i]==0x5aa5&&storage[135*240+16+i]==0x5aa5);
+  }
+  MarioWorldClockTestAccess::clearTaken(scene);
+  const unsigned before=scene.coinsCollected();
+  for(unsigned cell:{30u,31u,32u,35u,36u})MarioWorldClockTestAccess::collectAt(scene,time,cell);
+  assert(MarioWorldClockTestAccess::collected(scene)==3&&scene.coinsCollected()==before+3);
+  MarioWorldClockTestAccess::away(scene);
+  scene.step(time);assert(MarioWorldClockTestAccess::collected(scene)==0);
+  MarioWorldClockTestAccess::collectAt(scene,time,30);
+  assert(MarioWorldClockTestAccess::collected(scene)==1);
+  MarioWorldClockTestAccess::away(scene);time.twentyFourHour=false;
+  scene.step(time);assert(MarioWorldClockTestAccess::collected(scene)==0);
+  std::cout<<"Mario clock: stacked native coin cells, empty separator, collection limit and date/footer clearance passed\n";
+}
+
 static void lifetimeAndVariety() {
   const auto bytes=fixture(), original=bytes;
   std::vector<uint16_t> guarded(135*240+32,0x5aa5);
@@ -183,4 +252,4 @@ static void lifetimeAndVariety() {
   std::cout<<"Mario world clock state: "<<sizeof(scene)<<" bytes; native pixel and draw-boundary checks passed\n";
 }
 
-int main() {bindingAndNativePixels();lifetimeAndVariety();}
+int main() {bindingAndNativePixels();stackedClockGeometryAndCollection();lifetimeAndVariety();}

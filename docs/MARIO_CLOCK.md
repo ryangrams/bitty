@@ -4,7 +4,7 @@ Select Mario to open its portrait clock. Tap left to choose the next game, press
 
 Mario travels through an endless sequence of generated overworld, underground, underwater and castle sections. He enters a pipe, disappears into it, and emerges in the next environment. Each group visits all four themes. Courses include native enemies, pits, blocks, platforms, bridges, firebars, cannons and occasional vine, spring, flag, Toad and Bowser encounters. The clock scene avoids death and has no game-over state.
 
-Coins form HH:MM in clearings. The camera pauses long enough to read them, then continues. Mario can jump through and collect lower coins. A minute or format change updates the formation. The rare poison mushroom is omitted because the original supplied ROM lacks Lost Levels artwork.
+Coins form HH above MM in clearings, without a colon. The sign uses native 16 by 16 background coin tiles on an equal horizontal and vertical grid. Each digit occupies 48 by 80 pixels, and each centered pair occupies 112 pixels. The camera pauses long enough to read them, then continues. Mario can collect up to three coins per sign. A minute or format change updates the formation. The shared menu offers 12-hour or 24-hour time and an optional weekday/date line at the top or bottom. The rare poison mushroom is omitted because the original supplied ROM lacks Lost Levels artwork.
 
 ## Cartridge and engine
 

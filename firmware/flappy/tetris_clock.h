@@ -105,11 +105,6 @@ class TetrisClock {
           block(pixels, px, py, pieceColor(piece_.family), Cell, BoardY);
       }
     }
-    // The two pairs read from top to bottom. The colon occupies their gap.
-    if (phase_ == Phase::Read || phase_ == Phase::Assemble) {
-      rect(pixels, 65, 139, 4, 3, 0xdedb);
-      rect(pixels, 65, 147, 4, 3, 0xdedb);
-    }
     const uint8_t nextFamily = phase_ == Phase::Assemble && planIndex_ < planCount_
         ? plan_[planIndex_].family : 0;
     for (unsigned i = 0; i < 4; ++i) {

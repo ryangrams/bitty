@@ -16,6 +16,12 @@ class MarioWorldClock {
   enum class Phase : uint8_t { Run, EnterPipe, Dark, ExitPipe };
   static constexpr int Width = ClockScene::Width, Height = ClockScene::Height;
   static constexpr unsigned MaxObjects = 40, MaxEnemies = 12, SignCount = 3;
+  static constexpr unsigned ClockCoinSize = 16, ClockCells = 4 * 3 * 5;
+  static constexpr int ClockWidth = 7 * ClockCoinSize;
+  static constexpr int ClockHourY = 16, ClockMinuteY = 112;
+  static constexpr int ClockBottom = ClockMinuteY + 5 * ClockCoinSize;
+  static constexpr int ClockLeft = (Width - ClockWidth) / 2;
+  static constexpr int ClockReadOffset = 34 - ClockLeft;
 
   void reset(uint32_t seed) {
     seed_ = rng_ = seed ? seed : 1;
@@ -70,11 +76,11 @@ class MarioWorldClock {
     }
 
     for (unsigned i = 0; i < SignCount; ++i) {
-      if (!(seenSigns_ & (1u << i)) && oldX >= int(signs_[i]) + 26) {
+      if (!(seenSigns_ & (1u << i)) && oldX >= int(signs_[i]) + ClockReadOffset) {
         seenSigns_ |= uint8_t(1u << i);
         activeSign_ = int8_t(i); hold_ = 210;
-        xq_ = int32_t(signs_[i] + 26) * 256;
-        camera_ = int16_t(signs_[i] - 8);
+        xq_ = int32_t(signs_[i] + ClockReadOffset) * 256;
+        camera_ = int16_t(signs_[i] - ClockLeft);
         break;
       }
     }
@@ -185,7 +191,7 @@ class MarioWorldClock {
   int16_t vy_ = 0, camera_ = 0;
   uint16_t phaseTicks_ = 0, hold_ = 0, exitX_ = 1440, minuteKey_ = 0xffff;
   uint16_t signs_[SignCount] = {}, palette_[32] = {};
-  uint32_t taken_[SignCount][3] = {};
+  uint32_t taken_[SignCount][2] = {};
   Object objects_[MaxObjects] = {};
   Enemy enemies_[MaxEnemies] = {};
   uint8_t objectCount_ = 0, enemyCount_ = 0, seenSigns_ = 0, themeMask_ = 0;
@@ -424,22 +430,33 @@ class MarioWorldClock {
     }
   }
 
-  static bool signInk(const ClockTime& time, unsigned x, unsigned y) {
-    if (x == 8) return y == 1 || y == 3;
-    const unsigned start[4] = {0,4,10,14};
-    for (unsigned i=0;i<4;++i)
-      if (x >= start[i] && x < start[i]+3) return ClockScene::digitPixel(time.digit(i),x-start[i],y);
-    return false;
+  // A square native coin metatile forms each cell. Two digits sit above two
+  // digits, with one empty cell between each pair and between the two rows.
+  static bool signCell(const ClockTime& time, unsigned cell, int& x, int& y) {
+    if (cell >= ClockCells) return false;
+    const unsigned digit = cell / 15, column = cell % 3, row = (cell % 15) / 3;
+    x = int((digit % 2) * 4 + column) * int(ClockCoinSize);
+    y = (digit < 2 ? ClockHourY : ClockMinuteY) + int(row * ClockCoinSize);
+    return ClockScene::digitPixel(time.digit(digit), column, row);
+  }
+  unsigned collectedCells(unsigned sign) const {
+    unsigned count = 0;
+    for (unsigned word = 0; word < 2; ++word)
+      for (uint32_t bits = taken_[sign][word]; bits; bits &= bits - 1) ++count;
+    return count;
   }
   void collectClockCoins(const ClockTime& time) {
     for (unsigned s=0;s<SignCount;++s) {
-      if (playerX()+16 < signs_[s] || playerX() > int(signs_[s])+120) continue;
-      for (unsigned row=0;row<5;++row) for (unsigned col=0;col<17;++col) {
-        const unsigned bit=row*17+col;
-        if (!signInk(time,col,row) || (taken_[s][bit/32] & (1u<<(bit%32)))) continue;
-        const int x=signs_[s]+int(col)*7, y=58+int(row)*18;
-        if (playerX()+13>x && playerX()+3<x+8 && playerFeet()>y && playerFeet()-16<y+16) {
-          taken_[s][bit/32] |= 1u<<(bit%32); ++collectedCoins_;
+      if (playerX()+16 < signs_[s] || playerX() > int(signs_[s])+ClockWidth) continue;
+      unsigned collected = collectedCells(s);
+      // Occasional collected coins leave the time readable during its pause.
+      for (unsigned cell=0;cell<ClockCells && collected<3;++cell) {
+        int localX, y;
+        if (!signCell(time,cell,localX,y) || (taken_[s][cell/32] & (1u<<(cell%32)))) continue;
+        const int x=int(signs_[s])+localX;
+        if (playerX()+13>x && playerX()+3<x+int(ClockCoinSize) &&
+            playerFeet()>y && playerFeet()-16<y+int(ClockCoinSize)) {
+          taken_[s][cell/32] |= 1u<<(cell%32); ++collectedCoins_; ++collected;
         }
       }
     }
@@ -620,12 +637,11 @@ class MarioWorldClock {
   void drawSigns(uint16_t* pixels, const ClockTime& time) const {
     for(unsigned s=0;s<SignCount;++s) {
       const int x=int(signs_[s])-camera_;
-      if(x>=Width || x+120<=0)continue;
-      for(unsigned row=0;row<5;++row) for(unsigned col=0;col<17;++col) {
-        const unsigned bit=row*17+col;
-        if(signInk(time,col,row)&&!(taken_[s][bit/32]&(1u<<(bit%32))))
-          coin(pixels,x+int(col)*7,58+int(row)*18,
-               hold_ && activeSign_==int(s) ? 0 : unsigned(ticks_/10));
+      if(x>=Width || x+ClockWidth<=0)continue;
+      for(unsigned cell=0;cell<ClockCells;++cell) {
+        int localX, y;
+        if(signCell(time,cell,localX,y)&&!(taken_[s][cell/32]&(1u<<(cell%32))))
+          meta(pixels,x+localX,y,theme_==Theme::Water?0xc3:0xc2);
       }
     }
   }

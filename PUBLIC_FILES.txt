@@ -53,6 +53,8 @@ firmware/flappy/ble_radio.h
 firmware/flappy/cartridge_store.h
 firmware/flappy/clock_runtime.h
 firmware/flappy/clock_scene.h
+firmware/flappy/clock_calendar.h
+firmware/flappy/clock_overlay.h
 firmware/flappy/controller_input.h
 firmware/flappy/coop_protocol.h
 firmware/flappy/display_damage.h
@@ -131,6 +133,7 @@ tests/bitty_ui_test.cpp
 tests/ble_radio_test.cpp
 tests/cartridge_store_test.cpp
 tests/clock_runtime_test.cpp
+tests/clock_calendar_test.cpp
 tests/controller_input_test.cpp
 tests/coop_protocol_test.cpp
 tests/display_damage_test.cpp

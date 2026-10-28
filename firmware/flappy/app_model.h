@@ -5,6 +5,7 @@
 #include "game_core.h"
 #include "jetpack_profile.h"
 #include "hockey_state.h"
+#include "clock_calendar.h"
 
 namespace flappy {
 
@@ -43,7 +44,7 @@ inline Mode playModeChoice(uint8_t index) {
   static constexpr Mode choices[] = {Mode::Original, Mode::Demo, Mode::Arcade, Mode::Big, Mode::Coop};
   return index < 5 ? choices[index] : Mode::Original;
 }
-enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions, HockeyLink, HockeyMap, HockeyColors };
+enum class MenuPage : uint8_t { Closed, Home, BootGame, ChangeGame, GameSettings, Modes, Brightness, Volume, Skins, Clock, Controller, TetrisLevel, TetrisType, TetrisControls, TetrisLink, Coop, TetrisZeroPlayers, Sleep, GeometryLevel, JetpackPractice, JetpackUpgrades, JetpackMissions, HockeyLink, HockeyMap, HockeyColors, ClockDate };
 
 constexpr uint8_t GeometryLevelCount = 22;
 
@@ -83,6 +84,7 @@ struct Settings {
   uint8_t clockHour = 12;
   uint8_t clockMinute = 0;
   bool clock24Hour = true;
+  ClockDatePosition clockDatePosition = ClockDatePosition::None;
   uint8_t coopRole = 0;
   uint8_t geometryLevel = 0;
   uint8_t arcadeSensitivity = 1;
@@ -151,6 +153,7 @@ class AppModel {
   GameTitle currentGame = GameTitle::FlappyBird;
   uint32_t gameRequest = 0;
   uint32_t homeRequest = 0;
+  uint32_t clockWriteRequest = 0;
   uint32_t gameRestartRequest = 0;
   uint32_t geometryRequest = 0;
   uint32_t arcadeCalibrateRequest = 0;
@@ -572,6 +575,7 @@ class AppModel {
   }
 
   void setClock(uint8_t hour, uint8_t minute, uint32_t nowMs) {
+    clockDate_ = clockDate(nowMs);
     settings.clockHour = uint8_t(hour % 24);
     settings.clockMinute = uint8_t(minute % 60);
     clockBaseMs_ = nowMs;
@@ -581,6 +585,36 @@ class AppModel {
   uint8_t clockHour(uint32_t nowMs) const { return uint8_t(clockMinutes(nowMs) / 60); }
   uint8_t clockMinute(uint32_t nowMs) const { return uint8_t(clockMinutes(nowMs) % 60); }
   uint8_t clockSecond(uint32_t nowMs) const { return uint8_t((uint32_t(nowMs - clockBaseMs_) / 1000u) % 60u); }
+  ClockDate clockDate(uint32_t nowMs) const {
+    const uint32_t seconds = uint32_t(settings.clockHour) * 3600u + uint32_t(settings.clockMinute) * 60u +
+                             uint32_t(nowMs - clockBaseMs_) / 1000u;
+    return ClockCalendar::addDays(clockDate_,seconds / 86400u);
+  }
+  bool synchronizeClock(const ClockDate& date, uint8_t hour, uint8_t minute, uint8_t second, uint32_t nowMs) {
+    if (!ClockCalendar::valid(date) || hour >= 24 || minute >= 60 || second >= 60) return false;
+    clockDate_ = date;
+    settings.clockHour = hour; settings.clockMinute = minute;
+    clockBaseMs_ = nowMs - uint32_t(second) * 1000u;
+    return true;
+  }
+  void advanceClock(uint32_t nowMs) {
+    const auto date = clockDate(nowMs);
+    const uint8_t hour = clockHour(nowMs), minute = clockMinute(nowMs);
+    clockBaseMs_ = nowMs - uint32_t(nowMs - clockBaseMs_) % 60000u;
+    clockDate_ = date; settings.clockHour = hour; settings.clockMinute = minute;
+  }
+  bool setClockDate(const ClockDate& date, uint32_t nowMs) {
+    if (!ClockCalendar::valid(date)) return false;
+    advanceClock(nowMs);
+    clockDate_ = date;
+    ++clockWriteRequest;
+    return true;
+  }
+  void setClockDatePosition(uint8_t position) {
+    if (position > uint8_t(ClockDatePosition::Bottom)) position = 0;
+    const auto value = ClockDatePosition(position);
+    if (settings.clockDatePosition != value) { settings.clockDatePosition = value; settingsDirty = true; }
+  }
 
   void openMenu(MenuPage page = MenuPage::Home) {
     menu.page = page;
@@ -616,6 +650,7 @@ class AppModel {
       case MenuPage::Sleep: return "Sleep";
       case MenuPage::Skins: return "Skins";
       case MenuPage::Clock: return "Set clock";
+      case MenuPage::ClockDate: return "Set date";
       case MenuPage::Controller: return "Controller";
       case MenuPage::JetpackPractice: return "Practice (no coins)";
       case MenuPage::JetpackUpgrades: return "Power-up upgrades";
@@ -652,7 +687,8 @@ class AppModel {
       case MenuPage::Volume: return 7;
       case MenuPage::Sleep: return SleepChoiceCount + 1;
       case MenuPage::Skins: return uint8_t(skinCount_ + 1);
-      case MenuPage::Clock: return 4;
+      case MenuPage::Clock: return 6;
+      case MenuPage::ClockDate: return 4;
       case MenuPage::Controller: return 4;
       case MenuPage::JetpackPractice: return 5;
       case MenuPage::JetpackUpgrades: return 6;
@@ -754,7 +790,11 @@ class AppModel {
         snprintf(labelBuffer_, sizeof(labelBuffer_), "Skin %u", unsigned(index + 1));
         return labelBuffer_;
       case MenuPage::Clock: {
-        constexpr const char* labels[] = {"Hour", "Minute", "24-hour"};
+        constexpr const char* labels[] = {"Hour", "Minute", "Time format", "Day / date", "Set date"};
+        return labels[index];
+      }
+      case MenuPage::ClockDate: {
+        constexpr const char* labels[] = {"Year", "Month", "Day"};
         return labels[index];
       }
       case MenuPage::Controller: {
@@ -788,7 +828,9 @@ class AppModel {
         if (index == 5) return controllerStatus;
         if (index == 6) return sleepLabel(settings.sleepIndex);
         if (index == 7) {
-          snprintf(valueBuffer_, sizeof(valueBuffer_), "%02u:%02u", unsigned(clockHour(lastNowMs_)), unsigned(clockMinute(lastNowMs_)));
+          const unsigned hour = clockHour(lastNowMs_);
+          if (settings.clock24Hour) snprintf(valueBuffer_,sizeof(valueBuffer_),"%02u %02u",hour,unsigned(clockMinute(lastNowMs_)));
+          else snprintf(valueBuffer_,sizeof(valueBuffer_),"%02u %02u %s",hour % 12 ? hour % 12 : 12,unsigned(clockMinute(lastNowMs_)),hour < 12 ? "AM" : "PM");
           return valueBuffer_;
         }
         if (index == 8) return gameLabel(currentGame);
@@ -902,8 +944,19 @@ class AppModel {
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%02u", unsigned(index ? clockMinute(lastNowMs_) : clockHour(lastNowMs_)));
           return valueBuffer_;
         }
-        if (index == 2) return settings.clock24Hour ? "On" : "Off";
+        if (index == 2) return settings.clock24Hour ? "24-hour" : "12-hour";
+        if (index == 3) return settings.clockDatePosition == ClockDatePosition::Top ? "Top" :
+                               settings.clockDatePosition == ClockDatePosition::Bottom ? "Bottom" : "None";
+        if (index == 4) {
+          ClockCalendar::format(valueBuffer_,sizeof(valueBuffer_),clockDate(lastNowMs_)); return valueBuffer_;
+        }
         break;
+      case MenuPage::ClockDate: {
+        const ClockDate date = clockDate(lastNowMs_);
+        if (index < 3) snprintf(valueBuffer_,sizeof(valueBuffer_),"%u",unsigned(index == 0 ? date.year : index == 1 ? date.month : date.day));
+        else return "";
+        return valueBuffer_;
+      }
       default: break;
     }
     return "";
@@ -999,6 +1052,7 @@ class AppModel {
   uint32_t randomState_;
   uint32_t menuPressMs_ = 0;
   uint32_t clockBaseMs_ = 0;
+  ClockDate clockDate_;
   uint32_t lastNowMs_ = 0;
   bool menuWasDown_ = false;
   bool menuPressBeganOpen_ = false;
@@ -1099,6 +1153,7 @@ class AppModel {
     if (menu.selection >= menuItemCount() - 1) {
       if (menu.page == MenuPage::Home) closeMenu();
       else if (menu.page == MenuPage::Clock) openMenu();
+      else if (menu.page == MenuPage::ClockDate) openMenu(MenuPage::Clock);
       else if (menu.page == MenuPage::Modes || menu.page == MenuPage::Skins ||
                menu.page == MenuPage::Coop || menu.page == MenuPage::TetrisLevel ||
                menu.page == MenuPage::TetrisType || menu.page == MenuPage::TetrisControls ||
@@ -1235,10 +1290,23 @@ class AppModel {
       case MenuPage::Sleep: setSleep(menu.selection); break;
       case MenuPage::Skins: setSkin(menu.selection); closeMenu(); break;
       case MenuPage::Clock:
-        if (menu.selection == 0) setClock(uint8_t(clockHour(nowMs) + 1), clockMinute(nowMs), nowMs);
-        else if (menu.selection == 1) setClock(clockHour(nowMs), uint8_t(clockMinute(nowMs) + 1), nowMs);
-        else { settings.clock24Hour = !settings.clock24Hour; settingsDirty = true; }
+        if (menu.selection < 2) {
+          if (menu.selection == 0) setClock(uint8_t(clockHour(nowMs) + 1), clockMinute(nowMs), nowMs);
+          else setClock(clockHour(nowMs), uint8_t(clockMinute(nowMs) + 1), nowMs);
+          ++clockWriteRequest;
+        } else if (menu.selection == 2) { settings.clock24Hour = !settings.clock24Hour; settingsDirty = true; }
+        else if (menu.selection == 3) setClockDatePosition(uint8_t((uint8_t(settings.clockDatePosition) + 1) % 3));
+        else openMenu(MenuPage::ClockDate);
         break;
+      case MenuPage::ClockDate: {
+        ClockDate date = clockDate(nowMs);
+        if (menu.selection == 0) date.year = date.year >= 2099 ? 2000 : uint16_t(date.year + 1);
+        else if (menu.selection == 1) date.month = uint8_t(date.month % 12 + 1);
+        else date.day = uint8_t(date.day % ClockCalendar::monthDays(date.year,date.month) + 1);
+        if (date.day > ClockCalendar::monthDays(date.year,date.month)) date.day = ClockCalendar::monthDays(date.year,date.month);
+        setClockDate(date,nowMs);
+        break;
+      }
       case MenuPage::Controller:
         controllerAction = uint8_t(menu.selection + 1);
         ++controllerRequest;

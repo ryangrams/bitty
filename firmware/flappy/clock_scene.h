@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "clock_calendar.h"
 
 namespace flappy {
 
@@ -8,6 +9,7 @@ struct ClockTime {
   uint8_t hour = 12, minute = 0, second = 0;
   bool twentyFourHour = true;
   uint32_t ms = 0;
+  ClockDate date;
   uint8_t displayHour() const {
     const uint8_t h = hour % 24;
     return twentyFourHour ? h : h % 12 ? h % 12 : 12;

@@ -242,8 +242,6 @@ class GeometryClock {
           if (ClockScene::digitPixel(digits_[digit],column,row))
             cell(c,x + int(column) * 12,y + int(row) * 12,material_,row * 3u + column + digit * 17u);
     }
-    c.ellipse(left + 36,101,6,6,white()); c.ellipse(left + 37,102,4,4,pink());
-    c.ellipse(left + 36,111,6,6,white()); c.ellipse(left + 37,112,4,4,pink());
   }
   void drawCourse(Canvas& c) const {
     const int floorOffset = int(world_ / 256u % 32u);

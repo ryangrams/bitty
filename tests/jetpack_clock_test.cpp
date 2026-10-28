@@ -44,8 +44,8 @@ struct JetpackClockTestAccess {
     assert(clock.vehicle_ <= 7 && clock.nextVehicle_ >= 1 && clock.nextVehicle_ <= 7);
     for (unsigned i = 0; i < clock.coinCount_; ++i) {
       const auto& coin = clock.coins_[i];
-      assert(coin.homeX >= 14 && coin.homeX <= 112);
-      assert(coin.homeY >= 68 && coin.homeY <= 124);
+      assert(coin.homeX >= 28 && coin.homeX <= 96);
+      assert(coin.homeY >= 28 && coin.homeY <= 152);
       assert(coin.state <= JetpackClock::Collected);
       assert(coin.x > -4096 && coin.x < 5000);
       assert(coin.y >= 0 && coin.y < 240 * 16);
@@ -119,16 +119,14 @@ static void coinDigitsAndFormatChanges() {
   clock.reset(5);
   ClockTime time; time.hour = 12; time.minute = 34;
   clock.step(time);
-  assert(Access::count(clock) == 41);
+  assert(Access::count(clock) == 39);
   static const char* digits[] = {
     "010110010010111", "111001111100111", "111001111001111", "101101111001001"
   };
-  static const int left[] = {14,39,73,98};
   std::set<std::pair<int,int> > expected;
   for (unsigned i = 0; i < 4; ++i)
     for (int y = 0; y < 5; ++y) for (int x = 0; x < 3; ++x)
-      if (digits[i][y * 3 + x] == '1') expected.insert({left[i] + x * 7, y * 10});
-  expected.insert({63,10}); expected.insert({63,30});
+      if (digits[i][y * 3 + x] == '1') expected.insert({28 + int(i % 2) * 44 + x * 12, int(i / 2) * 68 + y * 12});
   assert(Access::cells(clock) == expected);
   for (unsigned i = 0; i < 240; ++i) clock.step(time);
   assert(Access::cycle(clock) == 240);

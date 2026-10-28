@@ -171,13 +171,12 @@ class JetpackClock {
   void form(const ClockTime& time) {
     formed_ = true; minute_ = time.minuteKey(); twelveHour_ = !time.twentyFourHour;
     cycle_ = 0; coinCount_ = 0;
-    const int top = 68 + int(ClockScene::random(random_) % 3u) * 8;
-    static const uint8_t left[] = {14, 39, 73, 98};
+    const int top = 28 + int(ClockScene::random(random_) % 3u) * 4;
     for (unsigned digit = 0; digit < 4; ++digit)
       for (unsigned y = 0; y < 5; ++y)
         for (unsigned x = 0; x < 3; ++x)
-          if (ClockScene::digitPixel(time.digit(digit), x, y)) addCoin(left[digit] + int(x) * 7, top + int(y) * 10);
-    addCoin(63, top + 10); addCoin(63, top + 30);
+          if (ClockScene::digitPixel(time.digit(digit), x, y))
+            addCoin(28 + int(digit % 2) * 44 + int(x) * 12,top + int(digit / 2) * 68 + int(y) * 12);
   }
 
   void updateTraffic() {

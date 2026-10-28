@@ -530,7 +530,7 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
   for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
     assert(app.setCurrentGame(flappy::GameTitle(game)));
     for (uint8_t page = uint8_t(flappy::MenuPage::Home);
-         page <= uint8_t(flappy::MenuPage::JetpackMissions); ++page) {
+         page <= uint8_t(flappy::MenuPage::ClockDate); ++page) {
       app.openMenu(flappy::MenuPage(page));
       assert(flappy::MenuFont::textWidth(app.menuTitle()) <= 128);
       for (uint8_t index = 0; index < app.menuItemCount(); ++index) {

@@ -82,11 +82,6 @@ class GalagaClock {
       if (enemy.flight == Flight::Pending || enemy.flight == Flight::Dead) continue;
       drawEnemy(c,enemy,i);
     }
-    if (phase_ == Phase::Read) {
-      const int sway = wave(frame_ * 2) * 2 / 256;
-      c.rect(66 + sway,101,3,2,color(120,170,220));
-      c.rect(66 + sway,109,3,2,color(120,170,220));
-    }
     for (const Shot& shot : playerShots_) if (shot.active) {
       c.rect(shot.x / Unit,shot.y / Unit - 3,1,5,color(230,244,255));
       c.pixel(shot.x / Unit,shot.y / Unit + 2,color(72,220,255));

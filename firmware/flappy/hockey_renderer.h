@@ -74,12 +74,13 @@ class HockeyRenderer {
       w.rect(int(f.x[i])-2,int(f.y[i])-2,3,1,i ? 0x57a8 : 0xc7ff);
     }
     c.rect(0,0,135,17,p.outside);
-    char score[24]; snprintf(score,sizeof(score),"Q %u   HOCKEY   P %u",unsigned(f.scores[0]),unsigned(f.scores[1]));
-    c.text(score,10,2,0xffff);
+    char score[24];
+    if(clock) c.text("HOCKEY QUEEN",31,2,0xffff);
+    else { snprintf(score,sizeof(score),"Q %u   HOCKEY   P %u",unsigned(f.scores[0]),unsigned(f.scores[1])); c.text(score,10,2,0xffff); }
     if(clock) {
       for(unsigned d=0;d<4;++d) for(unsigned row=0;row<5;++row) for(unsigned col=0;col<3;++col)
-        if(ClockScene::digitPixel(clock->digit(d),col,row)) c.rect(31+int(d)*17+(d>=2 ? 5 : 0)+int(col)*4,109+int(row)*4,3,3,p.line);
-      c.rect(62,114,2,2,p.line); c.rect(62,122,2,2,p.line);
+        if(ClockScene::digitPixel(clock->digit(d),col,row))
+          c.rect(42+int(d%2)*30+int(col)*8,72+int(d/2)*50+int(row)*8,6,6,p.outside);
     } else {
       if(f.phase==hockey::Phase::Goal) banner(c,"GOAL!",p.outside);
       if(f.phase==hockey::Phase::Finished) banner(c,f.scores[local]>=hockey::PlayTo ? "YOU WIN!" : "ROYAL REVENGE?",p.outside);
