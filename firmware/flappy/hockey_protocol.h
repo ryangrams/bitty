@@ -100,6 +100,7 @@ class Channel {
   bool received() const { return haveCurrent_; }
   bool fresh(uint32_t now) const { return haveCurrent_ && uint32_t(now-currentMs_)<StaleMs; }
   const Frame& latest() const { return current_; }
+  const Frame& lastSent() const { return outgoing_; }
   bool display(uint32_t now,Frame& result) const {
     if(!haveCurrent_) return false;
     result=current_;

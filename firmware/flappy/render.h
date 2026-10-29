@@ -670,36 +670,45 @@ class Renderer {
       const bool selected = index == app.menu.selection, back = index + 1 == count;
       const bool available = back || app.gameChoiceAvailable(index);
       const int x = 8 + int(tile % 2) * 66, y = 54 + int(tile / 2) * 54;
-      const uint16_t fill = selected ? BittyUi::Amber : BittyUi::Panel;
+      constexpr uint16_t accents[] = {0xff09,0xfbad,0xa61f,0xfd47,0x67f6,0x3dff,0xff32,0xfaf7,0xb47f};
+      const uint16_t accent = accents[index % 9];
+      const uint16_t fill = selected ? accent : BittyUi::Panel;
       const uint16_t ink = selected ? BittyUi::Black : available ? BittyUi::Text : BittyUi::Muted;
+      rect(x-1,y-1,64,52,available ? accent : BittyUi::Muted);
       rect(x, y, 62, 50, fill);
+      rect(x+2,y+2,58,2,selected ? BittyUi::Text : accent);
       const int cx = x + 30, cy = y + 13;
       const auto title = app.gameChoiceTitle(index);
-      if (back) { menuText("<", cx - 3, cy - 5, 1, ink, 1); }
+      const uint16_t iconInk = available ? (selected ? BittyUi::Black : accent) : BittyUi::Muted;
+      if (back) { menuText("<", cx - 3, cy - 5, 1, iconInk, 1); }
       else if (title == GameTitle::FlappyBird) {
-        rect(cx - 9, cy - 5, 15, 10, ink); rect(cx - 12, cy, 7, 3, ink);
-        rect(cx + 6, cy, 5, 3, ink); rect(cx + 2, cy - 3, 2, 2, fill);
+        rect(cx - 9, cy - 5, 15, 10, iconInk); rect(cx - 12, cy + int((opt.nowMs / 140) % 2) * 2, 7, 3, iconInk);
+        rect(cx + 6, cy, 5, 3, iconInk); rect(cx + 2, cy - 3, 2, 2, fill);
       } else if (title == GameTitle::Tetris) {
-        for (int i = 0; i < 4; ++i) rect(cx - 9 + (i ? (i - 1) * 6 : 6), cy - 5 + (i ? 6 : 0), 5, 5, ink);
+        for (int i = 0; i < 4; ++i) rect(cx - 9 + (i ? (i - 1) * 6 : 6), cy - 5 + (i ? 6 : 0), 5, 5, iconInk);
       } else if (title == GameTitle::Galaga) {
-        rect(cx - 2, cy - 7, 4, 12, ink); rect(cx - 9, cy, 18, 4, ink);
-        rect(cx - 7, cy - 4, 2, 9, ink); rect(cx + 5, cy - 4, 2, 9, ink);
+        rect(cx - 2, cy - 7, 4, 12, iconInk); rect(cx - 9, cy, 18, 4, iconInk);
+        rect(cx - 7, cy - 4, 2, 9, iconInk); rect(cx + 5, cy - 4, 2, 9, iconInk);
       } else if (title == GameTitle::Arkanoid) {
-        rect(cx - 12, cy + 5, 24, 3, ink); rect(cx + 3, cy - 4, 3, 3, ink);
-        for (int i = 0; i < 4; ++i) rect(cx - 13 + i * 7, cy - 10, 6, 3, ink);
+        rect(cx - 12, cy + 5, 24, 3, iconInk); rect(cx + 3, cy - 4, 3, 3, iconInk);
+        for (int i = 0; i < 4; ++i) rect(cx - 13 + i * 7, cy - 10, 6, 3, iconInk);
       } else if (title == GameTitle::JetpackJoyride) {
-        rect(cx - 3, cy - 7, 6, 5, ink); rect(cx - 5, cy - 1, 10, 8, ink);
-        rect(cx - 10, cy, 4, 6, ink); rect(cx - 10, cy + 7, 3, 4, ink);
+        rect(cx - 3, cy - 7, 6, 5, iconInk); rect(cx - 5, cy - 1, 10, 8, iconInk);
+        rect(cx - 10, cy, 4, 6, iconInk); rect(cx - 10, cy + 7, 3, 3 + int((opt.nowMs / 90) % 3), 0xfd47);
       } else if (title == GameTitle::HockeyQueen) {
-        rect(cx - 11, cy + 1, 15, 5, ink);
-        rect(cx - 11, cy - 6, 3, 7, ink); rect(cx - 5, cy - 9, 3, 10, ink);
-        rect(cx + 1, cy - 6, 3, 7, ink); rect(cx + 8, cy + 3, 7, 4, ink);
+        rect(cx - 11, cy + 1, 15, 5, iconInk);
+        rect(cx - 11, cy - 6, 3, 7, iconInk); rect(cx - 5, cy - 9, 3, 10, iconInk);
+        rect(cx + 1, cy - 6, 3, 7, iconInk); rect(cx + 8, cy + 3, 7, 4, iconInk);
       } else if (title == GameTitle::GeometryDash) {
-        rect(cx - 11, cy - 6, 12, 12, ink); rect(cx - 8, cy - 3, 2, 2, fill);
-        rect(cx - 3, cy - 3, 2, 2, fill); rect(cx + 7, cy + 2, 8, 4, ink);
-        rect(cx + 9, cy - 2, 4, 4, ink); rect(cx + 10, cy - 5, 2, 3, ink);
+        rect(cx - 11, cy - 6, 12, 12, iconInk); rect(cx - 8, cy - 3, 2, 2, fill);
+        rect(cx - 3, cy - 3, 2, 2, fill); rect(cx + 7, cy + 2, 8, 4, iconInk);
+        rect(cx + 9, cy - 2, 4, 4, iconInk); rect(cx + 10, cy - 5, 2, 3, iconInk);
+      } else if (title == GameTitle::BittyBuddy) {
+        rect(cx-7,cy-8,14,15,iconInk); rect(cx-5,cy-5,10,6,fill);
+        rect(cx-3,cy-3,2,2,0x67f6); rect(cx+1,cy-3,2,2,0x67f6);
+        rect(cx-5,cy+7,4,3,iconInk); rect(cx+1,cy+7,4,3,iconInk);
       } else {
-        rect(cx - 14, cy - 5, 28, 12, ink); rect(cx - 9, cy - 3, 3, 8, fill);
+        rect(cx - 14, cy - 5, 28, 12, iconInk); rect(cx - 9, cy - 3, 3, 8, fill);
         rect(cx - 12, cy, 9, 2, fill); rect(cx + 4, cy + 1, 3, 3, fill);
         rect(cx + 9, cy - 2, 3, 3, fill);
       }
@@ -745,7 +754,12 @@ class Renderer {
     for (int row = 0; row < visible && first + row < count; ++row) {
       const int index = first + row, y = 73 + row * rowHeight;
       const bool selected = index == app.menu.selection;
-      if (selected) rect(5, y - 4, 134, rowHeight - 2, BittyUi::Amber);
+      constexpr uint16_t rowColors[] = {0xff09,0xa61f,0x67f6,0xfd47,0x3dff,0xfbad,0xb47f,0xff32};
+      const uint16_t accent = rowColors[index % 8];
+      if (selected) {
+        rect(5,y-4,134,rowHeight-2,accent);
+        rect(5,y-4,2,2,BittyUi::Black); rect(137,y-4,2,2,BittyUi::Black);
+      } else rect(5,y+2,2,6,accent);
       const char* label = app.menuLabel(uint8_t(index));
       const int length = int(strlen(label));
       if (selected && length > maxChars) {

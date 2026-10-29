@@ -1,21 +1,29 @@
 # Mario's clock home
 
-Select Mario to open its portrait clock. Tap left to choose the next game, press M5 for normal Mario play, or hold right for the menu. **Game home** returns from play. The shared **Set clock** menu adjusts the RTC and 12/24-hour preference. Clock mode has been removed from Mario's game settings.
+Mario's home runs the supplied NTSC game in the NES emulator. Its own engine handles jumps, collisions, enemies, moving orange platforms, swimming, pipe entry and death. The portrait display copies a 135-column crop from the full native 256 by 240 frame. It keeps the full vertical world and uses no stretching or vertical camera movement.
 
-Mario travels through an endless sequence of generated overworld, underground, underwater and castle sections. He enters a pipe, disappears into it, and emerges in the next environment. Each group visits all four themes. Courses include native enemies, pits, blocks, platforms, bridges, firebars, cannons and occasional vine, spring, flag, Toad and Bowser encounters. The clock scene avoids death and has no game-over state.
+Choose Mario to open the clock, press M5 for normal play, tap left to change games, or hold right for the shared menu. Manual play retains the Mario/Luigi selector and the existing controller and internal-button assignments.
 
-Coins form HH above MM in clearings, without a colon. The sign uses native 16 by 16 background coin tiles on an equal horizontal and vertical grid. Each digit occupies 48 by 80 pixels, and each centered pair occupies 112 pixels. The camera pauses long enough to read them, then continues. Mario can collect up to three coins per sign. A minute or format change updates the formation. The shared menu offers 12-hour or 24-hour time and an optional weekday/date line at the top or bottom. The rare poison mushroom is omitted because the original supplied ROM lacks Lost Levels artwork.
+## Repeatable courses
 
-## Cartridge and engine
+Four authored seven-page courses cycle through overworld, underground, underwater and castle environments. Each has two clearings for the time, plus native obstacles and encounters. The first two courses finish with an enterable pipe. The other two finish with a flag sequence. The clock repeats the courses indefinitely.
 
-The scene accepts the exact standalone 40,976-byte Japan/USA NTSC image with CRC-32 `3337EC46`. It reads CHR, sprite animation tables, metatiles and theme palettes from that local ROM. All original art remains in the user's private input. Unrecognized NES images receive the generic authored NES clock.
+The director sends ordinary NES button input. It brakes before a clearing, swims with separated button presses, reacts to approaching enemies, and aligns Mario over the exit pipe. Coin digits show hours above minutes, without a colon. They use native 16 by 16 tiles on a square grid. A small horizontal camera adjustment keeps the entire formation visible while Mario's original movement inertia settles. Mario can pass through some of the displayed coins.
 
-This clock has its own small stage simulation and fixed portrait camera. Normal Play reloads the original cartridge in the existing NES emulator, with its original physics, levels, enemies and controller mappings. The clock writes no cartridge data, patches no emulator RAM, and awards no scores or saved progress. The selected scene borrows the existing canvas and owns 704 bytes of host state. It has no extra framebuffer.
+A death plays briefly and restarts the same course. Two consecutive deaths advance to the next course. Bounded boot, movement and course timeouts provide recovery. Flag celebrations have a bounded dwell. These protections belong to the home director; manual Mario retains the cartridge's rules.
 
-The previous landscape clock generator used temporary level-data patches inside the emulator. That generator is retained as legacy source and has portable tests; the current home dispatcher uses `mario_world_clock.h`. The earlier generator's device measurements do not verify this new scene.
+Time formatting and the optional weekday/date line come from the shared Set clock menu. The clock updates the displayed digits without changing the course's physics. Its simulation uses the existing 60 Hz home scheduler and requests every NES video frame. Completed LCD throughput still needs a measurement on each board.
+
+## Local cartridge and ownership
+
+The adapter accepts the standalone Japan/USA NTSC image: 40,976 bytes, CRC-32 `3337EC46`. Other cartridges receive the generic NES clock. Users supply their own lawful local file. No Nintendo graphics, program code or original level lists are included in the public source.
+
+The authored courses replace level-data bytes in two private cached program windows. The source ROM stays read-only. Switching to manual play unloads the home engine and reloads the user's original cartridge, releasing the patches. The clock is silent and writes no scores, coins, missions or saved gameplay progress.
+
+The director lives in [mario_attract.h](../firmware/flappy/mario_attract.h). Its course recipes live in [mario_clock.h](../firmware/flappy/mario_clock.h). The separate native sprite simulation in `mario_world_clock.h` is legacy source and is no longer dispatched by the firmware's home screen.
 
 ## Verification
 
-Source tests use synthetic CHR data to verify native tile decoding, flips, cropping, read-only ownership, minute/format changes, scene bounds and repeated pipe transitions. The private supplied-ROM run exercised 256 seeds and 18,432,000 simulation steps. Every seed visited all four themes and all twelve enemy types, with no emergency safety rebounds. Native-size theme captures and an animated preview are retained privately under `.local/mario-world-clock/`.
+Portable tests cover authored course bounds, one NES frame request per normal step, stale RAM immediately after CPU reset, death retry, repeated-failure advance, clipped native-pixel composition and read-only cartridge ownership. NES core checks cover CPU, PPU, APU, timing, input, program caching and video paths. Private supplied-ROM traces separately check actual native area types, moving-platform actors, pipe entries, goals, recovery counts and readable clock captures.
 
-The common [game-home policy](GAME_HOMES.md) covers switching, menu behavior and score isolation. The current update still needs its own physical controls and completed-LCD-transfer measurements. Previous hardware results remain in [release status](RELEASE_STATUS.md).
+Source tests and host traces establish their named scenarios. Physical tilt, controls, sound, battery wake and completed LCD timing remain separate device checks. See [release status](RELEASE_STATUS.md) for hardware evidence.

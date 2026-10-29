@@ -28,14 +28,14 @@ Local ROMs can be uploaded through the USB library. The private asset import com
 
 | Game or screen | Speaker output |
 | --- | --- |
-| Flappy Bird | Local sample imports when supplied, otherwise authored flap, score and crash cues |
+| Bitty Flap | Local sample imports when supplied, otherwise authored flap, score and crash cues |
 | Mario and general NES cartridges | Mixed NES APU music and effects from the supplied ROM |
 | TetrisGYM and Tetris Zero | Mixed NES APU music and effects from the supplied ROM |
 | Geometry Dash | Adapted cartridge's NES APU music and effects, with the M5-native display |
-| Galaga, Arkanoid and Jetpack | Authored event cues for shots, hits, crashes, pickups and wins |
+| Bitty Swarm, Breaker, Jet, Buddy and Hockey Queen | Distinct authored event profiles for shots, hits, crashes, pickups and wins |
 | Menus | Move, selection, back and volume-preview cues |
 
-Native games currently use synthesized event sounds. Original commercial soundtracks and sound banks are not included. Flappy clock and autoplay modes remain quiet. Menus, game changes, USB management and sleep stop game audio. Resume restarts the speaker after sleep. The S3 I2S sink runs at 24 kHz to match the emulator output; other sample rates use M5Unified's resampler. Audio submission never waits for a full playback queue. Three buffers protect samples borrowed by the speaker task.
+Native games use synthesized event sounds with square, pulse, triangle and noise voices. Their pitch and rhythm profiles vary by game. Original commercial soundtracks and sound banks are not included. Flappy clock and autoplay modes remain quiet. Menus, game changes, USB management and sleep stop game audio. Resume restarts the speaker after sleep. The S3 I2S sink runs at 24 kHz to match the emulator output; other sample rates use M5Unified's resampler. Audio submission never waits for a full playback queue. Three buffers protect samples borrowed by the speaker task.
 
 Volume choices remain Off, 20%, 40%, 60%, 80% and Full. On StickS3, battery or unknown power caps the speaker master level at 184/255 (about 72%). The affected menu choices show the battery cap. Confirmed external power allows the selected full range. M5Stack recommends staying below 75% on battery to avoid unexpected reboots. Unplugging USB reapplies the cap on the next power poll, within one second. An I2C read failure uses the capped level.
 
@@ -51,6 +51,6 @@ The original StickC/Plus GPIO2 buzzer path stays separate. A unit with no fitted
 
 With successful setup, left taps cycle homes, rotate left in the default Tetris layout and fire in Mario. Front M5 and right keep their game controls. The immediate button-status register supplies taps, avoiding delayed single/double-click classification. **Sleep > Power off** replaces the disabled double-click shutdown gesture. A long left hold still enters download mode with the factory timing. Corrected tap behavior remains a physical acceptance check.
 
-The BMI270 reports a different axis orientation from the original Plus. All S3 horizontal movement and zero-calibration paths use its negative-Y acceleration. The original Plus keeps its existing negative-X mapping. Use the game’s zero-tilt option while holding the device in its comfortable neutral position.
+The BMI270 reports a different axis orientation from the original Plus. All S3 horizontal movement and zero-calibration paths now use negative-Y acceleration in response to physical feedback about reversed movement. The original Plus keeps its existing negative-X mapping. Confirm the corrected direction after loading. Launching a tilt game captures a fresh neutral position from a short stable sample window. Manual zero remains available in Game Settings.
 
 S3 tilt zeros use separate preference keys, so a saved zero from the previous X-axis mapping cannot bias the corrected controls.

@@ -1,45 +1,58 @@
 # Development preview status
 
-The source and public interface preview are available. Firmware downloads remain disabled until the new partition layout, browser installation and runtime transfers pass hardware checks. On October 28, a full 4 MiB recovery backup was completed and verified against the original Plus. A private Jetpack placement build was then flashed as an app-only update within its existing 3 MiB application partition. This retained its partition table, settings, controller bonds and game records. It does not establish that the new USB-library layout works on hardware.
+The current StickS3 gameplay update is installed and its application readback matches the build. The original Plus candidate compiles, but its update and two-stick radio tests are pending a reliable USB connection. Public firmware downloads remain disabled while the browser installer and cartridge-storage layout await hardware acceptance.
 
-## Completed in source
+## Current changes
 
-- Atomic cartridge storage, checksums, twelve records, removal with reusable flash allocations, boot selection and immediate launch.
-- Browser USB transfer with request IDs, bounded input, local ROM preflight and rights acknowledgement. Files travel directly to the device.
-- A two-column device game picker with native bitmap text, game icons and separate generic NES cartridge entries.
-- Public builds with authored starter art and private ROM/APK discovery disabled, a locked installer bundle, provenance and separate flash parts.
-- Mario camera tracking from stable RAM coordinates. Small, standing big and crouching big Mario have distinct anchors. Animation and invincibility blinking no longer choose the tracking target.
-- Orange Mario lifts now extend the camera below its old row-223 limit. A nearby landing platform stays visible when it fits with Mario in the crop. [The camera checks](MARIO_CAMERA.md) cover riding, jumping, both lift directions, exact pixels and an independent platform trajectory comparison. Physical playtesting of this update is pending.
-- Mario now waits at an explicit one-player/two-player selector. Side taps choose and M5 confirms. With no controller, hold M5 to run, double-tap to reverse, tap right to jump and tap left to fire when powered. A paired controller keeps NES controls and M5 Start/Select. Native two-player turns use both NES input ports. The private NTSC probe verifies selection, reversal, a 49-source-pixel tap jump, fire-button edges and Luigi's input after Mario loses a life. Physical checks for these controls are pending.
-- Every game opens on a portrait clock home. Left cycles games, M5 plays, and Game home returns from play. Shared clock settings replace per-game Clock mode entries. [The scene guide](GAME_HOMES.md) covers coin, tetromino, enemy, pipe and brick clocks.
-- [Hockey Queen](HOCKEY_QUEEN.md) adds native two-stick air hockey, horizontal tilt, random maps, twelve compact powers, eight rinks, four color choices and a separate clock home. The host owns match physics; paired BLE snapshots and stale-input pauses keep the guest on the same state. Portable game, menu and packet-loss tests pass. Original Plus and StickS3 builds compile. Two-device radio, controls, latency, sound and completed LCD measurements remain pending. This candidate has not been flashed.
-- Mario's new endless clock reads native art from the supplied NTSC ROM, uses pipe transitions through four environments and includes enemies and collectible coin time. Private tests run 256 seeds and 18,432,000 simulation steps without emergency safety rebounds. [The clock notes](MARIO_CLOCK.md) distinguish this scene from the previously flashed generator.
-- Clock time now uses stacked hours over minutes without colons across every scene. Mario uses native square coin cells, and Bitty Jet and Hockey Queen also use two rows. Shared settings explicitly select 12-hour or 24-hour time, plus None, Top or Bottom for a weekday/date line. Bottom occupies the footer so it leaves players and paddles visible. The date menu writes the RTC; portable checks cover leap years, midnight, 100 years of weekdays and uptime wrap. These changes have not been flashed.
-- Bitty menu branding, native 6 by 12 text, a battery estimate and an animated startup mark with the website address. The splash now lasts 2.4 seconds.
-- Imported Jetpack formation pitch, vertical placement, isolated spacing, distance gates, obstacle profiles and smooth rotation.
-- Reusable M5Stick development, game-fidelity and content-to-GitHub skills, including Codex and Claude installation instructions.
+- The device remembers its last selected game and cartridge. The visible Game at Boot option is removed.
+- The game picker uses colored cards and native bitmap text. The startup animation places a large Bitty mark above “bitty” and a smaller “.games”, with a 2.4-second hold.
+- Authored game names are Bitty Flap, Bitty Swarm, Bitty Breaker, Bitty Jet, Bitty Buddy and Hockey Queen. User-loaded cartridge titles remain identifiable. See [naming](NAMING.md).
+- StickS3 horizontal tilt uses negative Y in response to feedback about reversed movement. The original Plus retains negative X. Tilt games take a fresh neutral sample window on launch. Physical confirmation of the corrected S3 direction remains required.
+- Geometry Dash keeps the front M5 button as its action button with or without a connected controller. Silent startup screens advance in bounded batches that stop before gameplay. Game physics retain NTSC timing.
+- Hockey Queen offers solo Queen or Peasant play, four CPU skills with Medium as the default, and the existing two-stick mode. Human tilt input has increased gain. [Hockey notes](HOCKEY_QUEEN.md) describe the controls and link rules.
+- Native games have distinct pitch and rhythm profiles. StickS3 cues use square, pulse, triangle and noise voices. NES cartridges retain their mixed APU output. Audible quality needs listening checks.
+- [Bitty Buddy](BITTY_BUDDY.md) adds connected course sections, coin routes, animated magnets, flight, score boosts, pocket prizes, run goals, trick chains and buffered actions. The character faces down the course during play. [The mechanics audit](BUDDY_MECHANICS_AUDIT.md) records the private reference evidence and remaining gaps.
+- [Mario’s clock](MARIO_CLOCK.md) runs the supplied NTSC cartridge’s actual engine through four authored courses. Native physics handle enemies, orange lifts, swimming, pipes, flags and death. A portrait crop retains native pixels. Manual play reloads the original cartridge without the home’s cached course patches.
+- Every game has a portrait clock home, stacked hours and minutes without colons, shared 12/24-hour formatting, and optional weekday/date placement. Homes leave scores and rewards untouched.
 
-## Verification
+## Current StickS3 measurements
 
-The new universal clock-home update passes the source suite with AddressSanitizer and UndefinedBehaviorSanitizer. A separate Linux GCC run passes the new scenes, shared runtime and menu checks. The private Plus image fits its existing 3 MiB app partition; authored public Plus and StickS3 builds fit their 2 MiB app partitions. Native-size private previews cover every scene. This update is ready for device testing and has not been flashed or measured on hardware. Earlier hardware results below apply to their named builds.
+These October 29 measurements apply to the current app-only gameplay candidate. No Bluetooth controller was connected. Diagnostics injected the Geometry Dash held-action input. The clock tests used their automatic home directors; the Hockey test used its solo CPU mode.
 
-The earlier 0.9-second Bitty UI build was flashed to the original Plus with its partition table and records retained. Four menu framebuffer captures covered Home, game selection, skins and Controller. Its AXP192 reported external power, active charging and roughly 4.11 V, yielding a 100% voltage estimate. The next app-only update added the longer splash and Mario Clock, with its written hash verified. The Plus measured the splash at 2,400 ms and both clock and manual Mario at approximately 60.009 completed SPI frame boundaries per second over separate 500-interval probes. BLE discovery was active, no controller connected, and clock mode retained 29,124 bytes free heap. Controller pairing from clock mode retained its generated course cache. Records and profile matched before and after. The serial handle was closed with Mario Clock running. Panel scanout and physical controller feel remain separate checks. StickS3 still needs its own hardware measurements.
+| Scenario | 500 completed LCD transfer intervals | Completed transfer rate |
+| --- | ---: | ---: |
+| Native-engine Mario clock | 8.335464 s | 59.98 FPS |
+| Bitty Buddy clock | 8.333589 s | 60.00 FPS |
+| Geometry Dash with injected held action | 8.333143 s | 60.00 FPS |
+| Hockey Queen solo | 8.333452 s | 60.00 FPS |
 
-The [StickS3 audio target](STICKS3_AUDIO.md) adds a separate ESP32-S3 build, native codec output, NES PCM music and effects, authored Flappy fallback sounds, menu volume previews and a battery volume cap. Both hardware families compile. Portable tests cover audio buffer ownership, backpressure, target isolation, flash receipt validation and power detection. These are software checks. Audible output and simultaneous audio, video and Bluetooth performance still need a connected StickS3.
+Each interval window also recorded 500 simulation frames. The source and completed-transfer counters are independent. StickS3 uses a separate transfer snapshot so rendering can overlap the previous LCD transfer. These measurements establish throughput in the named scenarios. Panel tearing, physical controls and sound remain separate checks.
 
-The source suite covers Python import and publication checks, portable C++ state machines, storage interruption tests, renderer bounds and asynchronous display ownership. AddressSanitizer and UndefinedBehaviorSanitizer are enabled for portable runtime checks. The browser protocol has a mocked Web Serial test for fragmented replies, delayed duplicates, CRCs, upload acknowledgements and receive limits. These tests do not substitute for a physical USB session.
+Geometry Dash reached its native gameplay state without a controller. The timed USB diagnostic launch took 12.9 seconds, including repeated status queries. A private host probe exercised the same launcher in 292 presentations and confirmed that action input changes the native player trajectory. The host audio trace produced 850,400 mixed 24 kHz samples with no clipped samples in that trace.
 
-The private NTSC Mario reference ran 6,000 frames through full and cropped video paths with identical CPU RAM and displayed pixels. The run contained 5,152 moving-platform actor-frames. A separate ROM probe checked standing, crouching and small-player sprite bounds. Platform simulation stayed unchanged. This establishes emulator and crop-path agreement, while controller feel and camera presentation still need a physical playthrough.
+The splash diagnostic measured 2,401 ms and 144 animation frames. Device framebuffer captures cover the main menu, colored game picker, Mario clock and Buddy clock. A restart returned to the last selected game with the recorded profile and arcade scores unchanged. The speaker driver and IMU report ready. Fresh tilt calibration completed during the solo Hockey test. Those status reports do not establish audible output or correct physical movement direction.
 
-Private Jetpack tests retain and collect 10,628 imported formation cells and check the placement changes under sanitizers. The placement build also passed four device probes covering on-foot play, dense magnet coins, Dragon and Rocket Time. Across 2,000 completed LCD intervals, throughput averaged 59.9944 frames per second with Full volume and BLE discovery active. No controller connected. Records and profile stayed unchanged through the probes. Physical sound and controller feel remain unverified for these changes. The original APK runs offline for reference. Its initial tutorial/revive sequence is not a normal frequency benchmark. Exact vehicle transition choreography, Dragon articulation, finite reel odds, the full gadget catalog and a controlled live course comparison remain open in [the gameplay audit](JETPACK_AUDIT.md).
+## Source and reference checks
 
-## Required before calling the USB release hardware verified
+The source suite covers Python imports and publication checks, portable C++ state machines, interruption-safe cartridge storage, renderer bounds, input chords, launch calibration, CPU play and asynchronous display ownership. Portable runtime checks use AddressSanitizer and UndefinedBehaviorSanitizer. NES checks cover CPU, PPU, APU, NTSC scheduling, input, program caching and video paths. The browser transfer tests use mocked Web Serial sessions.
 
-1. Retain the verified full-flash recovery backup before migration.
-2. Migrate to the new layout, retaining needed settings and controller bonds.
-3. Test fresh browser installation, runtime upload, interrupted upload, removal, replacement, restart, boot choice and controller reconnection on the actual board.
-4. Record completed LCD transfers and simulation timing for runtime-loaded game paths. The app-only Jetpack timing probes are complete.
-5. Check physical controls, piezo output and gameplay presentation. Two-device links require a second unit.
-6. Publish linked-library notices, corresponding sources and relinking materials alongside any downloadable firmware. The current Pages preview distributes browser code and no firmware image.
+Private supplied-ROM traces separately verify the native Mario course director. A 16,000-frame trace visited all four area types, completed ten courses, entered six pipes and reached four goals. It observed native orange-platform actors. Mocked director tests exercise death and recovery paths. The earlier 6,000-frame manual Mario crop comparison retained identical CPU RAM and displayed pixels through 5,152 moving-platform actor-frames. Physical lift play remains an acceptance item.
 
-The public marketing site at [bitty.games](https://bitty.games) is maintained separately. This repository supplies the installer and engineering docs. The marketing site maintains its community, Sponsors and hardware links, with compatibility labels and paid-link disclosures.
+Public Plus and StickS3 USB-library candidates compile from authored inputs with commercial ROM/APK discovery disabled. The public application files are approximately 1.54 MB and 1.55 MB, respectively, within their 2 MiB application slots. Private embedded-cartridge builds remain separate and are never placed in a public installer bundle. Explicit source-package and Git-history audits enforce the publication boundary.
+
+## Earlier hardware evidence
+
+The original Plus has a verified full 4 MiB recovery backup. Earlier app-only updates retained its partition table, settings, controller bonds and records. Its earlier longer-splash build measured 2,400 ms and approximately 60.009 completed SPI boundaries per second in separate Mario clock and manual-play probes. That clock used the earlier scene implementation.
+
+The earlier private Jetpack placement build passed on-foot, dense magnet-coin, Dragon and Rocket Time probes. Across 2,000 completed LCD intervals it averaged 59.9944 FPS with Full volume and BLE discovery active, with no controller connected. Records and profile remained unchanged. Remaining reference-comparison work is recorded in [the Jetpack audit](JETPACK_AUDIT.md).
+
+## Required before public firmware installation
+
+1. Retain verified recovery backups and prove restoration before partition migration.
+2. Test the USB-library layout while preserving needed settings and controller bonds.
+3. Test fresh browser installation, runtime upload, interruption, removal, replacement, restart, last-game restoration and controller reconnection on each supported board.
+4. Measure runtime-loaded games separately from private embedded-cartridge builds.
+5. Check physical buttons, tilt direction, audible sound, battery sleep/wake and gameplay presentation. Test both sticks together for radio discovery, input, authoritative snapshots, rematches and reconnection.
+6. Publish linked-library notices, corresponding sources and relinking materials with downloadable firmware.
+
+The public site at [bitty.games](https://bitty.games) is maintained separately. This repository supplies the installer and engineering docs. The site maintains its community, Sponsors and hardware links, with compatibility labels and paid-link disclosures.

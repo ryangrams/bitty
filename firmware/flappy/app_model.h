@@ -11,17 +11,17 @@ namespace flappy {
 
 enum class GameTitle : uint8_t {
   FlappyBird = 0, Nes = 1, Tetris = 2, TetrisZero = 3, GeometryDash = 4, Galaga = 5, Arkanoid = 6,
-  JetpackJoyride = 7, HockeyQueen = 8
+  JetpackJoyride = 7, HockeyQueen = 8, BittyBuddy = 9
 };
-constexpr uint8_t GameTitleCount = 9;
-constexpr uint8_t VisibleGameCount = 8;
+constexpr uint8_t GameTitleCount = 10;
+constexpr uint8_t VisibleGameCount = 9;
 
 inline bool nativeArcadeGame(GameTitle title) {
-  return title == GameTitle::Galaga || title == GameTitle::Arkanoid || title == GameTitle::JetpackJoyride || title == GameTitle::HockeyQueen;
+  return title == GameTitle::Galaga || title == GameTitle::Arkanoid || title == GameTitle::JetpackJoyride || title == GameTitle::HockeyQueen || title == GameTitle::BittyBuddy;
 }
 
 inline GameTitle visibleGameTitle(uint8_t index) {
-  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride, GameTitle::HockeyQueen};
+  constexpr GameTitle titles[] = {GameTitle::FlappyBird, GameTitle::Nes, GameTitle::Tetris, GameTitle::GeometryDash, GameTitle::Galaga, GameTitle::Arkanoid, GameTitle::JetpackJoyride, GameTitle::HockeyQueen, GameTitle::BittyBuddy};
   return index < VisibleGameCount ? titles[index] : GameTitle(UINT8_MAX);
 }
 
@@ -36,6 +36,7 @@ inline uint8_t visibleGameIndex(GameTitle title) {
     case GameTitle::Arkanoid: return 5;
     case GameTitle::JetpackJoyride: return 6;
     case GameTitle::HockeyQueen: return 7;
+    case GameTitle::BittyBuddy: return 8;
     default: return UINT8_MAX;
   }
 }
@@ -96,6 +97,11 @@ struct Settings {
   bool jetpackHeadstart = false;
   bool jetpackPractice = false;
   hockey::Options hockeyOptions;
+  bool hockeySolo = true;
+  uint8_t hockeyPlayer = 0, hockeyCpu = 1;
+  uint8_t buddyLevel = 0;
+  uint8_t buddyShirt = 0;
+  uint8_t buddyMask = 1;
 };
 
 struct MenuState {
@@ -276,6 +282,24 @@ class AppModel {
     settings.arcadeDifficulty = difficulty;
   }
 
+  void setBuddyLevel(uint8_t level) {
+    if (level >= 5) level = 0;
+    if (settings.buddyLevel != level) settingsDirty = true;
+    settings.buddyLevel = level;
+  }
+
+  void setBuddyShirt(uint8_t shirt) {
+    if (shirt >= 4) shirt = 0;
+    if (settings.buddyShirt != shirt) settingsDirty = true;
+    settings.buddyShirt = shirt;
+  }
+
+  void setBuddyMask(uint8_t mask) {
+    if (mask >= 4) mask = 0;
+    if (settings.buddyMask != mask) settingsDirty = true;
+    settings.buddyMask = mask;
+  }
+
   void setJetpackDifficulty(uint8_t difficulty) {
     if (difficulty > 2) difficulty = 1;
     if (settings.jetpackDifficulty != difficulty) settingsDirty = true;
@@ -337,15 +361,16 @@ class AppModel {
   }
 
   const char* gameLabel(GameTitle title) const {
+    if (title == GameTitle::BittyBuddy) return "Bitty Buddy";
     if (title == GameTitle::HockeyQueen) return "Hockey Queen";
-    if (title == GameTitle::Galaga) return "Galaga";
-    if (title == GameTitle::Arkanoid) return "Arkanoid";
+    if (title == GameTitle::Galaga) return "Bitty Swarm";
+    if (title == GameTitle::Arkanoid) return "Bitty Breaker";
     if (title == GameTitle::JetpackJoyride) return "Bitty Jet";
     if (title == GameTitle::Nes) return nesAvailable_ ? nesTitle_ : "NES: no ROM";
     if (title == GameTitle::GeometryDash) return geometryDashAvailable_ ? "Geometry Dash" : "Geometry Dash: no ROM";
     if (title == GameTitle::Tetris || title == GameTitle::TetrisZero)
       return tetrisAvailable_ || tetrisZeroAvailable_ ? "Tetris" : "Tetris: no ROM";
-    return "Flappy Bird";
+    return "Bitty Flap";
   }
 
   bool setBootGame(GameTitle title) {
@@ -363,6 +388,13 @@ class AppModel {
     ++gameRequest;
     if (title == GameTitle::FlappyBird) restart();
     return true;
+  }
+
+  void rememberCurrentGame() {
+    const GameTitle title = currentGame == GameTitle::TetrisZero ? GameTitle::Tetris : currentGame;
+    const uint8_t cartridge = title == GameTitle::Nes ? currentCartridge : 0;
+    if (settings.bootGame != title || settings.bootCartridge != cartridge) settingsDirty = true;
+    settings.bootGame = title; settings.bootCartridge = cartridge;
   }
 
   void restoreBootGame() {
@@ -667,11 +699,12 @@ class AppModel {
 
   uint8_t menuItemCount() const {
     switch (menu.page) {
-      case MenuPage::Home: return 10;
+      case MenuPage::Home: return 9;
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceCount() + 1;
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::HockeyQueen) return 7;
+        if (currentGame == GameTitle::BittyBuddy) return 8;
+        if (currentGame == GameTitle::HockeyQueen) return 10;
         if (currentGame == GameTitle::FlappyBird) return 4;
         if (currentGame == GameTitle::Tetris) return 9;
         if (currentGame == GameTitle::TetrisZero) return 8;
@@ -709,14 +742,18 @@ class AppModel {
     if (index == count - 1) return "Back";
     switch (menu.page) {
       case MenuPage::Home: {
-        constexpr const char* labels[] = {"Game at Boot", "Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Set clock", "Game home"};
+        constexpr const char* labels[] = {"Change Game", "Game Settings", "Brightness", "Volume", "Controller", "Sleep", "Set clock", "Game home"};
         return labels[index];
       }
       case MenuPage::BootGame:
       case MenuPage::ChangeGame: return gameChoiceLabel(index);
       case MenuPage::GameSettings:
+        if (currentGame == GameTitle::BittyBuddy) {
+          constexpr const char* labels[] = {"Difficulty", "Starting level", "Shirt", "LED mask", "Tilt speed", "Calibrate tilt", "Restart game"};
+          return labels[index];
+        }
         if (currentGame == GameTitle::HockeyQueen) {
-          constexpr const char* labels[]={"Two-stick link", "Map", "Colors", "Power-ups", "Zero tilt", "Sensitivity"};
+          constexpr const char* labels[]={"Players", "Play as", "CPU skill", "Two-stick link", "Map", "Colors", "Power-ups", "Zero tilt", "Sensitivity"};
           return labels[index];
         }
         if (currentGame == GameTitle::FlappyBird) {
@@ -814,37 +851,55 @@ class AppModel {
   const char* menuValue(uint8_t index) const {
     switch (menu.page) {
       case MenuPage::Home:
-        if (index == 0) return gameLabel(settings.bootGame);
+        if (index == 0) return gameLabel(currentGame);
         if (index == 1) return gameLabel(currentGame);
-        if (index == 2) return gameLabel(currentGame);
-        if (index == 3) {
+        if (index == 2) {
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%u/3", unsigned(settings.brightnessIndex + 1));
           return valueBuffer_;
         }
-        if (index == 4) {
+        if (index == 3) {
           if (!settings.volumeIndex) return "Off";
           if (settings.volumeIndex == 5) return "Full";
           snprintf(valueBuffer_, sizeof(valueBuffer_), "%u%%", unsigned(settings.volumeIndex * 20));
           return valueBuffer_;
         }
-        if (index == 5) return controllerStatus;
-        if (index == 6) return sleepLabel(settings.sleepIndex);
-        if (index == 7) {
+        if (index == 4) return controllerStatus;
+        if (index == 5) return sleepLabel(settings.sleepIndex);
+        if (index == 6) {
           const unsigned hour = clockHour(lastNowMs_);
           if (settings.clock24Hour) snprintf(valueBuffer_,sizeof(valueBuffer_),"%02u %02u",hour,unsigned(clockMinute(lastNowMs_)));
           else snprintf(valueBuffer_,sizeof(valueBuffer_),"%02u %02u %s",hour % 12 ? hour % 12 : 12,unsigned(clockMinute(lastNowMs_)),hour < 12 ? "AM" : "PM");
           return valueBuffer_;
         }
-        if (index == 8) return gameLabel(currentGame);
+        if (index == 7) return gameLabel(currentGame);
         break;
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::HockeyQueen) {
-          if(index==0) return hockeyLinkRole==1 ? "Queen" : hockeyLinkRole==2 ? "Peasant" : "Off";
-          if(index==1) return settings.hockeyOptions.map ? hockey::mapName(uint8_t(settings.hockeyOptions.map-1)) : "Random";
-          if(index==2) { constexpr const char* labels[]={"Map colors", "Night", "Neon", "Pastel"}; return labels[settings.hockeyOptions.palette]; }
-          if(index==3) return settings.hockeyOptions.powers==hockey::Powers::Queen ? "Queen only" : settings.hockeyOptions.powers==hockey::Powers::Both ? "Both players" : "Off";
-          if(index==4) return "Hold unit steady";
-          if(index==5) return settings.arcadeSensitivity==0 ? "Low" : settings.arcadeSensitivity==2 ? "High" : "Normal";
+        if (currentGame == GameTitle::BittyBuddy) {
+          if (index == 0) return settings.arcadeDifficulty == 0 ? "Easy" : settings.arcadeDifficulty == 2 ? "Hard" : "Normal";
+          if (index == 1) {
+            constexpr const char* names[] = {"Mall", "School", "Park", "Volcano", "Noodle House"};
+            return names[settings.buddyLevel < 5 ? settings.buddyLevel : 0];
+          }
+          if (index == 2) {
+            constexpr const char* names[] = {"Black", "Purple", "Blue", "Red"};
+            return names[settings.buddyShirt < 4 ? settings.buddyShirt : 0];
+          }
+          if (index == 3) {
+            constexpr const char* names[] = {"Smile", "Fire", "Cat", "Glitch"};
+            return names[settings.buddyMask < 4 ? settings.buddyMask : 0];
+          }
+          if (index == 4) return settings.arcadeSensitivity == 0 ? "Fine" : settings.arcadeSensitivity == 2 ? "Fast" : "Normal";
+          if (index == 5) return "Hold unit steady";
+        } else if (currentGame == GameTitle::HockeyQueen) {
+          if(index==0) return settings.hockeySolo ? "1 player + CPU" : "2 sticks";
+          if(index==1) return settings.hockeyPlayer ? "Peasant" : "Queen";
+          if(index==2) { constexpr const char* names[]={"Easy", "Medium", "Difficult", "Evil"}; return names[settings.hockeyCpu & 3]; }
+          if(index==3) return hockeyLinkRole==1 ? "Queen" : hockeyLinkRole==2 ? "Peasant" : "Off";
+          if(index==4) return settings.hockeyOptions.map ? hockey::mapName(uint8_t(settings.hockeyOptions.map-1)) : "Random";
+          if(index==5) { constexpr const char* labels[]={"Map colors", "Night", "Neon", "Pastel"}; return labels[settings.hockeyOptions.palette]; }
+          if(index==6) return settings.hockeyOptions.powers==hockey::Powers::Queen ? "Queen only" : settings.hockeyOptions.powers==hockey::Powers::Both ? "Both players" : "Off";
+          if(index==7) return "Hold unit steady";
+          if(index==8) return settings.arcadeSensitivity==0 ? "Low" : settings.arcadeSensitivity==2 ? "High" : "Normal";
         } else if (currentGame == GameTitle::FlappyBird) {
           if (index == 0) return modeName(settings.mode);
           if (index == 1) return skinNames_ ? skinNames_[settings.skinIndex] : "";
@@ -1168,8 +1223,8 @@ class AppModel {
     }
     switch (menu.page) {
       case MenuPage::Home: {
-        if (menu.selection == 8) { ++homeRequest; closeMenu(); break; }
-        constexpr MenuPage destinations[] = {MenuPage::BootGame, MenuPage::ChangeGame, MenuPage::GameSettings,
+        if (menu.selection == 7) { ++homeRequest; closeMenu(); break; }
+        constexpr MenuPage destinations[] = {MenuPage::ChangeGame, MenuPage::GameSettings,
                                              MenuPage::Brightness, MenuPage::Volume, MenuPage::Controller, MenuPage::Sleep, MenuPage::Clock};
         openMenu(destinations[menu.selection]);
         break;
@@ -1188,13 +1243,24 @@ class AppModel {
         break;
       }
       case MenuPage::GameSettings:
-        if (currentGame == GameTitle::HockeyQueen) {
-          if(menu.selection==0) openMenu(MenuPage::HockeyLink);
-          else if(menu.selection==1) openMenu(MenuPage::HockeyMap);
-          else if(menu.selection==2) openMenu(MenuPage::HockeyColors);
-          else if(menu.selection==3) { auto options=settings.hockeyOptions; options.powers=hockey::Powers((uint8_t(options.powers)+1)%3); setHockeyOptions(options); }
-          else if(menu.selection==4) ++arcadeCalibrateRequest;
-          else if(menu.selection==5) setArcadeSensitivity(uint8_t((settings.arcadeSensitivity+1)%3));
+        if (currentGame == GameTitle::BittyBuddy) {
+          if (menu.selection == 0) setArcadeDifficulty(uint8_t((settings.arcadeDifficulty + 1) % 3));
+          else if (menu.selection == 1) setBuddyLevel(uint8_t((settings.buddyLevel + 1) % 5));
+          else if (menu.selection == 2) setBuddyShirt(uint8_t((settings.buddyShirt + 1) % 4));
+          else if (menu.selection == 3) setBuddyMask(uint8_t((settings.buddyMask + 1) % 4));
+          else if (menu.selection == 4) setArcadeSensitivity(uint8_t((settings.arcadeSensitivity + 1) % 3));
+          else if (menu.selection == 5) ++arcadeCalibrateRequest;
+          else if (menu.selection == 6) requestGameRestart();
+        } else if (currentGame == GameTitle::HockeyQueen) {
+          if(menu.selection==0) { settings.hockeySolo=!settings.hockeySolo; settingsDirty=true; ++gameRequest; }
+          else if(menu.selection==1) { settings.hockeyPlayer^=1; settingsDirty=true; ++gameRequest; }
+          else if(menu.selection==2) { settings.hockeyCpu=uint8_t((settings.hockeyCpu+1)%4); settingsDirty=true; }
+          else if(menu.selection==3) openMenu(MenuPage::HockeyLink);
+          else if(menu.selection==4) openMenu(MenuPage::HockeyMap);
+          else if(menu.selection==5) openMenu(MenuPage::HockeyColors);
+          else if(menu.selection==6) { auto options=settings.hockeyOptions; options.powers=hockey::Powers((uint8_t(options.powers)+1)%3); setHockeyOptions(options); }
+          else if(menu.selection==7) ++arcadeCalibrateRequest;
+          else if(menu.selection==8) setArcadeSensitivity(uint8_t((settings.arcadeSensitivity+1)%3));
         } else if (currentGame == GameTitle::FlappyBird) {
           constexpr MenuPage destinations[] = {MenuPage::Modes, MenuPage::Skins, MenuPage::Coop};
           openMenu(destinations[menu.selection]);

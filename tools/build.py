@@ -178,7 +178,7 @@ def main():
     optimization = "-O2 -mtext-section-literals"
     if args.board != "sticks3":
         optimization += " -mno-fix-esp32-psram-cache-issue"
-    subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--fqbn", BOARD_FQBN[args.board],
+    subprocess.run([arduino_cli(), "--config-file", str(ensure_config()), "compile", "--jobs", "2", "--fqbn", BOARD_FQBN[args.board],
                     "--build-property", "compiler.optimization_flags=" + optimization,
                     "--build-path", str(build), "--library", str(library), str(sketch)], check=True)
     image = build / "flappy.ino.bin"

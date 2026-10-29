@@ -11,15 +11,26 @@ enum class PiezoCue : uint8_t {
   Rotate, Move, Drop, Lock, LineClear, LevelUp, GameOver, Jump, Coin, Action, Start, Boot
 };
 
+enum class CueVoice : uint8_t { Square, Pulse, Triangle, Noise };
+inline const uint8_t* cueWaveform(CueVoice voice) {
+  static const uint8_t square[16]={208,208,208,208,208,208,208,208,48,48,48,48,48,48,48,48};
+  static const uint8_t pulse[16]={224,224,224,224,96,96,96,96,96,96,96,96,96,96,96,96};
+  static const uint8_t triangle[16]={128,160,192,224,255,224,192,160,128,96,64,32,1,32,64,96};
+  static const uint8_t noise[16]={204,52,28,228,116,140,68,188,244,12,156,100,20,236,172,84};
+  return voice==CueVoice::Pulse ? pulse : voice==CueVoice::Triangle ? triangle : voice==CueVoice::Noise ? noise : square;
+}
 struct PiezoTone {
   uint16_t frequency = 0;
   uint16_t durationMs = 0;
   uint8_t volume = 0;
+  CueVoice voice = CueVoice::Square;
 };
+enum class SoundTheme : uint8_t { Classic, Space, Breaker, Jet, Buddy, Hockey };
 
 // Poll update on the main loop. A zero-frequency command stops the buzzer.
 class PiezoSound {
  public:
+  void setTheme(SoundTheme theme) { theme_ = theme; }
   void setVolumeIndex(uint8_t index) {
     if (index > 5) index = 5;
     if (volumeIndex_ == index) return;
@@ -47,7 +58,7 @@ class PiezoSound {
     cue_ = cue;
     priority_ = rank;
     count_ = 0;
-    switch (cue) {
+    if (!gamePattern(cue)) switch (cue) {
       case PiezoCue::Flap: add(1900, 24); add(2700, 30); break;
       case PiezoCue::Point: add(2600, 55); add(3400, 90); break;
       case PiezoCue::Crash: add(1700, 65); add(1100, 100); add(700, 120); break;
@@ -147,6 +158,7 @@ class PiezoSound {
   uint32_t emittedMs_ = 0;
   uint16_t nesFrequency_ = 0;
   PiezoCue cue_ = PiezoCue::Flap;
+  SoundTheme theme_ = SoundTheme::Classic;
   uint8_t count_ = 0, position_ = 0, priority_ = 0, nesLevel_ = 0, volumeIndex_ = 2;
   bool active_ = false, quiet_ = false, changed_ = false, haveNes_ = false, sounding_ = false;
 
@@ -154,10 +166,53 @@ class PiezoSound {
     if (count_ < 4) notes_[count_++] = Note{frequency, duration};
   }
 
+  bool gamePattern(PiezoCue cue) {
+    if (theme_ == SoundTheme::Classic) return false;
+    const bool fire = cue == PiezoCue::Move || cue == PiezoCue::Action || cue == PiezoCue::Jump;
+    const bool hit = cue == PiezoCue::Lock;
+    const bool power = cue == PiezoCue::Coin;
+    const bool death = cue == PiezoCue::Crash;
+    const bool win = cue == PiezoCue::LevelUp || cue == PiezoCue::Start;
+    if (!fire && !hit && !power && !death && !win) return false;
+    if (theme_ == SoundTheme::Space) {
+      if (fire) { add(3200,10); add(2400,10); add(1700,12); add(1100,14); }
+      else if (hit) { add(880,20); add(440,24); add(220,32); }
+      else if (power) { add(659,45); add(988,45); add(1319,70); }
+      else if (death) { add(196,60); add(147,80); add(98,130); }
+      else { add(523,60); add(659,60); add(784,60); add(1047,150); }
+    } else if (theme_ == SoundTheme::Breaker) {
+      if (fire || hit) { add(hit ? 1760 : 880,18); add(hit ? 1320 : 660,14); }
+      else if (power) { add(784,40); add(1175,40); add(1568,80); }
+      else if (death) { add(784,50); add(392,60); add(196,120); }
+      else { add(587,45); add(784,45); add(1175,90); }
+    } else if (theme_ == SoundTheme::Jet) {
+      if (fire) { add(180,12); add(110,12); }
+      else if (hit) { add(330,18); add(165,35); }
+      else if (power) { add(1568,30); add(2093,45); add(2637,45); }
+      else if (death) { add(220,50); add(110,75); add(82,140); }
+      else { add(392,50); add(523,50); add(659,50); add(1047,100); }
+    } else if (theme_ == SoundTheme::Buddy) {
+      if (fire) { add(440,25); add(660,25); add(880,30); }
+      else if (hit) { add(330,18); add(220,25); }
+      else if (power) { add(1319,25); add(1760,35); add(2093,55); }
+      else if (death) { add(523,40); add(392,50); add(262,80); }
+      else { add(659,45); add(784,45); add(988,45); add(1319,100); }
+    } else {
+      if (fire || hit) { add(hit ? 740 : 494,14); add(hit ? 370 : 247,18); }
+      else if (power) { add(880,40); add(1175,40); add(1760,80); }
+      else if (death) { add(370,70); add(247,110); }
+      else { add(587,55); add(740,55); add(880,55); add(1175,130); }
+    }
+    return true;
+  }
+
   void emit(PiezoTone& output, uint16_t frequency, uint16_t duration, uint8_t level) {
     output.frequency = frequency;
     output.durationMs = duration;
     output.volume = frequency ? level : 0;
+    output.voice = cue_==PiezoCue::Crash || cue_==PiezoCue::GameOver ? CueVoice::Noise :
+        cue_==PiezoCue::Boot || theme_==SoundTheme::Space ? CueVoice::Pulse :
+        theme_==SoundTheme::Hockey && cue_==PiezoCue::Lock ? CueVoice::Triangle : CueVoice::Square;
     sounding_ = frequency != 0;
   }
 

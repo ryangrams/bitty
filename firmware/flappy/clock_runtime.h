@@ -4,13 +4,13 @@
 #include "app_model.h"
 #include "clock_scene.h"
 #include "flappy_clock.h"
-#include "mario_world_clock.h"
 #include "tetris_clock.h"
 #include "jetpack_clock.h"
 #include "geometry_clock.h"
 #include "galaga_clock.h"
 #include "arkanoid_clock.h"
 #include "hockey_clock.h"
+#include "buddy_clock.h"
 #include "menu_font.h"
 
 namespace flappy {
@@ -45,12 +45,10 @@ class ClockRuntime {
     release(); title_=title; fallback_=false;
     switch(title_) {
       case GameTitle::FlappyBird: state_=new(std::nothrow) FlappyClock; break;
-      case GameTitle::Nes: {
-        auto* scene=new(std::nothrow) MarioWorldClock;
-        if(scene && scene->bindRom(rom,length)) state_=scene;
-        else { delete scene; fallback_=true; state_=new(std::nothrow) NesShelfClock; }
+      case GameTitle::Nes:
+        (void)rom; (void)length;
+        fallback_=true; state_=new(std::nothrow) NesShelfClock;
         break;
-      }
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: state_=new(std::nothrow) TetrisClock; break;
       case GameTitle::GeometryDash: state_=new(std::nothrow) GeometryClock; break;
@@ -58,6 +56,7 @@ class ClockRuntime {
       case GameTitle::Arkanoid: state_=new(std::nothrow) ArkanoidClock; break;
       case GameTitle::JetpackJoyride: state_=new(std::nothrow) JetpackClock; break;
       case GameTitle::HockeyQueen: state_=new(std::nothrow) HockeyClock; break;
+      case GameTitle::BittyBuddy: state_=new(std::nothrow) BuddyClock; break;
     }
     if(!state_) return false;
     dispatchReset(seed);
@@ -68,7 +67,7 @@ class ClockRuntime {
     switch(title_) {
       case GameTitle::FlappyBird: cast<FlappyClock>()->step(time); break;
       case GameTitle::Nes:
-        if(fallback_) cast<NesShelfClock>()->step(time); else cast<MarioWorldClock>()->step(time);
+        cast<NesShelfClock>()->step(time);
         break;
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: cast<TetrisClock>()->step(time); break;
@@ -77,6 +76,7 @@ class ClockRuntime {
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->step(time); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->step(time); break;
       case GameTitle::HockeyQueen: cast<HockeyClock>()->step(time); break;
+      case GameTitle::BittyBuddy: cast<BuddyClock>()->step(time); break;
     }
   }
   void draw(uint16_t* pixels,const ClockTime& time,const Skins& skin) const {
@@ -84,7 +84,7 @@ class ClockRuntime {
     switch(title_) {
       case GameTitle::FlappyBird: cast<FlappyClock>()->draw(pixels,time,skin); break;
       case GameTitle::Nes:
-        if(fallback_) cast<NesShelfClock>()->draw(pixels,time); else cast<MarioWorldClock>()->draw(pixels,time);
+        cast<NesShelfClock>()->draw(pixels,time);
         break;
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: cast<TetrisClock>()->draw(pixels,time); break;
@@ -93,13 +93,14 @@ class ClockRuntime {
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->draw(pixels,time); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->draw(pixels,time); break;
       case GameTitle::HockeyQueen: cast<HockeyClock>()->draw(pixels,time); break;
+      case GameTitle::BittyBuddy: cast<BuddyClock>()->draw(pixels,time); break;
     }
   }
   void release() {
     switch(title_) {
       case GameTitle::FlappyBird: delete cast<FlappyClock>(); break;
       case GameTitle::Nes:
-        if(fallback_) delete cast<NesShelfClock>(); else delete cast<MarioWorldClock>();
+        delete cast<NesShelfClock>();
         break;
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: delete cast<TetrisClock>(); break;
@@ -108,6 +109,7 @@ class ClockRuntime {
       case GameTitle::Arkanoid: delete cast<ArkanoidClock>(); break;
       case GameTitle::JetpackJoyride: delete cast<JetpackClock>(); break;
       case GameTitle::HockeyQueen: delete cast<HockeyClock>(); break;
+      case GameTitle::BittyBuddy: delete cast<BuddyClock>(); break;
     }
     state_=nullptr;
   }
@@ -117,7 +119,7 @@ class ClockRuntime {
     if(!state_) return 0;
     switch(title_) {
       case GameTitle::FlappyBird: return sizeof(FlappyClock);
-      case GameTitle::Nes: return fallback_?sizeof(NesShelfClock):sizeof(MarioWorldClock);
+      case GameTitle::Nes: return sizeof(NesShelfClock);
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: return sizeof(TetrisClock);
       case GameTitle::GeometryDash: return sizeof(GeometryClock);
@@ -125,6 +127,7 @@ class ClockRuntime {
       case GameTitle::Arkanoid: return sizeof(ArkanoidClock);
       case GameTitle::JetpackJoyride: return sizeof(JetpackClock);
       case GameTitle::HockeyQueen: return sizeof(HockeyClock);
+      case GameTitle::BittyBuddy: return sizeof(BuddyClock);
     }
     return 0;
   }
@@ -138,7 +141,7 @@ class ClockRuntime {
     switch(title_) {
       case GameTitle::FlappyBird: cast<FlappyClock>()->reset(seed); break;
       case GameTitle::Nes:
-        if(fallback_) cast<NesShelfClock>()->reset(seed); else cast<MarioWorldClock>()->reset(seed);
+        cast<NesShelfClock>()->reset(seed);
         break;
       case GameTitle::Tetris:
       case GameTitle::TetrisZero: cast<TetrisClock>()->reset(seed); break;
@@ -147,6 +150,7 @@ class ClockRuntime {
       case GameTitle::Arkanoid: cast<ArkanoidClock>()->reset(seed); break;
       case GameTitle::JetpackJoyride: cast<JetpackClock>()->reset(seed); break;
       case GameTitle::HockeyQueen: cast<HockeyClock>()->reset(seed); break;
+      case GameTitle::BittyBuddy: cast<BuddyClock>()->reset(seed); break;
     }
   }
 };

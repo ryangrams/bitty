@@ -86,6 +86,8 @@ const char* runtimeNotice = "";
 unsigned audioStops = 0;
 
 void stopGameAudio() { ++audioStops; }
+unsigned launchZeros = 0;
+void startLaunchTiltZero() { ++launchZeros; }
 void invalidateDisplay() {}
 void stopCoop() {}
 unsigned nativeReleases = 0, nativeBegins = 0;

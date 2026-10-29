@@ -1,12 +1,12 @@
 # Tilt arcade games
 
-Galaga and Arkanoid are native games for the M5StickC Plus's 135 by 240 portrait screen. They use original drawing code and original graphics. Arkanoid uses original generated brick layouts. These are adaptations inspired by the classics, with their own gameplay implementation. They require no additional ROM or asset download.
+Bitty Swarm and Bitty Breaker are native games for the M5StickC Plus's 135 by 240 portrait screen. They use original drawing code and original graphics. Bitty Breaker uses original generated brick layouts. These are adaptations inspired by the classics, with their own gameplay implementation. They require no additional ROM or asset download.
 
-Choose either game from **Change Game**. Both are also available under **Game at Boot**. Flappy Bird remains the initial boot default.
+Choose either game from **Change Game**. Startup returns to the last selected game. Bitty Flap remains the first-boot default.
 
 ## Controls
 
-| Input | Galaga | Arkanoid |
+| Input | Bitty Swarm | Bitty Breaker |
 | --- | --- | --- |
 | Tilt left/right | Move the fighter | Move the paddle |
 | Front M5 | Tap or hold to fire; tap after game over to restart | Tap to launch; tap or hold to shoot while Laser is active; tap after game over to restart |

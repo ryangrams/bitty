@@ -46,9 +46,9 @@ inline void mark(uint16_t* output, int width, int height, int x, int y,
 }
 
 inline void bitmap(uint16_t* output, int width, int height, int x, int y,
-                   const char* pixels, int w, int h, int reveal = 32767) {
+                   const char* pixels, int w, int h, int reveal = 32767, int columns = 32767) {
   if (!output) return;
-  for (int row = 0; row < h; ++row) for (int col = 0; col < w && col < reveal; ++col) {
+  for (int row = 0; row < h; ++row) for (int col = 0; col < w && col < reveal && col < columns; ++col) {
     const int dx = x + col, dy = y + row;
     if (dx >= 0 && dy >= 0 && dx < width && dy < height) {
       const char pixel = pixels[row * w + col];
@@ -87,17 +87,21 @@ inline void header(uint16_t* output, int width, int height, const BatteryStatus&
 
 inline void splash(uint16_t* output, int width, int height, uint32_t elapsed) {
   rect(output,width,height,0,0,width,height,Black);
-  const int center = height / 2;
-  const int total = 20 + 8 + BittyLogo::SplashWidth;
-  const int x = (width - total) / 2, y = center - 30;
-  mark(output,width,height,x,y,6,1,elapsed,true);
-  const int reveal = elapsed < 280 ? 0 : int((elapsed - 280) * BittyLogo::SplashWidth / 300);
-  bitmap(output,width,height,x + 28,y + (27 - BittyLogo::SplashHeight) / 2,
-      BittyLogo::SplashPixels,BittyLogo::SplashWidth,BittyLogo::SplashHeight,reveal);
-  MenuFont::draw(output,width,height,"bitty.games",(width - 66) / 2,center + 34,Muted);
+  const int cell=width>=128 ? 20 : 14, gap=2;
+  const int top=height>=224 ? 24 : 12, wordY=top + cell*4 + gap*3 + 16;
+  const int wordWidth=68;
+  mark(output,width,height,(width-(cell*3+gap*2))/2,top,cell,gap,elapsed,true);
+  const int reveal=elapsed<280 ? 0 : int((elapsed-280)*wordWidth/300);
+  bitmap(output,width,height,(width-wordWidth)/2,wordY,BittyLogo::SplashPixels,
+      BittyLogo::SplashWidth,BittyLogo::SplashHeight,reveal,wordWidth);
+  MenuFont::draw(output,width,height,".games",(width-MenuFont::textWidth(".games"))/2,wordY+37,Muted);
   for (int i = 0; i < 5; ++i)
-    rect(output,width,height,width / 2 - 18 + i * 8,center + 69,4,3,
+    rect(output,width,height,width / 2 - 18 + i * 8,height-(height>=224 ? 30 : 9),4,3,
          elapsed >= uint32_t((i + 1) * 150) ? Violet : Rule);
+  if(width==144 && height==256) {
+    rect(output,width,height,0,0,width,8,Black);rect(output,width,height,0,248,width,8,Black);
+    rect(output,width,height,0,0,4,height,Black);rect(output,width,height,139,0,5,height,Black);
+  }
 }
 
 }  // namespace BittyUi

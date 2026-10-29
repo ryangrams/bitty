@@ -60,7 +60,7 @@ def generate(output):
             d.rectangle((0, 4 + frame, 4, 6 + frame), fill=white, outline=ink)
             d.point((1, 8 + frame), fill=gold)
         add(name, (17, 12), flyer)
-    for name, size, words in [('title', (89, 24), 'TINY FLAP'), ('getReady', (98, 31), 'READY?'),
+    for name, size, words in [('title', (89, 24), 'BITTY FLAP'), ('getReady', (98, 31), 'READY?'),
                               ('tapInstruction', (57, 49), 'TAP M5'), ('gameOver', (102, 27), 'GAME OVER'),
                               ('replay', (58, 35), 'PLAY'), ('newBest', (16, 7), 'NEW')]:
         def label(im, d, words=words, size=size):

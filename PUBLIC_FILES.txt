@@ -1,4 +1,5 @@
 # Exact publication list. Local assets, generated files and build output stay private.
+
 .github/FUNDING.yml
 .github/ISSUE_TEMPLATE/bug.yml
 .github/ISSUE_TEMPLATE/port-request.yml
@@ -20,7 +21,9 @@ assets/README.md
 assets/skin_catalog.json
 docs/AGENT_QUICKSTART.md
 docs/ARCADE_RESEARCH.md
+docs/BITTY_BUDDY.md
 docs/BITTY_UI.md
+docs/BUDDY_MECHANICS_AUDIT.md
 docs/CONTROLLERS.md
 docs/COOP.md
 docs/CREATING_GAMES.md
@@ -35,6 +38,7 @@ docs/JETPACK_PROGRESSION.md
 docs/JETPACK_RESEARCH.md
 docs/MARIO_CAMERA.md
 docs/MARIO_CLOCK.md
+docs/NAMING.md
 docs/NES.md
 docs/RELEASE_STATUS.md
 docs/RIGHTS.md
@@ -54,6 +58,10 @@ firmware/flappy/bitty_ui.h
 firmware/flappy/ble_controller.h
 firmware/flappy/ble_link.h
 firmware/flappy/ble_radio.h
+firmware/flappy/buddy_clock.h
+firmware/flappy/buddy_game.h
+firmware/flappy/buddy_input.h
+firmware/flappy/buddy_renderer.h
 firmware/flappy/cartridge_store.h
 firmware/flappy/clock_calendar.h
 firmware/flappy/clock_overlay.h
@@ -76,6 +84,7 @@ firmware/flappy/geometry_level.h
 firmware/flappy/geometry_renderer.h
 firmware/flappy/geometry_scene.h
 firmware/flappy/hockey_clock.h
+firmware/flappy/hockey_cpu.h
 firmware/flappy/hockey_game.h
 firmware/flappy/hockey_protocol.h
 firmware/flappy/hockey_renderer.h
@@ -96,11 +105,13 @@ firmware/flappy/jetpack_time_step.h
 firmware/flappy/jetpack_vehicle_physics.h
 firmware/flappy/library_protocol.h
 firmware/flappy/library_service.h
+firmware/flappy/mario_attract.h
 firmware/flappy/mario_clock.h
 firmware/flappy/mario_controls.h
 firmware/flappy/mario_viewport.h
 firmware/flappy/mario_world_clock.h
 firmware/flappy/menu_font.h
+firmware/flappy/nes_palette.h
 firmware/flappy/nes_runtime.h
 firmware/flappy/nes_sound_events.h
 firmware/flappy/nes_system_button.h
@@ -143,6 +154,10 @@ tests/arkanoid_game_test.cpp
 tests/async_display_test.cpp
 tests/bitty_ui_test.cpp
 tests/ble_radio_test.cpp
+tests/buddy_game_test.cpp
+tests/buddy_input_test.cpp
+tests/buddy_progression_test.cpp
+tests/buddy_renderer_test.cpp
 tests/cartridge_store_test.cpp
 tests/clock_calendar_test.cpp
 tests/clock_runtime_test.cpp
@@ -155,6 +170,7 @@ tests/galaga_clock_test.cpp
 tests/galaga_game_test.cpp
 tests/game_core_test.cpp
 tests/game_home_test.cpp
+tests/game_sound_test.cpp
 tests/geometry_clock_test.cpp
 tests/geometry_collision_test.cpp
 tests/geometry_input_test.cpp
@@ -163,6 +179,7 @@ tests/geometry_level_test.cpp
 tests/geometry_renderer_test.cpp
 tests/geometry_scanorder_test.cpp
 tests/geometry_scene_test.cpp
+tests/hockey_cpu_test.cpp
 tests/hockey_game_test.cpp
 tests/hockey_protocol_test.cpp
 tests/inactivity_test.cpp
@@ -182,6 +199,7 @@ tests/jetpack_spin_test.cpp
 tests/jetpack_time_step_test.cpp
 tests/jetpack_vehicle_physics_test.cpp
 tests/library_protocol_test.cpp
+tests/mario_attract_test.cpp
 tests/mario_clock_test.cpp
 tests/mario_controls_test.cpp
 tests/mario_viewport_test.cpp
@@ -202,6 +220,7 @@ tests/piezo_sound_test.cpp
 tests/render_features_test.cpp
 tests/render_preview.cpp
 tests/rom_fingerprint_test.cpp
+tests/session_menu_test.cpp
 tests/speaker_audio_test.cpp
 tests/stick_power_button_test.cpp
 tests/test_asset_import.py
@@ -221,9 +240,13 @@ tests/tetris_clock_test.cpp
 tests/tetris_input_test.cpp
 tests/tetris_viewport_test.cpp
 tests/tetris_zero_viewport_test.cpp
+tests/tilt_launch_test.cpp
 tests/web_protocol_test.mjs
 tools/apply_bps.py
 tools/apply_ips.py
+tools/buddy_host.cpp
+tools/buddy_preview.cpp
+tools/buddy_preview_server.py
 tools/build.py
 tools/build.sh
 tools/build_site.py
@@ -244,6 +267,7 @@ tools/starter_assets.py
 tools/test.py
 tools/test_nes.py
 web/app.mjs
+web/buddy-preview.html
 web/config.mjs
 web/index.html
 web/package-lock.json
