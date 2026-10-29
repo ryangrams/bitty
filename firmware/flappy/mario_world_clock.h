@@ -1,6 +1,7 @@
 #pragma once
 
 #include "clock_scene.h"
+#include "nes_palette.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -211,18 +212,7 @@ class MarioWorldClock {
 
   // The six-bit 2C02 color indices use the same RGB565 conversion as the NES
   // renderer. These are hardware colors, not cartridge artwork.
-  static uint16_t nesColor(unsigned n) {
-    // Four luminance rows, each with sixteen hardware hue indices.
-    // Converted from PeakRacing/nes (Apache-2.0, Copyright PeakRacing).
-    // See LICENSES/PeakNES-Apache-2.0.txt and THIRD_PARTY_NOTICES.md.
-    static const uint16_t rgb[4][16] = {
-      {0x73ae,0x20d1,0x0015,0x4013,0x880e,0xa802,0xa000,0x7840,0x4160,0x0220,0x0280,0x01e2,0x19eb,0x0000,0x0000,0x0000},
-      {0xbdf7,0x039d,0x21dd,0x801e,0xb817,0xe00b,0xd940,0xca61,0x8b80,0x04a0,0x0540,0x0487,0x0411,0x0000,0x0000,0x0000},
-      {0xffff,0x3dff,0x5cbf,0xa45f,0xf3df,0xfbb6,0xfbac,0xfcc7,0xf5e7,0x8682,0x4ee9,0x5fd3,0x075b,0x0000,0x0000,0x0000},
-      {0xffff,0xaf3f,0xc6bf,0xd65f,0xfe3f,0xfe3b,0xfdf6,0xfed5,0xff34,0xe7f4,0xaf97,0xb7f9,0x9ffe,0x0000,0x0000,0x0000}
-    };
-    return rgb[(n >> 4) & 3][n & 15];
-  }
+  static uint16_t nesColor(unsigned n) { return NesPalette::rgb565(n); }
 
   void loadPalette() {
     if (!rom_) return;

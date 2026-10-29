@@ -9,6 +9,10 @@ enum class Powers : uint8_t { Queen, Both, Off };
 constexpr uint8_t MapCount = 8;
 constexpr uint8_t PowerCount = 13;
 constexpr uint8_t PlayTo = 7;
+inline int16_t paddleInput(int16_t tilt) {
+  const int amount = int(tilt) * 3 / 2;
+  return int16_t(amount < -1024 ? -1024 : amount > 1024 ? 1024 : amount);
+}
 
 inline const char* mapName(uint8_t map) {
   static const char* const names[] = {"Rainbow Court", "Unicorn Road", "Narwhal Ice", "Jellyfish Reef", "Butterfly Meadow", "Candy Castle", "Potato Patch", "Throne Room"};

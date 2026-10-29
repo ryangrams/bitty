@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bitty Buddy playtest</title>
+<style>
+:root{color-scheme:dark;--bg:#101116;--panel:#1a1b22;--line:#35313f;--ink:#f5eee5;--muted:#b9b5c6;--purple:#9b7cff;--amber:#ffbe59}
+*{box-sizing:border-box}body{margin:0;min-height:100svh;background:radial-gradient(ellipse at 25% 20%,#282038 0,transparent 55%),var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif}main{max-width:1080px;margin:auto;padding:32px 24px;display:grid;grid-template-columns:1fr 410px;gap:56px;align-items:center;min-height:100svh}.eyebrow{font:11px ui-monospace,monospace;letter-spacing:.22em;color:var(--amber);margin:0 0 18px}h1{font-size:clamp(40px,6vw,76px);line-height:.92;letter-spacing:-.065em;margin:0 0 22px;font-weight:900}h1 span{color:var(--purple)}.intro{max-width:29ch;font-size:20px;color:var(--muted);margin:0 0 28px}.byline{font-size:13px;color:var(--muted)}.settings{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:390px;margin:28px 0}label{display:block;font-size:12px;color:var(--muted);letter-spacing:.03em}select{display:block;width:100%;margin-top:6px;padding:10px 12px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;font:14px system-ui}.level{grid-column:span 2}.play-area{max-width:410px;width:100%;justify-self:center}.device{background:#17151e;padding:18px;border:1px solid #4b435c;border-radius:26px;box-shadow:0 22px 90px #0007,0 0 70px #6d4bf512;position:relative}.screen{position:relative;max-width:270px;margin:auto;background:#000;border-radius:5px;overflow:hidden}canvas{display:block;width:100%;height:auto;image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none}.overlay{position:absolute;inset:0;background:#101116d9;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;padding:18px}.overlay[hidden]{display:none}.overlay strong{font-size:28px;line-height:1.05}.overlay p{font-size:14px;color:var(--muted);margin:0}.button,button{font:600 14px system-ui;border:1px solid var(--line);border-radius:9px;background:#28232f;color:var(--ink);padding:12px 16px;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}button:hover{border-color:var(--purple)}button:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline-offset:3px}.primary{background:var(--amber);color:#17151e;border-color:var(--amber)}.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.controls button{min-height:52px;font-size:16px;padding:10px 4px}.controls button small{display:block;font-size:10px;font-weight:400;color:var(--muted);margin-top:2px}.controls .jump{background:#513b83}.controls .roll{background:#563a21}.controls button.down{background:var(--amber);color:#101116}.toolbar{display:flex;justify-content:center;gap:8px;margin-top:15px}.toolbar button{font-size:12px;padding:8px 11px}.keys{font-size:12px;text-align:center;color:var(--muted);margin:16px 0 0}.note{font-size:12px;color:var(--muted);max-width:42ch;margin-top:30px}.status{height:20px;text-align:center;color:var(--amber);font-size:12px;margin-top:10px}kbd{font:11px ui-monospace,monospace;background:#29242f;padding:2px 4px;border-radius:3px}@media(max-width:760px){main{display:flex;flex-direction:column;padding:24px 16px;gap:24px;min-height:auto}header{width:100%;max-width:410px}.eyebrow{margin-bottom:10px}h1{font-size:48px;margin-bottom:12px}h1 br{display:none}h1 span:before{content:' '}.intro{font-size:16px;margin-bottom:12px;max-width:34ch}.settings{margin:16px 0 0;max-width:none;gap:10px}.note,.byline{display:none}.device{padding:12px;border-radius:19px}.screen{max-width:243px}.play-area{max-width:360px}.keys{font-size:11px}.toolbar{margin-top:10px}}
+</style>
+<main>
+  <header>
+    <p class="eyebrow">BITTY ORIGINAL / PLAYTEST 02</p>
+    <h1>Bitty<br><span>Buddy.</span></h1>
+    <p class="intro">Roll under giant people. Grab their pocket change. Make it fire.</p>
+    <p class="byline">A game by Ryan and Roman.</p>
+    <div class="settings">
+      <label class="level">Starting location<select id="level"><option value="0">Shopping mall</option><option value="1">School</option><option value="2">Park</option><option value="3">Volcano</option><option value="4">Noodle restaurant</option></select></label>
+      <label>Sweatshirt<select id="shirt"><option value="0">Black</option><option value="1">Purple</option><option value="2">Blue</option><option value="3">Red</option></select></label>
+      <label>LED mask<select id="mask"><option value="0">Smile</option><option value="1" selected>Fire</option><option value="2">Cat</option><option value="3">Glitch</option></select></label>
+    </div>
+    <p class="note">The browser runs the same C++ game and pixel renderer as the Bitty build. Follow coin trails through slaloms, hurdles, crowds and bonus sections. Catch magnets, score boosts, pocket prizes and a balloon ride. Complete three goals to raise your multiplier. Each location lasts ten minutes.</p>
+  </header>
+  <section class="play-area" aria-label="Playable Bitty Buddy">
+    <div class="device">
+      <div class="screen">
+        <canvas id="game" tabindex="0" width="135" height="240" aria-label="Bitty Buddy native game screen"></canvas>
+        <div id="overlay" class="overlay"><strong id="overlay-title">Little Buddy.<br>Big world.</strong><p id="overlay-copy">Three lanes. Jump low obstacles.<br>Roll under open legs.</p><button id="start" class="primary">Start running</button></div>
+      </div>
+      <div class="controls" aria-label="Game controls">
+        <button data-control="left" aria-label="Move left">←<small>LANE</small></button>
+        <button data-control="right" aria-label="Move right">→<small>LANE</small></button>
+        <button data-control="jump" class="jump">↑<small>JUMP</small></button>
+        <button data-control="roll" class="roll">↓<small>ROLL</small></button>
+      </div>
+    </div>
+    <div class="toolbar"><button id="pause">Pause</button><button id="restart">New run</button><button id="clock">Clock home</button></div>
+    <p class="keys"><kbd>←</kbd> <kbd>→</kbd> lanes &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>↓</kbd> roll &nbsp; <kbd>P</kbd> pause</p>
+    <p id="status" class="status" role="status">Connecting to the native game…</p>
+  </section>
+</main>
+<script>
+const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d',{alpha:false}),frame=ctx.createImageData(135,240);
+const overlay=document.querySelector('#overlay'),status=document.querySelector('#status'),startButton=document.querySelector('#start');
+const held={jump:false,roll:false,left:false,right:false};let queuedJump=false,queuedRoll=false,step=0,pressed=false,restart=true,started=false,paused=true,home=false,inFlight=false,last=0;
+const level=document.querySelector('#level'),shirt=document.querySelector('#shirt'),mask=document.querySelector('#mask');
+function showOverlay(title,copy,button){document.querySelector('#overlay-title').textContent=title;document.querySelector('#overlay-copy').textContent=copy;startButton.textContent=button;overlay.hidden=false}
+function clearControls(){for(const key in held)held[key]=false;step=0;pressed=false;queuedJump=queuedRoll=false;document.querySelectorAll('[data-control]').forEach(e=>e.classList.remove('down'))}
+function run(){canvas.focus({preventScroll:true});home=false;document.querySelector('#clock').textContent='Clock home';started=true;paused=false;overlay.hidden=true;document.querySelector('#pause').textContent='Pause';clearControls()}
+function togglePause(){if(!started)return;paused=!paused;clearControls();document.querySelector('#pause').textContent=paused?'Resume':'Pause';if(paused)showOverlay('Taking a breather','Your run is paused.','Keep running');else overlay.hidden=true}
+function control(key,down){if(down&&!held[key]){if(!started||paused){run();return}if(key==='left')step=-1;if(key==='right')step=1;if(key==='jump'){pressed=true;queuedJump=true}if(key==='roll'){pressed=true;queuedRoll=true}}held[key]=down;document.querySelectorAll('[data-control="'+key+'"]').forEach(e=>e.classList.toggle('down',down))}
+startButton.onclick=run;document.querySelector('#pause').onclick=togglePause;
+document.querySelector('#restart').onclick=()=>{restart=true;run()};
+document.querySelector('#clock').onclick=()=>{home=!home;paused=home;started=!home;overlay.hidden=true;clearControls();document.querySelector('#clock').textContent=home?'Play game':'Clock home';document.querySelector('#pause').textContent='Pause'};
+level.onchange=()=>{restart=true;run()};shirt.onchange=mask.onchange=()=>canvas.focus({preventScroll:true});
+for(const button of document.querySelectorAll('[data-control]')){button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);control(button.dataset.control,true)});for(const event of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(event,()=>control(button.dataset.control,false))}
+const keys={ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right',ArrowUp:'jump',' ':'jump',w:'jump',ArrowDown:'roll',s:'roll',b:'roll'};
+window.addEventListener('keydown',e=>{if(e.target.matches('select'))return;if(keys[e.key]){e.preventDefault();control(keys[e.key],true)}else if(e.key.toLowerCase()==='p'&&!e.repeat)togglePause()});
+window.addEventListener('keyup',e=>{if(keys[e.key]){e.preventDefault();control(keys[e.key],false)}});
+window.addEventListener('blur',()=>{clearControls();if(started&&!paused)togglePause()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearControls();if(started&&!paused)togglePause()}});
+async function poll(now){requestAnimationFrame(poll);if(inFlight||document.hidden||now-last<30)return;last=now;inFlight=true;
+ const body={step,pressed,jump:held.jump||queuedJump,roll:held.roll||queuedRoll,restart,level:Number(level.value),shirt:Number(shirt.value),mask:Number(mask.value),paused:paused&&!home,home};step=0;pressed=false;queuedJump=queuedRoll=false;restart=false;
+ try{const response=await fetch('/frame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());const data=await response.arrayBuffer();if(data.byteLength!==64800)throw new Error('The game sent an incomplete frame');const view=new DataView(data);for(let i=0;i<32400;i++){const pixel=view.getUint16(i*2,true),j=i*4;frame.data[j]=((pixel>>11)&31)*255/31;frame.data[j+1]=((pixel>>5)&63)*255/63;frame.data[j+2]=(pixel&31)*255/31;frame.data[j+3]=255}ctx.putImageData(frame,0,0);status.textContent=home?'Animated clock home':paused?'Ready when you are':'Native 135 × 240 pixels';}
+ catch(error){status.textContent=error.message;}finally{inFlight=false}}
+requestAnimationFrame(poll);
+</script>
+</html>

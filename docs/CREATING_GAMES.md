@@ -25,6 +25,7 @@ The [USB library guide](USB_LIBRARY.md) records supported cartridge mappers, pre
 | Geometry Dash | Users supply the supported prepared Famidash image. Its adapter and authored native renderer do not include the cartridge or its music. |
 | Galaga and Arkanoid | Resident source uses authored art and generated courses, with no user file required. Their reference names and closely inspired presentation still need a distribution review. |
 | Hockey Queen | Resident source uses authored geometric art and a native two-stick engine. Manual matches require two compatible sticks. |
+| Bitty Buddy | An original native three-lane runner with authored pixel art, five locations, LED masks, coins and power-ups. It requires no user file. |
 | Bitty Jet | Resident source uses authored art, effects and formations in public builds. Optional APK-derived formations or sprites are private imports. Earlier code and import paths retain Jetpack identifiers. |
 
 Authored assets and a new title describe what the build contains. They do not establish clearance for every aspect of a finished game. Check the [rights boundary](RIGHTS.md), upstream licenses and the actual exported files before publishing source or firmware.

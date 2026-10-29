@@ -28,6 +28,18 @@ class GeometryLauncher {
   uint8_t requestedLevel() const { return requested_; }
   uint16_t frames() const { return frames_; }
 
+  // Run a few silent menu frames between presentations. Stop at the first
+  // gameplay state so level physics and music keep their normal NTSC cadence.
+  template<class Runtime>
+  void advanceBoot(Runtime& runtime) {
+    for(unsigned i=0;i<3 && active_;++i) {
+      const auto action=update(runtime.readRam(0x0498),runtime.readRam(LevelAddress));
+      if(!active_) return;
+      if(action.writeLevel) runtime.writeRam(LevelAddress,action.level);
+      if(!runtime.step(action.buttons)) { active_=false; failed_=true; return; }
+    }
+  }
+
   // Apply writeLevel only to LevelAddress, before stepping the returned input.
   // Game state and physics remain under the native cartridge's control.
   GeometryLaunchAction update(uint8_t state, uint8_t observedLevel) {

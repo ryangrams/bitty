@@ -1,6 +1,6 @@
 # NES cartridges
 
-Import a local `.nes` cartridge image, build it into your private firmware, then choose its title through **Change Game**. Its portrait clock home appears first; press M5 for cartridge play. **Game at Boot** saves the game to start after the next power-on. Flappy Bird is the initial default. Without an imported ROM, the NES choice reads **NES: no ROM** and cannot be selected.
+Import a local `.nes` cartridge image, build it into your private firmware, then choose its title through **Change Game**. Its portrait clock home appears first; press M5 for cartridge play. Startup remembers the last selected game and cartridge. Bitty Flap is the initial default. Without an imported ROM, the NES choice reads **NES: no ROM** and cannot be selected.
 
 ## Import and build
 

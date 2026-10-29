@@ -18,6 +18,7 @@
 #include "nes_viewport.h"
 #include "mario_viewport.h"
 #include "mario_controls.h"
+#include "mario_attract.h"
 #include "clock_runtime.h"
 #include "clock_overlay.h"
 #include "game_home.h"
@@ -52,6 +53,9 @@
 #include "arkanoid_game.h"
 #include "jetpack_game.h"
 #include "hockey_renderer.h"
+#include "hockey_cpu.h"
+#include "buddy_renderer.h"
+#include "buddy_input.h"
 
 flappy::AppModel app;
 bool bootSplashActive = false;
@@ -71,12 +75,21 @@ flappy::GalagaGame* galagaGame = nullptr;
 flappy::ArkanoidGame* arkanoidGame = nullptr;
 flappy::JetpackGame* jetpackGame = nullptr;
 flappy::HockeyGame* hockeyGame = nullptr;
+flappy::HockeyCpu hockeyCpu;
+bool hockeySelecting = true;
+flappy::BuddyGame* buddyGame = nullptr;
+flappy::BuddyControls buddyControls;
+bool pendingBuddyRoll = false;
+int8_t pendingBuddyStep = 0;
+uint32_t arcadeBestBuddy = 0;
+uint8_t appliedBuddyShirt = 255, appliedBuddyMask = 255;
 uint32_t handledHockeyLink = 0;
 bool hockeyRoundPrepared = false;
 uint8_t hockeySoundEvent = 0;
 flappy::JetpackProfile jetpackProfile;
 uint32_t handledJetpackUpgrade = 0;
 flappy::ArcadeTilt arcadeTilt;
+flappy::StickInput::LaunchZero launchTiltZero;
 flappy::ArcadeControls arcadeControls;
 bool arcadePaused = false, arcadePauseRequested = false, jetpackCashRequested = false;
 uint32_t handledArcadeCalibrate = 0, arcadeBestGalaga = 0, arcadeBestArkanoid = 0;
@@ -122,6 +135,7 @@ flappy::MarioFrontend marioFrontend;
 flappy::MarioButtons marioButtons;
 flappy::GameHome gameHome;
 flappy::ClockRuntime homeClocks;
+flappy::MarioAttract* marioAttract = nullptr;
 uint32_t handledHomeGeneration = UINT32_MAX, homeFrames = 0;
 bool pendingHomeNext = false;
 flappy::TetrisViewport tetrisViewport;
@@ -157,7 +171,11 @@ constexpr int StripRows = 8;
 constexpr uint32_t TickMicros = 16667;
 constexpr uint8_t MaxSkins = 22;
 alignas(4) uint16_t canvasStorage[flappy::PixelWidth * flappy::PixelHeight];
-alignas(4) uint16_t stripStorage[flappy::PixelWidth * StripRows];
+#ifdef M5FLAP_BOARD_STICKS3
+// The LCD owns this snapshot while the main task prepares the next frame.
+alignas(4) uint16_t displayTransferSnapshot[135 * 240];
+#endif
+uint16_t* stripStorage = nullptr;
 const char* skinNames[MaxSkins] = {};
 flappy::Renderer* renderer = nullptr;
 uint32_t nextTick = 0;
@@ -242,6 +260,13 @@ uint32_t nonzeroRandom() {
 }
 
 bool nativeArcade() { return flappy::nativeArcadeGame(app.currentGame); }
+
+void blockArcadeActions() {
+  arcadeControls.blockAction();
+  buddyControls.blockAction();
+  pendingBuddyRoll = false;
+  pendingBuddyStep = 0;
+}
 bool jetpackSelected() { return app.currentGame == flappy::GameTitle::JetpackJoyride; }
 bool emulatedGame() { return app.currentGame != flappy::GameTitle::FlappyBird && !nativeArcade(); }
 
@@ -321,6 +346,14 @@ void stopGameAudio() {
 }
 
 void playCue(flappy::PiezoCue cue, uint32_t nowMs) {
+  using flappy::GameTitle;
+  using flappy::SoundTheme;
+  const SoundTheme theme = app.currentGame==GameTitle::Galaga ? SoundTheme::Space :
+      app.currentGame==GameTitle::Arkanoid ? SoundTheme::Breaker :
+      app.currentGame==GameTitle::JetpackJoyride ? SoundTheme::Jet :
+      app.currentGame==GameTitle::BittyBuddy ? SoundTheme::Buddy :
+      app.currentGame==GameTitle::HockeyQueen ? SoundTheme::Hockey : SoundTheme::Classic;
+  piezo.setTheme(theme);
   piezo.setQuiet(!bootSplashActive && app.currentGame == flappy::GameTitle::FlappyBird && !app.menuOpen() && app.autoPlaying());
   piezo.setVolumeIndex(app.settings.volumeIndex);
   piezo.play(cue, nowMs);
@@ -392,7 +425,7 @@ void serviceSound(uint32_t nowMs) {
     else {
       soundFrequency = tone.frequency;
       soundDuty = duty;
-      if (tone.frequency && tone.volume) M5.Speaker.tone(tone.frequency, tone.durationMs, 0, true);
+      if (tone.frequency && tone.volume) M5.Speaker.tone(tone.frequency,tone.durationMs,0,true,flappy::cueWaveform(tone.voice),16);
       else M5.Speaker.stop(0);
     }
   }
@@ -560,8 +593,14 @@ void loadSettings() {
   app.setArcadeSensitivity(preferences.getUChar("arcsens", 1));
   app.setArcadeAutoFire(preferences.getBool("arcauto", false));
   app.setArcadeDifficulty(preferences.getUChar("arcdiff", 1));
+  app.setBuddyLevel(preferences.getUChar("buddylevel", 0));
+  app.setBuddyShirt(preferences.getUChar("buddyshirt", 0));
+  app.setBuddyMask(preferences.getUChar("buddymask", 1));
   flappy::hockey::Options hockeyOptions;
   if (flappy::hockey::Options::decode(preferences.getUShort("hockeyopts",0),hockeyOptions)) app.setHockeyOptions(hockeyOptions);
+  app.settings.hockeySolo = preferences.getBool("hockeysolo", true);
+  app.settings.hockeyPlayer = preferences.getUChar("hockeyplayer", 0) & 1;
+  app.settings.hockeyCpu = preferences.getUChar("hockeycpu", 1) & 3;
   uint8_t jetpackSaved[flappy::JetpackProfile::StorageSize];
   if (preferences.getBytesLength("jetprofile") == sizeof(jetpackSaved) &&
       preferences.getBytes("jetprofile", jetpackSaved, sizeof(jetpackSaved)) == sizeof(jetpackSaved))
@@ -575,9 +614,10 @@ void loadSettings() {
   arcadeBestGalaga = preferences.getUInt("galagabest", 0);
   arcadeBestArkanoid = preferences.getUInt("arkanbest", 0);
   arcadeBestJetpack = preferences.getUInt("jetbest", 0);
+  arcadeBestBuddy = preferences.getUInt("buddybest", 0);
   app.settings.clock24Hour = preferences.getBool("clock24", true);
   app.setClockDatePosition(preferences.getUChar("datepos",0));
-  const uint8_t boot = preferences.getUChar("bootgame", 0);
+  const uint8_t boot = preferences.getUChar("lastgame", preferences.getUChar("bootgame", 0));
   app.settings.bootGame = boot < flappy::GameTitleCount ? flappy::GameTitle(boot) : flappy::GameTitle::FlappyBird;
   app.settings.bootCartridge = preferences.getUChar("bootcart", 0);
   app.setTetrisLevel(preferences.getUChar("tetlevel", 0));
@@ -616,7 +656,13 @@ void saveSettings() {
   preferences.putUChar("arcsens", app.settings.arcadeSensitivity);
   preferences.putBool("arcauto", app.settings.arcadeAutoFire);
   preferences.putUChar("arcdiff", app.settings.arcadeDifficulty);
+  preferences.putUChar("buddylevel", app.settings.buddyLevel);
+  preferences.putUChar("buddyshirt", app.settings.buddyShirt);
+  preferences.putUChar("buddymask", app.settings.buddyMask);
   preferences.putUShort("hockeyopts",app.settings.hockeyOptions.encode());
+  preferences.putBool("hockeysolo",app.settings.hockeySolo);
+  preferences.putUChar("hockeyplayer",app.settings.hockeyPlayer);
+  preferences.putUChar("hockeycpu",app.settings.hockeyCpu);
   preferences.putBool("jetprac", app.settings.jetpackPractice);
   preferences.putUChar("jetdiff", app.settings.jetpackDifficulty);
   preferences.putUChar("jetride", app.settings.jetpackRide);
@@ -624,7 +670,7 @@ void saveSettings() {
   preferences.putBool("jethead", app.settings.jetpackHeadstart);
   preferences.putBool("clock24", app.settings.clock24Hour);
   preferences.putUChar("datepos",uint8_t(app.settings.clockDatePosition));
-  preferences.putUChar("bootgame", uint8_t(app.settings.bootGame));
+  preferences.putUChar("lastgame", uint8_t(app.settings.bootGame));
   preferences.putUChar("tetlevel", app.settings.tetrisLevel);
   preferences.putUChar("tettype", app.settings.tetrisGameType);
   preferences.putUChar("tetctrl", app.settings.tetrisControls);
@@ -828,6 +874,20 @@ void recordLcdFrame(unsigned rows, uint32_t start) {
 #endif
 }
 
+void submitCanvasFrame(int width,int height) {
+  uint16_t* transfer=canvasStorage;
+#ifdef M5FLAP_BOARD_STICKS3
+  asyncDisplay.drain();
+  memcpy(displayTransferSnapshot,canvasStorage,size_t(width) * height * sizeof(uint16_t));
+  transfer=displayTransferSnapshot;
+#endif
+  if (asyncDisplay.submitBorrowedFrame(transfer,width,height)) asyncDisplay.submitEndFrame();
+  else {
+    submitDisplay(0,0,width,height,canvasStorage);
+    if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
+  }
+}
+
 void pushGameFrame(int width, int height, bool exactTetris = false, int peerDirtyFrom = -1) {
   const uint32_t start = micros();
   unsigned pushed = 0;
@@ -948,6 +1008,10 @@ void nesVideo(void*, int x1, int y1, int x2, int y2, const uint16_t* source) {
   } videoTimer;
   if (y2 == 239) ++nesRenderedFrames;
 #endif
+  if (marioAttract && gameHome.active()) {
+    marioAttract->consume(x1,y1,x2,y2,source,canvasStorage);
+    return;
+  }
   if (nativeGeometry) return;
   if (tetrisLike() && !app.menuOpen()) {
     if (tetrisLaunching || zeroLaunching || !tetrisNativePlaying()) return;
@@ -1119,7 +1183,7 @@ void updateController(uint32_t nowMs) {
   uint16_t pressed = snapshot.pressed | (padButtons & ~previousPadButtons);
   previousPadButtons = padButtons;
   app.setControllerStatus(bluetoothPad->statusText());
-  if (justConnected && nativeArcade()) arcadeControls.blockAction();
+  if (justConnected && nativeArcade()) blockArcadeActions();
   if (justConnected && app.menu.page == flappy::MenuPage::Controller) {
     app.closeMenu();
     pendingNesButtons = pendingControllerNesButtons = 0;
@@ -1159,7 +1223,12 @@ void updateController(uint32_t nowMs) {
   } else if (nativeArcade()) {
     if (jetpackGame && jetpackGame->phase() == flappy::JetpackGame::Phase::Spin && (pressed & Down)) jetpackCashRequested = true;
     if (pressed & Start) arcadePauseRequested = true;
-    pendingPadAction |= (pressed & (A | B)) != 0;
+    if (buddyGame) {
+      pendingPadAction |= (pressed & A) != 0;
+      pendingBuddyRoll |= (pressed & B) != 0;
+      if ((pressed & Left) && !(pressed & Right)) pendingBuddyStep = -1;
+      else if ((pressed & Right) && !(pressed & Left)) pendingBuddyStep = 1;
+    } else pendingPadAction |= (pressed & (A | B)) != 0;
   } else if (app.currentGame == flappy::GameTitle::FlappyBird) {
     pendingPadAction |= (pressed & (A | Start)) != 0;
   } else {
@@ -1169,7 +1238,7 @@ void updateController(uint32_t nowMs) {
     pendingControllerNesButtons |= nesButtons(padButtons | pressed) & uint8_t(~nesButtons(padButtons & ~pressed));
   }
   menuSound(menuBefore, selectionBefore, false, nowMs);
-  if (nativeArcade() && menuBefore != app.menu.page) arcadeControls.blockAction();
+  if (nativeArcade() && menuBefore != app.menu.page) blockArcadeActions();
   controllerDownHeld(nowMs);
 }
 
@@ -1191,6 +1260,8 @@ void handleControllerRequest(uint32_t nowMs) {
 }
 
 bool beginZero(const flappy::TetrisZero::Options& options) {
+  if (M5.Imu.isEnabled()) launchTiltZero.begin(millis());
+  haveTiltSample = false;
   stopGameAudio();
   if (!flappy::RomFingerprint::tetris(TetrisZeroRom::data, TetrisZeroRom::length, true)) {
     runtimeNotice = "Unsupported Tetris cartridge";
@@ -1239,6 +1310,7 @@ void saveArcadeScores() {
   preferences.putUInt("galagabest", arcadeBestGalaga);
   preferences.putUInt("arkanbest", arcadeBestArkanoid);
   preferences.putUInt("jetbest", arcadeBestJetpack);
+  preferences.putUInt("buddybest", arcadeBestBuddy);
   arcadeScoresDirty = false;
 }
 
@@ -1279,12 +1351,15 @@ void releaseNativeArcade() {
   delete arkanoidGame;
   delete jetpackGame;
   delete hockeyGame;
+  delete buddyGame;
   galagaGame = nullptr;
   arkanoidGame = nullptr;
   jetpackGame = nullptr;
   hockeyGame = nullptr;
+  buddyGame = nullptr;
   arcadePaused = arcadePauseRequested = jetpackCashRequested = false;
   arcadeControls.reset();
+  blockArcadeActions();
   arcadeTilt.reset();
   arcadeMove = 0;
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
@@ -1310,11 +1385,48 @@ void configureJetpackLoadout() {
       app.settings.jetpackPractice && app.settings.jetpackHeadstart);
 }
 
+void startLaunchTiltZero() {
+  haveTiltSample = false;
+  arcadeTilt.reset();
+  if (M5.Imu.isEnabled()) launchTiltZero.begin(millis());
+  else launchTiltZero.cancel();
+}
+
+void serviceLaunchTiltZero(uint32_t nowMs) {
+  if (!launchTiltZero.pending()) return;
+  if (uint32_t(nowMs - lastTiltPollMs) < 16) return;
+  lastTiltPollMs = nowMs;
+  float ax, ay, az;
+  if (M5.Imu.getAccel(&ax,&ay,&az)) {
+    const float sample = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
+    if (launchTiltZero.sample(sample,nowMs)) {
+      tiltX = arcadeActivityTilt = launchTiltZero.neutral();
+      arcadeTilt.calibrate(tiltX);
+      tetrisTilt.calibrate(tiltX);
+      lastTiltSampleMs = nowMs;
+      haveTiltSample = true;
+      return;
+    }
+  }
+  if (launchTiltZero.expired(nowMs)) launchTiltZero.cancel();
+}
+
 void resetNativeArcade() {
   saveArcadeScores();
+  if (!jetpackSelected()) startLaunchTiltZero();
   if (galagaGame) galagaGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
   if (arkanoidGame) arkanoidGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
-  if (hockeyGame) { hockeyGame->reset(nonzeroRandom(),app.settings.hockeyOptions); hockeyRoundPrepared=false; }
+  if (buddyGame) {
+    buddyGame->setStartingLevel(app.settings.buddyLevel);
+    buddyGame->setLook(app.settings.buddyShirt, app.settings.buddyMask);
+    appliedBuddyShirt = app.settings.buddyShirt;
+    appliedBuddyMask = app.settings.buddyMask;
+    buddyGame->reset(nonzeroRandom(), app.settings.arcadeDifficulty);
+  }
+  if (hockeyGame) {
+    hockeyGame->reset(nonzeroRandom(),app.settings.hockeyOptions); hockeyRoundPrepared=false;
+    hockeyCpu.reset(nonzeroRandom()); hockeySelecting=app.settings.hockeySolo;
+  }
   if (jetpackGame) {
     jetpackGame->settleRun();
     saveJetpackProfile();
@@ -1323,7 +1435,7 @@ void resetNativeArcade() {
   }
   arcadeFrames = 0;
   arcadePaused = arcadePauseRequested = jetpackCashRequested = false;
-  arcadeControls.blockAction();
+  blockArcadeActions();
   arcadeTilt.reset();
 }
 
@@ -1334,14 +1446,16 @@ bool beginNativeArcade() {
   if (app.currentGame == flappy::GameTitle::Galaga) galagaGame = new (std::nothrow) flappy::GalagaGame;
   else if (jetpackSelected()) jetpackGame = new (std::nothrow) flappy::JetpackGame;
   else if (app.currentGame==flappy::GameTitle::HockeyQueen) hockeyGame = new (std::nothrow) flappy::HockeyGame;
+  else if (app.currentGame==flappy::GameTitle::BittyBuddy) buddyGame = new (std::nothrow) flappy::BuddyGame;
   else arkanoidGame = new (std::nothrow) flappy::ArkanoidGame;
-  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame) return false;
+  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame && !buddyGame) return false;
   if (jetpackGame) jetpackGame->attachProfile(&jetpackProfile);
   resetNativeArcade();
   return true;
 }
 
 void calibrateArcadeTilt(uint32_t nowMs) {
+  launchTiltZero.cancel();
   float ax, ay, az;
   if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az) && arcadeTilt.calibrate(flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay))) {
     tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
@@ -1353,7 +1467,7 @@ void calibrateArcadeTilt(uint32_t nowMs) {
     playCue(flappy::PiezoCue::MenuSelect, nowMs);
   } else tiltZeroNotice = "Tilt sensor unavailable";
   tiltZeroNoticeMs = nowMs;
-  arcadeControls.blockAction();
+  blockArcadeActions();
 }
 
 void hockeySound(flappy::ArcadeCue cue,uint32_t nowMs) {
@@ -1370,6 +1484,7 @@ void handleHockeyRequest(uint32_t nowMs) {
   if(handledHockeyLink==app.hockeyLinkRequest) return;
   handledHockeyLink=app.hockeyLinkRequest;
   const uint8_t role=app.hockeyLinkRole;
+  if (role && app.settings.hockeySolo) { app.settings.hockeySolo=false; app.settingsDirty=true; }
   stopCoop();
   if(!hockeyGame || !role) return;
   if(bluetoothPad) bluetoothPad->stop();
@@ -1401,6 +1516,30 @@ void updateHockeyLink(uint32_t nowMs) {
 void tickHockey(bool actionEdge,uint32_t nowMs) {
   using flappy::coop::Phase;
   using flappy::coop::Role;
+  if (app.settings.hockeySolo) {
+    if (hockeySelecting) {
+      if (arcadePauseRequested) { app.settings.hockeyPlayer^=1; app.settingsDirty=true; }
+      arcadePauseRequested=false;
+      if (actionEdge) { hockeySelecting=false; startLaunchTiltZero(); playCue(flappy::PiezoCue::Start,nowMs); }
+      return;
+    }
+    if (arcadePauseRequested) { arcadePaused=!arcadePaused; arcadePauseRequested=false; }
+    if (arcadePaused) { if (actionEdge) arcadePaused=false; return; }
+    if (hockeyGame->phase()==flappy::hockey::Phase::Finished) {
+      if (actionEdge) { resetNativeArcade(); hockeySelecting=false; }
+      return;
+    }
+    using namespace flappy::controller;
+    arcadeMove=controllerConnected ? int16_t(((padButtons & Right) ? 1024 : 0)-((padButtons & Left) ? 1024 : 0)) :
+        flappy::hockey::paddleInput(arcadeTilt.update(tiltX,!launchTiltZero.pending() && haveTiltSample && uint32_t(nowMs-lastTiltSampleMs)<200,app.settings.arcadeSensitivity));
+    const unsigned local=app.settings.hockeyPlayer & 1;
+    hockeyCpu.setDifficulty(app.settings.hockeyCpu);
+    const int16_t opponent=hockeyCpu.input(*hockeyGame,1-local);
+    hockeyGame->tick(local ? opponent : int16_t(-arcadeMove),local ? arcadeMove : opponent);
+    hockeySound(hockeyGame->takeCue(),nowMs);
+    ++arcadeFrames;
+    return;
+  }
   const auto phase=coopLink.session().phase();
   if(phase==Phase::Off || phase==Phase::Disconnected || phase==Phase::Waiting) {
     if(arcadePauseRequested || (actionEdge && phase!=Phase::Waiting)) {
@@ -1415,7 +1554,10 @@ void tickHockey(bool actionEdge,uint32_t nowMs) {
   if(actionEdge && (phase==Phase::Lobby || (phase==Phase::Playing && coopLink.hockeyChannel().finished(coopLink.session().role()==Role::Host)))) {
     calibrateArcadeTilt(nowMs); coopLink.requestReady(nowMs);
   }
-  arcadeMove=arcadeTilt.update(tiltX,haveTiltSample && uint32_t(nowMs-lastTiltSampleMs)<200,app.settings.arcadeSensitivity);
+  arcadeMove=flappy::hockey::paddleInput(arcadeTilt.update(tiltX,!launchTiltZero.pending() && haveTiltSample && uint32_t(nowMs-lastTiltSampleMs)<200,app.settings.arcadeSensitivity));
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  if (diagnosticArcadeMove) arcadeMove=diagnosticArcadeMove;
+#endif
   if(phase!=Phase::Playing || !hockeyRoundPrepared) return;
   if(coopLink.session().role()==Role::Host) {
     if(coopLink.hockeyChannel().inputFresh(nowMs)) hockeyGame->tick(int16_t(-arcadeMove),coopLink.hockeyChannel().move(nowMs));
@@ -1430,6 +1572,24 @@ void tickHockey(bool actionEdge,uint32_t nowMs) {
 
 void drawHockey(uint32_t nowMs) {
   using flappy::coop::Phase;
+  if (app.settings.hockeySolo) {
+    flappy::HockeyRenderer::draw(canvasStorage,hockeyGame->frame(),app.settings.hockeyPlayer & 1);
+    flappy::ArcadeCanvas c(canvasStorage);
+    if (hockeySelecting) {
+      c.rect(7,76,121,92,0x0842);
+      c.text("PLAY AS",46,83,0xffff);
+      const bool queen=app.settings.hockeyPlayer==0;
+      c.rect(14,103,107,20,queen ? 0xfaf7 : 0x2945);
+      c.text("QUEEN",52,107,queen ? 0x0842 : 0xffff);
+      c.rect(14,126,107,20,queen ? 0x2945 : 0xff32);
+      c.text("PEASANT",46,130,queen ? 0xffff : 0x0842);
+      c.text("RIGHT PICK  M5 PLAY",16,151,0xc7ff);
+    } else if (arcadePaused) flappy::HockeyRenderer::banner(c,"M5 TO RESUME",0x0842);
+    else if (hockeyGame->phase()==flappy::hockey::Phase::Finished) {
+      c.rect(0,226,135,14,0x0842); c.text("M5: REMATCH",34,227,0xffff);
+    }
+    return;
+  }
   const bool host=coopLink.session().role()==flappy::coop::Role::Host;
   auto frame=hockeyGame->frame();
   if(coopLink.session().role()==flappy::coop::Role::Guest && coopLink.gameProfile()==flappy::coop::GameProfile::Hockey) coopLink.hockeyChannel().display(nowMs,frame);
@@ -1457,24 +1617,65 @@ void drawHockey(uint32_t nowMs) {
   }
 }
 
+void tickBuddy(bool actionEdge, uint32_t nowMs) {
+  using namespace flappy::controller;
+  flappy::BuddyControlSample sample;
+  sample.controller = controllerConnected;
+  sample.jumpHeld = M5.BtnA.isPressed() || (controllerConnected && (padButtons & A));
+  sample.rollHeld = controllerConnected && (padButtons & B);
+  sample.jumpPressed = actionEdge;
+  sample.rollPressed = pendingBuddyRoll;
+  sample.directionHeld = controllerConnected && (padButtons & (Left | Right));
+  sample.step = pendingBuddyStep;
+  sample.tiltFresh = !launchTiltZero.pending() && haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200;
+  sample.tilt = arcadeTilt.update(tiltX, sample.tiltFresh, app.settings.arcadeSensitivity);
+  arcadeMove = sample.tilt;
+  const flappy::BuddyInput input = buddyControls.input(sample);
+  pendingBuddyRoll = false;
+  pendingBuddyStep = 0;
+  if (appliedBuddyShirt != app.settings.buddyShirt || appliedBuddyMask != app.settings.buddyMask) {
+    buddyGame->setLook(app.settings.buddyShirt, app.settings.buddyMask);
+    appliedBuddyShirt = app.settings.buddyShirt;
+    appliedBuddyMask = app.settings.buddyMask;
+  }
+  const auto beforePhase = buddyGame->phase();
+  buddyGame->tick(input);
+  if (beforePhase != flappy::BuddyGame::Phase::Playing && buddyGame->phase() == flappy::BuddyGame::Phase::Playing)
+    startLaunchTiltZero();
+  ++arcadeFrames;
+  bool recordScore = true;
+#ifdef M5FLAP_STARTUP_DIAGNOSTICS
+  recordScore = !diagnosticArcadeTesting;
+#endif
+  if (recordScore && buddyGame->score() > arcadeBestBuddy) {
+    arcadeBestBuddy = buddyGame->score();
+    arcadeScoresDirty = true;
+  }
+  if (recordScore && buddyGame->gameOver()) saveArcadeScores();
+  const auto cue = buddyGame->takeCue();
+  if (cue == flappy::ArcadeCue::Death) playCue(flappy::PiezoCue::Crash, nowMs);
+  else hockeySound(cue, nowMs);
+}
+
 void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
   if (hockeyGame) { tickHockey(actionEdge,nowMs); return; }
-  if (!galagaGame && !arkanoidGame && !jetpackGame) return;
+  if (!galagaGame && !arkanoidGame && !jetpackGame && !buddyGame) return;
   if (jetpackCashRequested) {
     jetpackCashRequested = false;
     if (jetpackGame && jetpackGame->cashInSpinTokens()) {
       saveJetpackProfile(); arcadePaused = arcadePauseRequested = false;
-      arcadeControls.blockAction(); return;
+      blockArcadeActions(); return;
     }
   }
   if (arcadePauseRequested || (arcadePaused && actionEdge)) {
     arcadePaused = !arcadePaused;
     arcadePauseRequested = false;
-    arcadeControls.blockAction();
+    blockArcadeActions();
     arcadeTilt.reset();
     return;
   }
   if (arcadePaused) return;
+  if (buddyGame) { tickBuddy(actionEdge, nowMs); return; }
   using namespace flappy::controller;
   const bool held = M5.BtnA.isPressed() || (controllerConnected && (padButtons & (A | B)))
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
@@ -1482,7 +1683,7 @@ void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
 #endif
       ;
   int move = jetpackGame ? 0 : controllerConnected ? ((padButtons & Right) ? 1024 : 0) - ((padButtons & Left) ? 1024 : 0) :
-      arcadeTilt.update(tiltX, haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200, app.settings.arcadeSensitivity);
+      arcadeTilt.update(tiltX, !launchTiltZero.pending() && haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200, app.settings.arcadeSensitivity);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   if (diagnosticArcadeMove) move = diagnosticArcadeMove;
 #endif
@@ -1520,10 +1721,13 @@ void tickNativeArcade(bool actionEdge, uint32_t nowMs) {
 }
 
 void drawNativeArcade() {
-  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame) return;
+  if (!galagaGame && !arkanoidGame && !jetpackGame && !hockeyGame && !buddyGame) return;
+#ifndef M5FLAP_BOARD_STICKS3
   asyncDisplay.drain();
+#endif
   const uint32_t drawnAt = micros();
-  if (hockeyGame) drawHockey(millis());
+  if (buddyGame) flappy::BuddyRenderer::draw(canvasStorage, *buddyGame, arcadeBestBuddy);
+  else if (hockeyGame) drawHockey(millis());
   else if (galagaGame) galagaGame->draw(canvasStorage, arcadeBestGalaga);
   else if (arkanoidGame) arkanoidGame->draw(canvasStorage, arcadeBestArkanoid);
   else jetpackGame->draw(canvasStorage, arcadeBestJetpack);
@@ -1541,11 +1745,7 @@ void drawNativeArcade() {
     }
   }
   const int width = jetpackGame ? 240 : 135, height = jetpackGame ? 135 : 240;
-  if (asyncDisplay.submitBorrowedFrame(canvasStorage, width, height)) asyncDisplay.submitEndFrame();
-  else {
-    submitDisplay(0, 0, width, height, canvasStorage);
-    if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
-  }
+  submitCanvasFrame(width,height);
   recordLcdFrame(height, drawnAt);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   recordFrameTiming(arcadeFrames, 60);
@@ -1655,6 +1855,7 @@ void handlePlayGameRequest() {
       nes.setVideoRowMask(noRgb, sizeof(noRgb));
     }
     if (tetris) {
+      startLaunchTiltZero();
       tetrisLaunching = true;
       tetrisLaunchStage = tetrisStableFrames = 0;
       tetrisOptions.level = app.settings.tetrisLevel;
@@ -1686,9 +1887,11 @@ flappy::ClockTime homeTime(uint32_t nowMs) {
 
 void handleGameRequest() {
   gameHome.observe(app);
+  app.rememberCurrentGame();
   if (handledHomeGeneration == gameHome.generation() && handledGameRequest == app.gameRequest) return;
   handledHomeGeneration = gameHome.generation();
   asyncDisplay.drain();
+  delete marioAttract; marioAttract = nullptr;
   if (!gameHome.active()) {
     homeClocks.release();
     handledGameRequest = ~app.gameRequest;
@@ -1709,8 +1912,17 @@ void handleGameRequest() {
   clearPendingInput();
   nesSystemButton.reset(M5.BtnA.isPressed());
   setNesDisplay(false);
-  homeClocks.reset(app.currentGame,nonzeroRandom(),FlappyRom::data,FlappyRom::length);
-  runtimeNotice = homeClocks.ready() ? "" : "Clock memory unavailable";
+  if (app.currentGame == flappy::GameTitle::Nes && marioCartridge.clockSupported() &&
+      M5.Display.width() >= 135 && M5.Display.height() >= 240) {
+    homeClocks.release();
+    marioAttract = new(std::nothrow) flappy::MarioAttract;
+    nes.setCallbacks(nesVideo,nullptr,nullptr);
+    if (marioAttract && marioAttract->begin(nes,FlappyRom::data,FlappyRom::length,nonzeroRandom())) {
+      memset(canvasStorage,0,135 * 240 * sizeof(uint16_t));
+    } else { delete marioAttract; marioAttract = nullptr; nes.unload(); }
+  }
+  if (!marioAttract) homeClocks.reset(app.currentGame,nonzeroRandom(),FlappyRom::data,FlappyRom::length);
+  runtimeNotice = marioAttract || homeClocks.ready() ? "" : "Clock memory unavailable";
   homeFrames = 0;
   handledGameRequest = app.gameRequest;
   invalidateDisplay();
@@ -1722,7 +1934,9 @@ void handleGameRequest() {
 }
 
 void drawGameHome(uint32_t nowMs) {
+#ifndef M5FLAP_BOARD_STICKS3
   asyncDisplay.drain();
+#endif
   const uint32_t drawnAt = micros();
   const bool compact = viewport.width < 135 || viewport.height < 240;
   const int width = compact ? viewport.width : 135, height = compact ? viewport.height : 240;
@@ -1739,8 +1953,8 @@ void drawGameHome(uint32_t nowMs) {
     flappy::MenuFont::draw(canvasStorage,width,height,flappy::StickInput::nextLabel(rightHomeFallback()),4,height-16-controls,flappy::BittyUi::Muted);
     flappy::ClockOverlay::draw(canvasStorage,width,height,time,app.settings.clockDatePosition);
   } else {
-    homeClocks.draw(canvasStorage,homeTime(nowMs),renderer->skin());
-    if (!homeClocks.ready()) {
+    if (marioAttract) marioAttract->drawTime(canvasStorage,homeTime(nowMs)); else homeClocks.draw(canvasStorage,homeTime(nowMs),renderer->skin());
+    if (!marioAttract && !homeClocks.ready()) {
       flappy::MenuFont::draw(canvasStorage,135,240,"CLOCK MEMORY",25,98,flappy::BittyUi::Text);
       flappy::MenuFont::draw(canvasStorage,135,240,"PRESS M5 TO PLAY",19,116,flappy::BittyUi::Text);
     }
@@ -1749,11 +1963,7 @@ void drawGameHome(uint32_t nowMs) {
       flappy::MenuFont::draw(canvasStorage,135,240,flappy::StickInput::homeLabel(rightHomeFallback()),13,227,flappy::BittyUi::Muted);
     flappy::ClockOverlay::draw(canvasStorage,135,240,homeTime(nowMs),app.settings.clockDatePosition);
   }
-  if (asyncDisplay.submitBorrowedFrame(canvasStorage,width,height)) asyncDisplay.submitEndFrame();
-  else {
-    submitDisplay(0,0,width,height,canvasStorage);
-    if (asyncDisplay.enabled()) asyncDisplay.submitEndFrame();
-  }
+  submitCanvasFrame(width,height);
   recordLcdFrame(height,drawnAt);
 #ifdef M5FLAP_STARTUP_DIAGNOSTICS
   recordFrameTiming(homeFrames,60);
@@ -1761,6 +1971,7 @@ void drawGameHome(uint32_t nowMs) {
 }
 
 void restartTetris(bool linked = false, const flappy::coop::StartInfo* start = nullptr) {
+  startLaunchTiltZero();
   stopGameAudio();
   nes.softReset();
   tetrisLaunching = true;
@@ -1859,6 +2070,7 @@ void handleTetrisRequests(uint32_t nowMs) {
   }
   if (handledTetrisCalibrate != app.tetrisCalibrateRequest) {
     handledTetrisCalibrate = app.tetrisCalibrateRequest;
+    launchTiltZero.cancel();
     float ax, ay, az;
     if (M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az)) {
       tiltX = flappy::StickInput::horizontalTilt(M5.getBoard() == m5::board_t::board_M5StickS3,ax,ay);
@@ -2067,6 +2279,8 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
     if (app.currentGame == flappy::GameTitle::FlappyBird) app.restart();
     handleGameRequest();
     if (nativeArcade()) prepareNativeHomePlay();
+    // Opening solo hockey consumes the home tap. The next tap confirms a role.
+    if (hockeyGame && hockeySelecting) actionEdge = false;
     nesSystemButton.reset(M5.BtnA.isPressed());
   }
   const bool menuWasOpen = app.menuOpen();
@@ -2095,7 +2309,7 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
   }
   const uint8_t events = app.step(actionForApp, menuDown, nowMs, !gameHome.active());
   if (nativeArcade() && menuWasOpen != app.menuOpen()) {
-    arcadeControls.blockAction();
+    blockArcadeActions();
     arcadeTilt.reset();
   }
   if (!menuWasOpen && app.menuOpen()) {
@@ -2132,7 +2346,16 @@ void stepGame(bool actionEdge, bool menuDown, uint32_t nowMs) {
     handledArcadeCalibrate = app.arcadeCalibrateRequest;
     calibrateArcadeTilt(nowMs);
   }
-  if (gameHome.active() && !app.menuOpen()) { homeClocks.step(homeTime(nowMs)); ++homeFrames; }
+  if (gameHome.active() && !app.menuOpen()) {
+    if (marioAttract) {
+#ifndef M5FLAP_BOARD_STICKS3
+      asyncDisplay.drain();
+#endif
+      marioAttract->step(nes);
+    }
+    else homeClocks.step(homeTime(nowMs));
+    ++homeFrames;
+  }
   if (!gameHome.active() && nativeArcade() && !menuWasOpen && !app.menuOpen()) tickNativeArcade(actionEdge, nowMs);
   menuSound(menuBefore, selectionBefore, actionForApp, nowMs);
   applyOutputSettings();
@@ -2236,7 +2459,7 @@ void showBootSplash() {
 void clearPendingInput() {
   marioButtons.block();
   pendingHomeNext = false;
-  arcadeControls.blockAction();
+  blockArcadeActions();
   arcadeTilt.reset();
   arcadePauseRequested = false;
   pendingAction = pendingPadAction = false;
@@ -2375,6 +2598,8 @@ void setup() {
     startupFailure("LCD not detected. Select a display profile when building.");
     return;
   }
+  stripStorage = new (std::nothrow) uint16_t[flappy::PixelWidth * StripRows];
+  if (!stripStorage) { startupFailure("Display strip memory unavailable"); return; }
   renderer = new (std::nothrow) flappy::Renderer(canvasStorage);
   if (!renderer) { startupFailure("Display memory unavailable"); return; }
   const bool asyncReady = asyncDisplay.begin();
@@ -2506,7 +2731,7 @@ void serviceDiagnostics() {
     } else if (!strncmp(command,"M5UI ",5)) {
       unsigned page = 0, selection = 0;
       if (sscanf(command + 5,"%u %u",&page,&selection) == 2 && page >= 1 &&
-          page <= unsigned(flappy::MenuPage::JetpackMissions)) {
+          page <= unsigned(flappy::MenuPage::ClockDate)) {
         app.openMenu(flappy::MenuPage(page));
         if (selection < app.menuItemCount()) app.menu.selection = uint8_t(selection);
         clearPendingInput();
@@ -2550,6 +2775,29 @@ void serviceDiagnostics() {
     } else if (!strcmp(command, "M5PLAY")) {
       gameHome.observe(app); gameHome.play();
       app.closeMenu(); handleGameRequest();
+    } else if (!strcmp(command, "M5ACTION")) {
+      pendingAction = true;
+    } else if (!strcmp(command, "M5REBOOT")) {
+      asyncDisplay.drain(); saveSettings(); saveScores(); saveArcadeScores(); saveJetpackProfile();
+      Serial.flush(); ESP.restart();
+    } else if (!strcmp(command, "M5LINK")) {
+      const auto& session=coopLink.session();
+      Serial.printf("LINK profile=%u role=%u phase=%u connected=%u local_ready=%u remote_ready=%u round=%u seed=%lu zero=%lu status=%s\n",
+          unsigned(session.gameProfile()),unsigned(session.role()),unsigned(session.phase()),unsigned(session.connected()),
+          unsigned(session.localReady()),unsigned(session.remoteReady()),unsigned(session.round()),
+          (unsigned long)session.seed(),(unsigned long)coopLink.zeroFrame(),coopLink.statusText());
+      if (hockeyGame) {
+        const auto& channel=coopLink.hockeyChannel();
+        const auto& frame=session.role()==flappy::coop::Role::Host ? channel.lastSent() : channel.latest();
+        uint8_t motion[11],board[11]; flappy::hockey::Input input;
+        const bool valid=flappy::hockey::encodePayload(flappy::hockey::Part::Motion,frame,input,motion) &&
+            flappy::hockey::encodePayload(flappy::hockey::Part::Board,frame,input,board);
+        uint32_t hash=2166136261u;
+        if(valid) for(unsigned i=0;i<11;++i) { hash=(hash^motion[i])*16777619u; hash=(hash^board[i])*16777619u; }
+        Serial.printf("HOCKEY_WIRE tick=%lu hash=%08lx valid=%u fresh=%u input_fresh=%u phase=%u q=%u p=%u paddle_q=%u paddle_p=%u\n",
+            (unsigned long)frame.tick,(unsigned long)hash,unsigned(valid),unsigned(channel.fresh(millis())),unsigned(channel.inputFresh(millis())),
+            unsigned(frame.phase),unsigned(frame.scores[0]),unsigned(frame.scores[1]),unsigned(frame.paddles[0]),unsigned(frame.paddles[1]));
+      }
     } else if (!strcmp(command, "M5HOME")) {
       gameHome.enter(); app.closeMenu(); handleGameRequest();
     } else if (!strcmp(command, "M5NEXT")) {
@@ -2690,9 +2938,20 @@ void serviceDiagnostics() {
           unsigned(flappy::TetrisGym::level(nes)), (unsigned long)flappy::TetrisGym::score(nes),
           unsigned(flappy::TetrisGym::lines(nes)), unsigned(controllerConnected));
       Serial.printf("HOME active=%u frames=%lu state_bytes=%u fallback=%u generation=%lu hour=%u minute=%u\n",
-          unsigned(gameHome.active()), (unsigned long)homeFrames, unsigned(homeClocks.stateBytes()),
-          unsigned(homeClocks.fallback()), (unsigned long)gameHome.generation(),
+          unsigned(gameHome.active()), (unsigned long)homeFrames, unsigned(marioAttract ? sizeof(flappy::MarioAttract) : homeClocks.stateBytes()),
+          unsigned(!marioAttract && homeClocks.fallback()), (unsigned long)gameHome.generation(),
           unsigned(app.clockHour(millis())), unsigned(app.clockMinute(millis())));
+      if (marioAttract) Serial.printf("MARIO_HOME engine=NES course=%u theme=%u completed=%lu deaths=%lu pause=%u crop=%u\n",
+          unsigned(marioAttract->course()),marioAttract->theme(),(unsigned long)marioAttract->coursesCompleted(),
+          (unsigned long)marioAttract->deaths(),unsigned(marioAttract->pauseFrames()),marioAttract->crop());
+      if (hockeyGame) {
+        const auto frame = hockeyGame->frame();
+        Serial.printf("HOCKEY solo=%u selecting=%u local=%u cpu=%u phase=%u queen=%u peasant=%u\n",
+            unsigned(app.settings.hockeySolo),unsigned(hockeySelecting),unsigned(app.settings.hockeyPlayer),
+            unsigned(app.settings.hockeyCpu),unsigned(frame.phase),unsigned(frame.scores[0]),unsigned(frame.scores[1]));
+      }
+      Serial.printf("TILT_ZERO pending=%u neutral=%.4f sample=%.4f fresh=%u\n",unsigned(launchTiltZero.pending()),
+          arcadeTilt.neutral(),tiltX,unsigned(haveTiltSample));
       const auto clockDate = app.clockDate(millis());
       Serial.printf("CLOCK year=%u month=%u day=%u hour=%u minute=%u second=%u external_rtc=%u system_seconds=%lld\n",
           unsigned(clockDate.year),unsigned(clockDate.month),unsigned(clockDate.day),unsigned(app.clockHour(millis())),
@@ -2863,18 +3122,20 @@ void loop() {
   }
 #endif
   readClock(nowMs);
+  serviceLaunchTiltZero(nowMs);
   updateController(nowMs);
   updateCoop(nowMs);
   updateTetrisLink(nowMs);
   updateHockeyLink(nowMs);
   updateTetrisFrontend(nowMs);
   serviceSound(nowMs);
+  serviceLaunchTiltZero(nowMs);
   const bool tetris = tetrisLike();
   const bool zero = app.currentGame == flappy::GameTitle::TetrisZero;
   const bool padConnected = controllerConnected;
   const bool geometry = app.currentGame == flappy::GameTitle::GeometryDash;
   const auto geometryInput = geometryButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
-      leftClick, geometry && !padConnected && !app.menuOpen() && !gameHome.active(), nowMs);
+      leftClick, geometry && !app.menuOpen() && !gameHome.active(), nowMs);
   geometryHeld = geometryInput.held;
   pendingNesButtons |= geometryInput.pressed;
   const auto marioScreen = nativeMario ? marioCartridge.screen(nes) : flappy::MarioCartridge::Screen::Other;
@@ -2886,8 +3147,8 @@ void loop() {
   }
   marioButtons.poll(M5.BtnA.isPressed(),M5.BtnB.isPressed(),leftClick,marioContext,nowMs);
   pendingNesButtons |= nesSystemButton.update(M5.BtnA.isPressed(),
-      ((app.currentGame == flappy::GameTitle::Nes && (!nativeMario || (padConnected && marioScreen == flappy::MarioCartridge::Screen::Playing))) ||
-      (geometry && padConnected)) && !app.menuOpen() && !gameHome.active(), nowMs);
+      (app.currentGame == flappy::GameTitle::Nes && (!nativeMario || (padConnected && marioScreen == flappy::MarioCartridge::Screen::Playing))) &&
+      !app.menuOpen() && !gameHome.active(), nowMs);
   const bool lobby = tetrisLinkActive() && (coopLink.session().phase() != flappy::coop::Phase::Playing || (zeroLinked() && (zeroLaunching || zeroFinishedRound)));
   const auto internal = tetrisButtons.update(M5.BtnA.isPressed(), M5.BtnB.isPressed(),
       leftClick, app.settings.tetrisControls,
@@ -2895,7 +3156,7 @@ void loop() {
   tetrisHeld = internal.held;
   pendingTetrisDrop |= (internal.pressed & flappy::NesRuntime::Down) != 0;
   pendingNesButtons |= internal.pressed;
-  if (tetris && !gameHome.active() && app.settings.tetrisTilt && (!padConnected || zero) && M5.Imu.isEnabled()) {
+  if (tetris && !launchTiltZero.pending() && !gameHome.active() && app.settings.tetrisTilt && (!padConnected || zero) && M5.Imu.isEnabled()) {
     if (!haveTiltSample || uint32_t(nowMs - lastTiltPollMs) >= 32) {
       lastTiltPollMs = nowMs;
       float ax, ay, az;
@@ -2905,13 +3166,13 @@ void loop() {
         lastTiltSampleMs = nowMs;
       }
     }
-    const bool fresh = haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200;
+    const bool fresh = !launchTiltZero.pending() && haveTiltSample && uint32_t(nowMs - lastTiltSampleMs) < 200;
     const auto tilt = tetrisTilt.update(tiltX, fresh && !app.menuOpen() && !lobby &&
         !tetrisLaunching && !zeroLaunching, app.settings.tetrisControls);
     tetrisHeld |= tilt.held;
     pendingNesButtons |= tilt.pressed;
   }
-  if (nativeArcade() && !jetpackSelected() && !controllerConnected && M5.Imu.isEnabled() &&
+  if (nativeArcade() && !launchTiltZero.pending() && !jetpackSelected() && !controllerConnected && M5.Imu.isEnabled() &&
       (!haveTiltSample || uint32_t(nowMs - lastTiltPollMs) >= 16)) {
     lastTiltPollMs = nowMs;
     float ax, ay, az;
@@ -2927,7 +3188,10 @@ void loop() {
   }
   const auto arcadeSide = arcadeControls.update(M5.BtnB.isPressed(), leftClick,
       nativeArcade() && !app.menuOpen() && !gameHome.active(), nowMs);
-  if (arcadeSide.pause) arcadePauseRequested = true;
+  if (arcadeSide.pause) {
+    if (buddyGame && !arcadePaused) pendingBuddyRoll = true;
+    else arcadePauseRequested = true;
+  }
   if (arcadeSide.zero) {
     if (jetpackSelected()) {
       if (jetpackGame && jetpackGame->phase() == flappy::JetpackGame::Phase::Spin) jetpackCashRequested = true;
@@ -3072,6 +3336,7 @@ void loop() {
             app.openMenu(flappy::MenuPage::GameSettings);
             runFrame = false;
           } else if (geometryLauncher.active()) {
+            geometryLauncher.advanceBoot(nes);
             const auto launch = geometryLauncher.update(nes.readRam(0x0498), nes.readRam(0x047b));
             if (launch.writeLevel) nes.writeRam(0x047b, launch.level);
             input1 = launch.buttons;

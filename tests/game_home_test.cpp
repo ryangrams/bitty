@@ -18,7 +18,7 @@ static void lifecycle() {
   home.play(); assert(!home.active() && home.generation() == initial+1);
   home.play(); assert(home.generation() == initial+1);
   assert(!home.cycle(app));
-  app.openMenu(); app.menu.selection = 8;
+  app.openMenu(); app.menu.selection = 7;
   app.step(true,false,17,false);
   assert(!app.menuOpen() && app.homeRequest == 1);
   home.observe(app); assert(home.active());
@@ -35,14 +35,14 @@ static void lifecycle() {
 
 static void cycleAvailabilityAndCartridges() {
   AppModel app(31); GameHome home; home.observe(app);
-  const GameTitle publicOrder[] = {GameTitle::Galaga,GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::FlappyBird};
+  const GameTitle publicOrder[] = {GameTitle::Galaga,GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::BittyBuddy,GameTitle::FlappyBird};
   for (auto title : publicOrder) { assert(home.cycle(app)); assert(app.currentGame == title && home.active()); }
   app.setNesAvailable(true); app.setTetrisAvailable(true); app.setTetrisZeroAvailable(true);
   app.setGeometryDashAvailable(true);
   app.addCartridgeChoice(11,"Mario"); app.addCartridgeChoice(22,"Another NES");
   app.addCartridgeChoice(33,"Third NES");
   const GameTitle fullOrder[] = {GameTitle::Nes,GameTitle::Tetris,GameTitle::GeometryDash,GameTitle::Galaga,
-    GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::Nes,GameTitle::Nes,GameTitle::FlappyBird};
+    GameTitle::Arkanoid,GameTitle::JetpackJoyride,GameTitle::HockeyQueen,GameTitle::BittyBuddy,GameTitle::Nes,GameTitle::Nes,GameTitle::FlappyBird};
   unsigned nesIndex = 0;
   for (auto title : fullOrder) {
     assert(home.cycle(app)); assert(app.currentGame == title);
@@ -93,7 +93,7 @@ int main() {
   assert(StickInput::horizontalTilt(false,.5f,-.25f) == -.5f);
   assert(StickInput::horizontalTilt(true,.5f,-.25f) == .25f);
   assert(StickInput::horizontalTilt(true,.9f,0) == 0);
-  assert(StickInput::horizontalTilt(true,0,-.6f) > 0); // Right edge lowered.
+  assert(StickInput::horizontalTilt(true,0,-.6f) > 0); // Screen-right tilt.
   assert(StickInput::horizontalTilt(true,0,.6f) < 0);
   assert(strcmp(StickInput::neutralKey(true,true),StickInput::neutralKey(false,true)));
   assert(!strcmp(StickInput::neutralKey(false,true),"tetneutral"));

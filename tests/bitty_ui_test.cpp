@@ -56,9 +56,9 @@ int main() {
     if (elapsed == 900) finished.assign(pixels,pixels + size);
     if (elapsed > 900) assert(finished == std::vector<uint16_t>(pixels,pixels + size));
   }
-  // The complete URL is native bitmap text, entirely inside the physical crop.
-  const char* url = "bitty.games";
-  const int left = (width - MenuFont::textWidth(url)) / 2, top = height / 2 + 34;
+  // The smaller domain suffix sits under the centered native wordmark.
+  const char* url = ".games";
+  const int left = (width - MenuFont::textWidth(url)) / 2, top = 24 + 20*4 + 2*3 + 16 + 37;
   for (int i = 0; url[i]; ++i) for (int y = 0; y < MenuFont::Height; ++y)
     for (int x = 0; x < MenuFont::Width; ++x)
       if (MenuFont::glyph(url[i])[y] & (1u << (MenuFont::Width - 1 - x)))

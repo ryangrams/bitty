@@ -42,7 +42,7 @@ Firmware distribution also carries the obligations of its linked libraries, incl
 
 ## NES core modifications
 
-The `nesColor` hardware palette in `firmware/flappy/mario_world_clock.h` also uses the pinned emulator's RGB888-to-RGB565 conversion, grouped into four luminance rows with sixteen hue indices each. Copyright PeakRacing, Apache 2.0. This table contains hardware colors; the clock reads all cartridge artwork from the user's ROM at runtime.
+The hardware palette in `firmware/flappy/nes_palette.h`, shared by the native NES home and legacy `mario_world_clock.h` scene, also uses the pinned emulator's RGB888-to-RGB565 conversion, grouped into four luminance rows with sixteen hue indices each. Copyright PeakRacing, Apache 2.0. This table contains hardware colors; the clock reads all cartridge artwork from the user's ROM at runtime.
 
 `tools/setup_nes.py` fetches and checks selected files from the pinned PeakRacing/nes revision. Its [Apache 2.0 license text](LICENSES/PeakNES-Apache-2.0.txt) is retained verbatim. The script prepares a private dependency with a cooperative single-frame entry point, preserved fractional frame timing, a mapper 0/1/4/37/118 registry, 8-row RGB565 strip buffers, 24 kHz audio, and a filesystem guard around the trainer helper.
 

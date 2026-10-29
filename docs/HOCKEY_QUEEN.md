@@ -1,13 +1,19 @@
-# Hockey Queen on two sticks
+# Hockey Queen
 
-Hockey Queen is a native 135 by 240 adaptation of Ryan's air-hockey game. Two sticks are required for manual matches. Each player sees their own paddle at the bottom. Tilt left or right to move it; the puck moves through collisions. Power-ups activate when collected. The first player to seven wins.
+Hockey Queen is a native 135 by 240 adaptation of Ryan's air-hockey game. Solo play uses one stick against the CPU. Two-stick play remains available. Each player sees their own paddle at the bottom. Tilt left or right to move it; the puck moves through collisions. Power-ups activate when collected. The first player to seven wins.
 
 The Queen gets power-ups by default. Game Settings can give them to both players or turn them off. Pink lasers, Rainbow Beam, Mega Paddle, Shrink Ray, Rainbow Wall, Triple Puck, Slime Time, Backwards Day, Butterflies, Rocket Puck, Tiny Goal and Freeze Ray have compact implementations. Extra pucks only score for their owner. A single active power per player replaces the original game's stacking effects. Banana Peel and map-specific special powers are omitted from this adaptation.
 
-## Start a match
+## Solo match
+
+Press M5 from the clock home. Tap right to choose Queen or Peasant, then press M5 to enter a match on the configured random or fixed map. The CPU defaults to Medium. Game Settings offers Easy, Medium, Difficult and Evil. Reaction delay, movement speed and aim error vary by skill. It predicts side-wall rebounds, while bumpers, powers and later hits can defeat its prediction. It uses the same movement and collision rules as the human player.
+
+Tap right to pause, M5 to resume, and M5 after the result for a new match. Tilt is automatically zeroed when play starts. Game Settings > Players switches between solo and two sticks.
+
+## Two-stick match
 
 1. Install the same Hockey Queen firmware on both compatible sticks. Select Hockey Queen to open its animated clock home.
-2. On the first stick, press M5 to host as the Queen. On the second, choose **Game Settings > Two-stick link > Join as Peasant**. Alternatively, press M5 from its clock, then tap right to switch from hosting to joining.
+2. Set **Game Settings > Players** to **Two sticks** on each unit. On the first stick, press M5 to host as the Queen. On the second, choose **Game Settings > Two-stick link > Join as Peasant**. Alternatively, press M5 from its clock, then tap right to switch from hosting to joining.
 3. When connected, hold each stick in a comfortable neutral position and press M5 on each. This zeros that stick's tilt and marks its player ready. Both players must be ready for the shared countdown.
 4. After the match, press M5 on each stick for a rematch. A random map is selected again from the new match seed. The map stays fixed between goals.
 

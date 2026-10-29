@@ -14,9 +14,9 @@ python tools/flash.py --port /dev/cu.YOUR_DEVICE
 
 The build finds `.local/geometry-rom/` automatically. Use `python tools/build.py --geometry-dir /path/to/private/import` for another folder. Your general NES cartridge, including Mario, keeps its own import folder and launcher entry.
 
-Hold the right side button for 700 ms to open the M5 menu, then choose **Change Game > Geometry Dash**. **Game at Boot** can save it as your startup choice; Flappy Bird remains the initial default.
+Hold the right side button for 700 ms to open the M5 menu, then choose **Change Game > Geometry Dash**. The last selected game returns automatically after startup.
 
-The launcher advances the cartridge's warning, title and level-selection screens automatically. Its first startup includes Famidash's compulsory credits, lasting about 15 seconds. The M5 shows a preparation screen during this sequence, then starts the selected level. Use **Game Settings > Level** to choose among the 22 original levels. Selecting a level closes the menu and starts that level. **Game Settings > Restart level** restarts the current selection.
+The launcher advances the cartridge's warning, title and level-selection screens automatically. It batches silent menu steps while the M5 shows a preparation screen. Batching stops at the first gameplay state, preserving the level's normal NTSC cadence. Use **Game Settings > Level** to choose among the 22 original levels. Selecting a level closes the menu and starts that level. **Game Settings > Restart level** restarts the current selection.
 
 The Geometry Dash slot requires the exact v1.2.8 main cartridge: **786,448 bytes**, CRC32 **`5BF705B3`**, SHA-256 **`7acf068a406d551ff18afa3fc1ed228ff90f72651c4a90a3862b997240bb9b58`**. The firmware checks its size and CRC32 before using release-specific RAM addresses.
 
@@ -32,7 +32,7 @@ On the supported StickC Plus panel, the worker qualifies two clean scan cycles a
 
 The cartridge declares multiregion support; this launcher selects **NTSC 60 Hz timing**. The emulator advances NTSC game frames on a 60 Hz schedule. The renderer uses every frame, with no regular frame-skipping divisor. Completed SPI transfers and the panel's own scan cycle are measured separately. The panel scan period is about 16.8 ms, or 59.5 Hz, with its refresh clock unchanged.
 
-Hardware probes use Stereo Madness, Geometrical Dominator and Dash, Bluetooth LE scanning, Full volume and held action with native retries. A connected controller is unavailable for this audit. The final release's transfer measurements are recorded below.
+Earlier Plus hardware probes used Stereo Madness, Geometrical Dominator and Dash, Bluetooth LE scanning, Full volume and held action with native retries. No controller connected during those probes. These measurements predate the current control and startup changes.
 
 | Level | 500 completed SPI intervals | Completed SPI FPS |
 | --- | ---: | ---: |
@@ -50,10 +50,9 @@ These checks cover geometry, memory safety and presentation logic. Direct inspec
 
 | Input | During gameplay |
 | --- | --- |
-| Front M5, without a controller | Press to jump; hold for sustained flight or the active form's held action. |
+| Front M5, with or without a controller | Press to jump; hold for sustained flight or the active form's held action. |
 | Controller A or B | Jump or hold the active form's action. |
 | Controller Start | Open Game Settings. |
-| Front M5, with a controller | A short press and release opens Game Settings. |
 | Hold right side 700 ms | Open or close the M5 menu. |
 | Controller Menu | Open the M5 menu. |
 

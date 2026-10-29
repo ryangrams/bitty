@@ -543,10 +543,10 @@ static void actualMenuLabelsFitAndSurviveNativeCrop() {
   for (uint8_t game = 0; game < flappy::GameTitleCount; ++game) {
     assert(app.setCurrentGame(flappy::GameTitle(game)));
     app.openMenu(flappy::MenuPage::Home);
-    assert(app.menuItemCount() == 10);
-    assert(std::strcmp(app.menuLabel(7), "Set clock") == 0);
-    assert(std::strcmp(app.menuLabel(8), "Game home") == 0);
-    assert(std::strcmp(app.menuLabel(9), "Back") == 0);
+    assert(app.menuItemCount() == 9);
+    assert(std::strcmp(app.menuLabel(6), "Set clock") == 0);
+    assert(std::strcmp(app.menuLabel(7), "Game home") == 0);
+    assert(std::strcmp(app.menuLabel(8), "Back") == 0);
     for (uint8_t index = 0; index < app.menuItemCount(); ++index) {
       assert(flappy::MenuFont::textWidth(app.menuLabel(index)) <= 128);
       assert(flappy::MenuFont::textWidth(app.menuValue(index)) <= 128);
@@ -619,7 +619,7 @@ static void volumeMenuShowsLevelsAndCurrentValue() {
   flappy::AppModel app(23);
   preparePlaying(app, flappy::Mode::Original, 10);
   app.openMenu(flappy::MenuPage::Home);
-  app.menu.selection = 4;
+  app.menu.selection = 3;
   app.setVolume(0);
   const auto mutedHome = frame(app);
   app.setVolume(5);
@@ -645,8 +645,8 @@ static void sleepMenuShowsChoicesAndCurrentValue() {
   flappy::AppModel app(237);
   preparePlaying(app, flappy::Mode::Original, 10);
   app.openMenu();
-  app.menu.selection = 6;
-  assert(std::strcmp(app.menuLabel(6), "Sleep") == 0);
+  app.menu.selection = 5;
+  assert(std::strcmp(app.menuLabel(5), "Sleep") == 0);
   const auto defaultHome = frame(app);
   app.setSleep(5);
   assert(differentPixels(defaultHome, frame(app)) > 0);
@@ -704,7 +704,7 @@ static void launcherMenusShowAvailabilityAndTitles() {
   app.setNesTitle(longTitle.c_str());
   assert(app.setCurrentGame(flappy::GameTitle::Nes));
   app.openMenu();
-  assert(app.menuItemCount() == 10);
+  assert(app.menuItemCount() == 9);
   for (uint8_t selected = 0; selected < app.menuItemCount(); ++selected) {
     app.menu.selection = selected;
     flappy::RenderOptions options;
@@ -720,7 +720,7 @@ static void controllerMenuShowsStatusAndActions() {
   flappy::AppModel app(29);
   preparePlaying(app, flappy::Mode::Original, 10);
   app.openMenu();
-  app.menu.selection = 5;
+  app.menu.selection = 4;
   const auto off = frame(app);
   app.setControllerStatus("Searching");
   assert(differentPixels(off, frame(app)) > 0);
@@ -830,11 +830,11 @@ static void sharedClockControlsRenderForEveryGame() {
     for (uint8_t scale : {uint8_t(2), uint8_t(3)}) {
       flappy::RenderOptions options; options.uiScale = scale;
       app.setClock(12, 34, 0);
-      app.openMenu(flappy::MenuPage::Home); app.menu.selection = 7;
+      app.openMenu(flappy::MenuPage::Home); app.menu.selection = 6;
       const auto before = frame(app, options);
       app.setClock(13, 35, 0);
       assert(differentPixels(before, frame(app, options)) > 0);
-      app.menu.selection = 8;
+      app.menu.selection = 7;
       const auto gameHome = frame(app, options);
       assert(differentPixels(before, gameHome) > 0);
       app.openMenu(flappy::MenuPage::Clock);

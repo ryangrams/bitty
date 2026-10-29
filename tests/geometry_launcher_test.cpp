@@ -66,7 +66,22 @@ static void failuresLeaveGameMemoryUntouched() {
   assert(!l.update(6, 0).writeLevel);
 }
 
+static void bootBatchNeverAdvancesGameplay() {
+  struct Runtime {
+    uint8_t state=6,level=0;unsigned steps=0,playSteps=0;
+    uint8_t readRam(unsigned at) const { return at==0x498 ? state : level; }
+    void writeRam(unsigned at,uint8_t value) { assert(at==GeometryLauncher::LevelAddress);level=value; }
+    bool step(uint8_t buttons) { ++steps;if(state==2)++playSteps;else if(buttons&1)state=2;return true; }
+  } runtime;
+  GeometryLauncher launch;launch.request(4);
+  for(unsigned i=0;i<40 && launch.active();++i)launch.advanceBoot(runtime);
+  assert(launch.complete() && !launch.failed() && runtime.level==4 && runtime.playSteps==0);
+  const unsigned steps=runtime.steps;
+  launch.advanceBoot(runtime);assert(runtime.steps==steps);
+}
+
 int main() {
+  bootBatchNeverAdvancesGameplay();
   nativeStartupAndRequestedLevel();
   failuresLeaveGameMemoryUntouched();
   std::cout << "Geometry launcher checks passed\n";

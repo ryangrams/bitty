@@ -10,7 +10,7 @@ namespace flappy {
 // its native 16-pixel columns. Every course has continuous ground and an exit.
 class MarioClock {
  public:
-  static constexpr size_t MaxLevelBytes = 64;
+  static constexpr size_t MaxLevelBytes = 96;
   static constexpr unsigned Tile = 8, ClockWidth = 17 * Tile, ClockHeight = 5 * Tile;
   static constexpr int ClockY = 128;
   struct Obstacle { uint16_t x; uint8_t width, height; };
@@ -22,7 +22,7 @@ class MarioClock {
     seenClocks_ = 0;
     frames_ = stalled_ = 0;
     previousX_ = 0;
-    tileReady_ = false;
+    tileReady_ = false; pipeExit_ = false;
     next();
     pages_ = uint8_t(8 + next() % 3);
     append(0x50);  // Native 400-count timer and ground-level entry.
@@ -58,6 +58,50 @@ class MarioClock {
     append(0xfd);
   }
 
+  // Four repeatable course recipes. The long empty pages are intentional
+  // clearings for a portrait clock; obstacle pages have measured jump leads.
+  void buildCourse(unsigned recipe) {
+    recipe %= 4;
+    generate(recipe + 1);
+    levelBytes_ = obstacleCount_ = clockCount_ = 0;
+    pages_ = 7; pipeExit_ = recipe < 2;
+    append(0x50); append(recipe ? 0x01 : 0x21);
+    for (unsigned page = 0; page < pages_; ++page) {
+      bool first = true;
+      const auto object = [&](unsigned column,unsigned row,unsigned code) {
+        append(uint8_t(column * 16 + row));
+        append(uint8_t(code | (first && page ? 0x80 : 0))); first = false;
+      };
+      const auto solid = [&](unsigned column,unsigned height,bool pipe) {
+        object(column,11 - height,(pipe ? 0x70 : 0x60) | (pipe ? height : height - 1));
+        obstacles_[obstacleCount_++] = {uint16_t(page * 256 + column * 16),uint8_t(pipe ? 32 : 16),uint8_t(height * 16)};
+      };
+      if (page == 1 || page == 4) {
+        object(0,11,0x60); clocks_[clockCount_++] = uint16_t(page * 256 + 64);
+      } else if (page == 0) {
+        object(1,7,0x43); solid(9,recipe == 2 ? 3 : 2,true);
+      } else if (page == 2) {
+        object(1,7,0x43);
+        solid(5,1,false); solid(6,2,false); solid(7,3,false);
+      } else if (page == 3) {
+        object(1,7,0x43); solid(4,1,true); solid(11,2,true);
+      } else if (page == 5) {
+        object(1,7,0x43); object(7,7,0x00); solid(11,recipe == 3 ? 3 : 2,false);
+      } else {
+        object(2,9,0x43);
+        if (pipeExit_) {
+          object(9,9,0x7a); // Enterable pipe, with a separate destination record.
+          obstacles_[obstacleCount_++] = {uint16_t(page * 256 + 9 * 16),32,32};
+        } else object(9,13,0x41);
+        object(13,15,0x26);
+        finishX_ = uint16_t(page * 256 + 9 * 16);
+      }
+    }
+    append(0xfd);
+  }
+
+  void setPortrait(bool value) { portrait_ = value; }
+
   template<class Runtime>
   bool install(Runtime& runtime) const {
     const uint8_t endEnemies = 0xff;
@@ -77,9 +121,9 @@ class MarioClock {
     previousX_ = x;
     if (runtime.readRam(0x770) != 1 || runtime.readRam(0x772) != 3 || runtime.readRam(0x0e) != 8) return 0;
     const bool grounded = runtime.readRam(0x1d) == 0;
-    if (grounded && !jump_) {
+    if ((grounded || portrait_) && !jump_) {
       for (unsigned i = 0; i < clockCount_; ++i) {
-        if (!(seenClocks_ & (1u << i)) && x >= clocks_[i] + 40 && x < clocks_[i] + 72) {
+        if (!(seenClocks_ & (1u << i)) && x >= clocks_[i] + (portrait_ ? 5 : 40) && x < clocks_[i] + (portrait_ ? 37 : 72)) {
           seenClocks_ |= uint8_t(1u << i);
           pause_ = 180;
           break;
@@ -167,6 +211,8 @@ class MarioClock {
   unsigned obstacleCount() const { return obstacleCount_; }
   const Obstacle& obstacle(unsigned i) const { return obstacles_[i]; }
   bool tileReady() const { return tileReady_; }
+  uint16_t finishX() const { return finishX_; }
+  bool pipeExit() const { return pipeExit_; }
 
  private:
   uint8_t level_[MaxLevelBytes] = {}, levelBytes_ = 0, obstacleCount_ = 0, clockCount_ = 0, pages_ = 0;
@@ -175,7 +221,7 @@ class MarioClock {
   uint8_t digits_[4] = {1, 2, 0, 0}, jump_ = 0, seenClocks_ = 0;
   uint16_t pause_ = 0, stalled_ = 0, previousX_ = 0;
   uint32_t seed_ = 1, random_ = 1, frames_ = 0;
-  bool tileReady_ = false;
+  bool tileReady_ = false, portrait_ = false, pipeExit_ = false;
 
   uint32_t next() { random_ ^= random_ << 13; random_ ^= random_ >> 17; random_ ^= random_ << 5; return random_; }
   void append(uint8_t value) { if (levelBytes_ < MaxLevelBytes) level_[levelBytes_++] = value; }

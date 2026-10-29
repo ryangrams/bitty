@@ -64,7 +64,7 @@ python tools/build.py
 
 The build includes `.local/tetris-rom/` when present. Use `--tetris-dir /path/to/private-import` to choose another imported Tetris folder. Base artwork and the other build dependencies still follow the [main build instructions](../README.md#build-your-copy). Display profiles such as `--display stickc-plus` remain available.
 
-Choose **Tetris** through **Change Game** to switch immediately, or save it through **Game at Boot** for the next power-on. Flappy Bird remains the initial startup choice. The selected player mode is saved separately from the boot-game choice. Older builds' Tetris Zero boot choice migrates to the single Tetris entry.
+Choose **Tetris** through **Change Game** to switch immediately. Startup returns to the last selected game. The selected player mode is saved with the settings. Older builds' Tetris Zero startup choice migrates to the single Tetris entry.
 
 The portrait layout requires a display at least 131 by 240 pixels, including the 135 by 240 StickC Plus screen. The frontend presents game settings on the M5 and launches the cartridge automatically. During play it arranges the playfield, Hold, NEXT and counters in portrait.
 

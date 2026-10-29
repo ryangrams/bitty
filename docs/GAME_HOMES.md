@@ -1,6 +1,6 @@
 # Game clocks
 
-Select a game and its clock starts in portrait. Tap the left side button to move to the next available game. Press the front M5 button to play. StickS3 startup configures its power key for taps and disables accidental single-tap reset and double-tap power-off. If its PMIC revision cannot be configured, the footer shows RIGHT NEXT as a fallback. Hold right for the menu on either model. Choose **Game home** in the menu to return to the selected game's clock. **Game at Boot** chooses which clock appears after startup.
+Select a game and its clock starts in portrait. Tap the left side button to move to the next available game. Press the front M5 button to play. StickS3 startup configures its power key for taps and disables accidental single-tap reset and double-tap power-off. If its PMIC revision cannot be configured, the footer shows RIGHT NEXT as a fallback. Hold right for the menu on either model. Choose **Game home** in the menu to return to the selected game's clock. Startup returns to the last selected game and cartridge. The first boot opens Bitty Flap.
 
 A paired controller can use Left for the next home, A or Start to play, and B or Menu for the menu. Gameplay keeps each game's existing controller assignments. The original Plus power key keeps its hardware long-hold function.
 
@@ -12,13 +12,14 @@ The clocks are quiet and do not award records, coins, missions or other saved pr
 
 | Game | Clock behavior |
 | --- | --- |
-| Mario | An endless generated course visits overworld, underground, water and castle sections through animated pipes. Native 16 by 16 coin tiles form HH above MM on a square grid in clearings. Mario can collect some coins, jump obstacles and stomp enemies. |
+| Mario | The NES engine plays four authored courses through overworld, underground, water and castle environments, with native platforms, enemies, pipe entries, goals and death recovery. Native 16 by 16 coins form HH above MM in clearings. |
 | Flappy Bird | Double-size source pixels, an immortal bird and no score. Pipes gather into two rows of time digits and return to pipes every 800 steps, about 4.5 appearances per minute at 60 Hz. |
 | Tetris | Genuine connected tetrominoes fall into a 10-column well. Bright digit cells and dim supporting cells make HH over MM legible. After a readable hold, the bot clears lines and continues playing. An 18-second cycle rebuilds the board about 3.3 times per minute. Both Tetris engines use this scene. |
 | Geometry Dash | Double-size forms travel through a fixed portrait view. Object digits scroll through the course. Each ten-second cycle eases into quarter-speed world motion over one second, holds for four, and eases back over one second. Drawing continues on every update. |
 | Galaga | Enemies fly into digit formations, dive and return. The ship shoots them apart with real projectiles, then the next formation arrives. |
 | Arkanoid | Randomized boards include durable colored time bricks. The paddle aims at bricks through ball collisions. A visible safety rail keeps the scene running. A natural clear or minute change wipes the board and builds another. |
 | Hockey Queen | Two tiny paddles play across themed rinks while the time appears in the center markings. This separate home scene needs no second stick or radio. |
+| Bitty Buddy | Coin digits show the time above an animated Little Buddy, with rolling, jumping and a hoverboard. The scene has its own state and awards no gameplay progress. |
 | Bitty Jet | Coins form a clock in the lab, hold briefly for reading, then scatter and attract toward the runner with an animated magnet. Staff, hazards and vehicles continue around it. |
 
 Flappy gameplay digits now follow the selected skin's palette. Midnight uses subdued colors. The authored Toast and Past Due skins use their own inks; imported color skins draw from their bird palette.
@@ -37,6 +38,6 @@ Animated scenes target the 135 by 240 display. An 80 by 160 StickC receives a na
 
 The selected scene owns only its small state allocation. Game switching drains display transfers before reusing the canvas. Starting play releases the clock before allocating the game engine. Ordinary NES play retains its NTSC scheduler and every-frame Mario composition. Clock slow motion affects only the clock scene's world movement.
 
-Portable checks cover all nine internal game identifiers, missing-ROM fallback, minute/format changes, clipping guards, deterministic scenes, repeated switching and allocation failure. Individual scene tests cover collisions, formation cycles, real tetromino geometry and motion continuity. ROM-bearing previews and private reference probes stay under `.local/`. These checks do not establish physical button behavior, LCD scanout or device throughput for this update. Hardware receipts are recorded separately in [release status](RELEASE_STATUS.md).
+Portable checks cover all ten internal game identifiers, missing-ROM fallback, minute/format changes, clipping guards, deterministic scenes, repeated switching and allocation failure. Individual scene tests cover collisions, formation cycles, real tetromino geometry and motion continuity. ROM-bearing previews and private reference probes stay under `.local/`. These checks do not establish physical button behavior, LCD scanout or device throughput for this update. Hardware receipts are recorded separately in [release status](RELEASE_STATUS.md).
 
 The build keeps `-O2` and places Xtensa literal constants beside their functions with `-mtext-section-literals` to keep the enlarged native game source within instruction range. See [GCC's Xtensa option reference](https://gcc.gnu.org/onlinedocs/gcc/Xtensa-Options.html). This affects code placement; simulation timing remains unchanged.
