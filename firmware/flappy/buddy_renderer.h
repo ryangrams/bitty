@@ -81,7 +81,7 @@ class BuddyRenderer {
     world(c, s.theme, s.frame);
     // Depth sorting keeps nearby people and pocket change in front of distant art.
     unsigned order[BuddyGame::ObjectCount];
-    const unsigned count = s.objects ? (s.count < BuddyGame::ObjectCount ? s.count : BuddyGame::ObjectCount) : 0;
+    const unsigned count = s.objects ? (s.count < BuddyGame::ObjectCount ? s.count : unsigned(BuddyGame::ObjectCount)) : 0;
     for (unsigned i = 0; i < count; ++i) {
       unsigned j = i;
       while (j && s.objects[order[j - 1]].depth > s.objects[i].depth) {

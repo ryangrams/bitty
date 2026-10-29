@@ -21,7 +21,8 @@ int main() {
  unsigned animated=0;
  for(unsigned i=0;i<100;++i){g.tick({});for(unsigned n=0;n<G::ObjectCount;++n)if(g.objects()[n].active && g.objects()[n].pull)++animated;}
  assert(animated>5 && g.coins()==coins+2 && g.magnetTicks()>0);
- for(unsigned i=0;i<500;++i)g.tick({});assert(g.coins()==coins+2 && !g.magnetTicks());
+ for(unsigned i=0;i<500;++i) g.tick({});
+ assert(g.coins()==coins+2 && !g.magnetTicks());
  g.reset();A::clear(g);auto score=g.score();A::collect(g,K::Multiplier);
  const auto afterPower=g.score();A::collect(g,K::Coin);assert(g.score()-afterPower==50 && afterPower>score);
  g.reset();A::clear(g);A::goals(g);assert(g.missionSets()==1 && g.scoreMultiplier()==2 && g.coins()==10);
@@ -35,8 +36,10 @@ int main() {
  for(unsigned i=0;i<40;++i){A::obstacle(g,K::Person);g.tick({});}
  assert(g.phase()==G::Phase::Playing && g.flightTicks()>0 && g.flightHeight()==100 && g.boardTicks()==shield && !g.tricks());
  A::coin(g,1,G::DepthUnit/2);
- for(unsigned i=0;i<100;++i)g.tick({});assert(g.coins()>0);
- for(unsigned i=0;i<G::FlightTicks;++i)g.tick({});assert(g.flightHeight()==0 && !g.flightTicks());
+ for(unsigned i=0;i<100;++i) g.tick({});
+ assert(g.coins()>0);
+ for(unsigned i=0;i<G::FlightTicks;++i) g.tick({});
+ assert(g.flightHeight()==0 && !g.flightTicks());
  g.reset();A::clear(g);
  flappy::BuddyInput jump; jump.jump=true;g.tick(jump);
  for(unsigned i=0;i<20;++i)g.tick({});

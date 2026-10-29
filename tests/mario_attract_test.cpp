@@ -19,7 +19,9 @@ struct Runtime {
  bool setPrgCache(uint8_t m){mask=m;return true;}
  bool patchCachedPrg(unsigned bank,size_t off,const uint8_t* data,size_t size) {
   assert(bank<2 && off+size<=8192 && data && size);
-  for(size_t i=0;i<size;++i)cache[bank*8192+off+i]=data[i];++writes;return true;
+  for(size_t i=0;i<size;++i) cache[bank*8192+off+i]=data[i];
+  ++writes;
+  return true;
  }
  bool step(uint8_t input){++frames;if(boot){ram.fill(0);ram[0x772]=3;boot=false;return true;}if(input&8){ram[0x770]=1;ram[0x772]=3;ram[0x0e]=8;}return true;}
  bool softReset(){++resets;boot=true;return true;}
@@ -39,15 +41,19 @@ int main() {
  const auto input=rom;
  for(unsigned i=0;i<100&&!clock.playing();++i)assert(clock.step(r));
  assert(clock.playing());unsigned frames=r.frames;
- for(unsigned i=0;i<100;++i)assert(clock.step(r));assert(r.frames==frames+100);
+ for(unsigned i=0;i<100;++i) assert(clock.step(r));
+ assert(r.frames==frames+100);
  r.ram[0xe]=6;assert(clock.step(r));assert(clock.deaths()==1 && clock.restarting());
- for(unsigned i=0;i<90;++i)assert(clock.step(r));assert(clock.course()==0 && !clock.playing());
+ for(unsigned i=0;i<90;++i) assert(clock.step(r));
+ assert(clock.course()==0 && !clock.playing());
  for(unsigned i=0;i<100&&!clock.playing();++i)assert(clock.step(r));
  r.ram[0xe]=11;assert(clock.step(r));
- for(unsigned i=0;i<90;++i)assert(clock.step(r));assert(clock.course()==1 && clock.coursesCompleted()==1 && clock.deaths()==2);
+ for(unsigned i=0;i<90;++i) assert(clock.step(r));
+ assert(clock.course()==1 && clock.coursesCompleted()==1 && clock.deaths()==2);
  for(unsigned i=0;i<100&&!clock.playing();++i)assert(clock.step(r));
  r.ram[0x3ad]=200;
- for(unsigned i=0;i<32;++i)assert(clock.step(r));assert(clock.crop()==121);
+ for(unsigned i=0;i<32;++i) assert(clock.step(r));
+ assert(clock.crop()==121);
  std::array<uint16_t,135*240+32> output{};output.fill(0x1234);
  std::array<uint16_t,256*8> pixels{};
  for(unsigned y=0;y<8;++y)for(unsigned x=0;x<256;++x)pixels[y*256+x]=uint16_t(y*256+x);
